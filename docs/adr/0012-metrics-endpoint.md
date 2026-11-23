@@ -28,6 +28,7 @@
 - RQ-029(운영 의존성은 Mailo와 PostgreSQL뿐)는 유지한다. Prometheus는 Mailo가 필요로 하는 의존성이 아니라 `/metrics`를 읽는 쪽이다. 알림은 Mailo가 보내지 않는다(결정 7).
 - `docs/requirements/mail-sending.md`의 미결정 항목 "비기능 요구(처리량 목표, 메트릭)" 중 메트릭을 닫는다. 처리량 목표는 닫지 않는다. 측정 뒤에 정한다.
 - 새 RQ 번호는 기능 구현 때 RQ-049 이후로 정한다. 이 ADR은 번호를 가정하지 않는다.
+- 2026-11-24 ADR-0013 승인: 구현 중 확정 13의 `createMetrics({ accountIds })`와 `account_id` 값은 ADR-0013 결정 5가 정한다(구현 묶음 C). 지표 이름과 라벨 이름은 바뀌지 않는다. 결정 문구는 그대로 둔다.
 
 ## 배경
 
