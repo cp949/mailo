@@ -10,6 +10,7 @@ Mailo를 배포·운영하고 호출처를 연동하는 문서다. 요구사항�
 | [caller-onboarding.md](./caller-onboarding.md) | 호출처 레지스트리 등록, API 키 발급·교체, 서명 선택, 파일 채널 폴더·권한·쓰기 규약, Spring Boot outbox + relay 지침 | 운영자, 사용처 개발자 |
 | [troubleshooting.md](./troubleshooting.md) | 차단기 `open`, lease 만료, `unreadable` 파일, 수집 거부 사유 코드, 피드 지연, 로그 이벤트 이름 | 운영자 |
 | [nfs.md](./nfs.md) | NAS/NFS에서 파일 채널을 운영할 때의 mount 옵션, 폴더 권한, 실측 결과와 한계 | 인프라 담당 |
+| [ci.md](./ci.md) | GitHub Actions 잡 구성, 필수·선택 구분, 로컬 재현 명령, 로컬 확인 범위 | 개발자 |
 
 ## 읽는 순서
 
@@ -25,7 +26,7 @@ Mailo를 배포·운영하고 호출처를 연동하는 문서다. 요구사항�
 
 ## 알려진 공백
 
-- 실제 NAS 제품, 실제 Gmail·Workspace SMTP, CI에서의 검증은 없다.
-- 컨테이너 기동·재시작·SIGTERM 종료 시간, 백업·복구 절차는 실행하지 않았다.
+- 실제 NAS 제품, 실제 Gmail·Workspace SMTP 검증은 없다. CI 워크플로(`ci.md`)는 작성했으나 GitHub에서 실행하지 않았다.
+- 컨테이너 SIGKILL·SIGTERM은 `scripts/container/`로 실행했다(lease 45초 기준). lease 기본 120초에서의 종료 시간, 백업·복구 절차는 실행하지 않았다.
 - JWE 개인키 유출 때의 대응 절차는 정하지 않았다(`key-management.md`).
 - 사용처 Java 예시는 컴파일하지 않았고 nimbus-jose-jwt와의 상호 운용은 확인하지 않았다.

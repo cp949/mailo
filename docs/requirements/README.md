@@ -12,12 +12,12 @@
 
 상태 어휘는 `미착수`·`진행 중`·`검증 완료`·`보류`다(`mail-sending.md`의 "용어와 진행 상태"). 이 표는 RQ별 상태를 요약한 것이고 기준은 각 RQ의 수용 조건 체크다. 검증 완료 22건, 진행 중 10건, 미착수 0건, 보류 0건이다.
 
-근거로 쓴 실행 결과는 단위 376건(`pnpm test`, 2026-11-23 최종 마무리 실행), 통합 199건(`pnpm test:integration`, 같은 실행, 실제 PostgreSQL과 로컬 `smtp-server`)이고 실패는 0건이다. `pnpm test:nfs` 31건(같은 호스트 NFS loopback, NFSv4.1·4.2 각각)과 볼륨 스크립트 7항목(`scripts/volume/`, a~g)은 직전 3단계 마무리 실행 값이다. NFS 환경이 정리돼 이번에는 실행하지 않았다. 컨테이너 스크립트(`scripts/container/`)는 SIGKILL 중복 발송과 SIGTERM 종료를 각 1회 실행해 기대와 일치했다. `검증 완료`는 로컬 SMTP 서버와 PostgreSQL 기준이다.
+근거로 쓴 실행 결과는 단위 407건(`pnpm test`, 2026-11-23), 통합 222건(`pnpm test:integration`, 같은 날, 실제 PostgreSQL과 로컬 `smtp-server`)이고 실패는 0건이다. `pnpm test:nfs` 31건(같은 호스트 NFS loopback, NFSv4.1·4.2 각각)은 직전 3단계 마무리 실행 값이고 NFS 환경이 정리돼 이번에는 실행하지 않았다. 볼륨 스크립트 7개 실행(`scripts/volume/`, a~g, acl·group 포함)과 컨테이너 스크립트(`scripts/container/`, SIGKILL 중복 발송·SIGTERM 종료)는 2026-11-23에 종료 순서·compose 기본값 변경 뒤 다시 실행해 모두 기대와 일치했다. GitHub Actions 워크플로(`.github/workflows/ci.yml`, `docs/operations/ci.md`)는 작성하고 `actionlint`로 문법을 확인했으나 GitHub에서 실행하지 않았다. `검증 완료`는 로컬 SMTP 서버와 PostgreSQL 기준이다.
 
 | RQ | 제목 | 상태 | 남은 미검증 |
 | -- | ---- | ---- | ----------- |
 | RQ-001 | REST 입력 채널 | 검증 완료 | 등록 중간 실패 주입 테스트 없음(단일 `INSERT`라는 구조 근거) |
-| RQ-002 | 파일 입력 채널 | 진행 중 | 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, rootless Docker, CI 러너. 볼륨·NFS 검증은 스크립트·별도 jest 설정이다 |
+| RQ-002 | 파일 입력 채널 | 진행 중 | 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, rootless Docker, GitHub 러너(워크플로 작성만 함). 볼륨·NFS 검증은 스크립트·별도 jest 설정이다 |
 | RQ-003 | DB 비공유 | 진행 중 | "설정에 사용처 DB 정보 없음"·"사용처용 DB 계정 없음"의 자동 검증 없음(설정 읽기) |
 | RQ-004 | 보장 범위 | 검증 완료 | Java relay 구현 검증 없음(문서만) |
 | RQ-005 | SMTP 발송 | 진행 중 | 실제 Gmail·Workspace SMTP, 서버 전환 |
@@ -33,15 +33,15 @@
 | RQ-015 | 상태 조회 | 검증 완료 | 보존 기간이 지난 Key의 404를 조회 호출까지 이어 검증한 테스트 없음 |
 | RQ-016 | `SENT` 의미 | 검증 완료 | |
 | RQ-017 | 최종 실패 인지 | 검증 완료 | 피드 지연은 헬스 필드로만 노출(외부 메트릭 시스템 없음) |
-| RQ-018 | 영속 큐 | 진행 중 | `PENDING` 작업이 있는 채 재시작하는 경우, 자동 테스트·CI(컨테이너 SIGKILL·SIGTERM 재시작은 스크립트로 관찰) |
+| RQ-018 | 영속 큐 | 진행 중 | `PENDING` 작업이 있는 채 재시작하는 경우, jest 자동 테스트(컨테이너 SIGKILL·SIGTERM 재시작은 스크립트로 관찰, CI 연결은 작성만 하고 GitHub에서 미실행) |
 | RQ-019 | Worker 중복 점유 방지 | 검증 완료 | 실제 다중 프로세스 장시간 동작 없음 |
-| RQ-020 | 처리 중단 복구 | 검증 완료 | 실제 kill은 스크립트 관찰이며 자동 테스트·CI에 없다 |
+| RQ-020 | 처리 중단 복구 | 검증 완료 | 실제 kill은 스크립트 관찰이며 jest 자동 테스트에 없다. CI `container` 잡에 연결했으나 GitHub에서 미실행 |
 | RQ-021 | 비즈니스 트랜잭션과의 분리 | 진행 중 | 연동 예시(Spring Boot outbox + relay)를 컴파일·실행하지 않았다 |
 | RQ-022 | 선택적 봉투 암호화 | 검증 완료 | nimbus-jose-jwt 등 Java 구현과의 상호 운용, 파일 JWE의 SMTP 발송 e2e, JWE 개인키 유출 대응 절차(미결정) |
 | RQ-023 | DB 본문 암호화 | 검증 완료 | |
-| RQ-024 | 파일 채널 접근 통제 | 진행 중 | 실제 NAS 제품, bind mount, rootless Docker·`userns-remap`, ACL 미지원 파일시스템, jest 통합 테스트·CI 미포함 |
-| RQ-025 | Docker 실행과 설정 | 진행 중 | `NODE_ENV=development` 컨테이너 기동, 이미지 검사, `stop_grace_period`와 lease 관계의 자동 검증(운영 구성 기동과 SIGTERM은 확인함) |
-| RQ-026 | 영속 보관과 자동 복구 | 진행 중 | 컨테이너 재생성·재시작 뒤 복구 |
+| RQ-024 | 파일 채널 접근 통제 | 진행 중 | 실제 NAS 제품, bind mount, rootless Docker·`userns-remap`, ACL 미지원 파일시스템, jest 통합 테스트 미포함(CI `container` 잡에 연결했으나 GitHub에서 미실행) |
+| RQ-025 | Docker 실행과 설정 | 진행 중 | `NODE_ENV=development` 컨테이너 기동, 이미지 검사, `stop_grace_period`와 lease 관계의 자동 검증(운영 구성 기동과 SIGTERM은 로컬 Docker에서 확인함, GitHub 러너는 미확인) |
+| RQ-026 | 영속 보관과 자동 복구 | 진행 중 | 컨테이너 재생성, 자동 재시작 정책(스크립트는 수동 `compose start`로 재기동) |
 | RQ-027 | 로그 | 진행 중 | 컨테이너 로그 본문·시크릿 노출 검사(컨테이너 로그 출력 자체는 관찰함) |
 | RQ-028 | 호출처 레지스트리와 REST 인증 | 검증 완료 | |
 | RQ-029 | 단순성과 외부 의존성 최소화 | 검증 완료 | 정적 확인(자동 검증 없음) |
@@ -53,7 +53,7 @@
 
 - 실제 Gmail·Workspace SMTP(RQ-005·006·009).
 - 실제 NAS 제품과 그 서버 재시작·failover(RQ-002·024). 같은 호스트 loopback만 확인했다.
-- CI 러너. NFS 테스트와 볼륨 스크립트는 CI에 연결하지 않았다.
+- GitHub 호스티드 러너. 워크플로(`ci.yml`)는 작성만 했고 실행하지 않았다. `nfs` 잡은 러너에서 커널 NFS 서버 구성이 되는지부터 모른다(`docs/operations/ci.md`).
 - 실제 Gmail의 `Message-ID` 중복 처리(RQ-013). SIGKILL 재발송은 로컬 가짜 SMTP로 관찰했다.
 - 컨테이너 재생성과 PostgreSQL 컨테이너 재시작(RQ-026), `NODE_ENV=development` 컨테이너(RQ-025). 운영 구성 기동·SIGTERM·SIGKILL은 로컬 가짜 SMTP로 관찰했다.
 - 호스트 외 환경: bind mount, rootless Docker, Docker Desktop·macOS·Windows, ACL 미지원 파일시스템, 호출처가 Linux가 아닌 환경.

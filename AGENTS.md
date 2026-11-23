@@ -33,6 +33,7 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 | NFS 테스트    | `apps/mailo/scripts/nfs/run.sh`(환경 준비·실행·정리, 비밀번호 없는 sudo 필요). 환경이 있으면 `pnpm test:nfs` (`test/nfs/*.nfs-spec.ts`, `pnpm test:integration`에 포함되지 않음) |
 | 마이그레이션  | `pnpm --filter @cp949/mailo migrate` (`MAILO_DATABASE_URL` 필요)                                                                                                                 |
 | 컨테이너 실행 | `.env.example`을 `.env`로 복사하고 키를 바꾼 뒤(공개 샘플 키는 production에서 기동 거부, 로컬 시험은 `NODE_ENV=development`) `docker compose up -d --build`                      |
+| CI            | `.github/workflows/ci.yml`. 잡 구성·로컬 재현은 `docs/operations/ci.md`. 워크플로를 바꾸면 이 문서와 함께 갱신한다. 액션은 SHA로 고정한다                                        |
 
 - 통합 테스트는 실제 PostgreSQL을 쓴다. 접속 URL은 `MAILO_TEST_DATABASE_URL`이고 기본값은 compose 개발 값이다. 서버가 없으면 skip하지 않고 실패한다.
 - 테스트 파일마다 `test/support/database.ts`의 전용 schema를 쓴다.

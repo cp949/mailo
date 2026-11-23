@@ -32,7 +32,7 @@
 - 호출처가 Windows·macOS 클라이언트인 경우, 서로 다른 커널 버전 조합은 확인하지 않았다.
 - 시계 어긋남(임시 파일 정리가 mtime과 Mailo 시계의 차이로 판정한다, ADR-0004 구현 중 확정 9)은 확인하지 않았다.
 - 폴더당 수천 개 파일에서의 `readdir` 성능은 확인하지 않았다.
-- CI 러너에서 `apps/mailo/scripts/nfs/run.sh`가 동작하는지 확인하지 않았다.
+- GitHub 호스티드 러너에서 `apps/mailo/scripts/nfs/run.sh`가 동작하는지 확인하지 않았다. `.github/workflows/ci.yml`의 `nfs` 잡(수동·주 1회, `continue-on-error`)을 작성했으나 실행해 보지 않았고 러너에서 되는지는 실행 전에는 모른다(`ci.md`).
 
 ## 권장 mount 옵션
 
@@ -145,6 +145,6 @@ MAILO_NFS_VERS=4.2 apps/mailo/scripts/nfs/run.sh   # 4.2 기준
 ## 남은 일
 
 - 실제 NAS(대상 제품과 mount 옵션)에서 `apps/mailo/scripts/nfs/run.sh`를 대신할 검증. 최소한 (a) 새 폴더 가시성, (b) `close` 전 `rename`, (e) umask 077 읽기를 다시 확인한다.
-- CI 러너(Linux VM)에서 `run.sh` 동작 확인과 CI 연결.
+- `nfs` 잡을 GitHub에서 실행해 `run.sh` 동작 확인(워크플로는 작성함, 미실행). 성공을 확인한 뒤에도 필수 체크 지정 여부를 따로 정한다.
 - 서버 재시작·failover 뒤 폴러의 동작(ESTALE, 재연결 지연).
 - 시계 어긋남이 있는 서버와의 임시 파일 정리.

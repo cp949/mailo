@@ -61,9 +61,9 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
-- 검증 수치(2026-11-23 최종 마무리 실행 결과): `pnpm test` 단위 376건(23개 파일), `pnpm test:integration` 통합 199건(15개 파일, 파일 채널 `file-channel/poller.integration-spec.ts`, `e2e/file-flow.integration-spec.ts`, 호출처 할당 테스트 포함), `pnpm test:nfs`는 NFS 환경이 정리돼 이번에 실행하지 않았다(직전 3단계 마무리 실행 31건, NFSv4.1·4.2 기본값 각각, 실패 0건). 볼륨 스크립트 7항목(a~g, `scripts/volume/`)도 이번에 다시 실행하지 않았다(직전 실행 실패 0건). 컨테이너 스크립트 `scripts/container/`(SIGKILL 중복 발송, SIGTERM 파일 처리)는 각 1회 실행해 기대와 일치했다. 단위·통합 실패는 0건이다.
+- 검증 수치(2026-11-23 최종 마무리 실행 결과): `pnpm test` 단위 407건(23개 파일), `pnpm test:integration` 통합 222건(15개 파일, 파일 채널 `file-channel/poller.integration-spec.ts`, `e2e/file-flow.integration-spec.ts`, 호출처 할당 테스트 포함), `pnpm test:nfs`는 NFS 환경이 정리돼 이번에 실행하지 않았다(직전 3단계 마무리 실행 31건, NFSv4.1·4.2 기본값 각각, 실패 0건). 볼륨 스크립트(`scripts/volume/`, a~g)는 CI 워크플로 작성 뒤 2026-11-23에 7개 실행(acl·group 포함)을 모두 다시 실행해 기대와 다름 0건이었다. 컨테이너 스크립트 `scripts/container/`(SIGKILL 중복 발송, SIGTERM 파일 처리)도 같은 날 종료 순서(pause 선행)·compose 기본값 변경 뒤 각 1회 실행해 기대와 일치했다. 단위·통합 실패는 0건이다.
 - 수치 이력: 1단계 마무리 뒤 단위 274건·통합 116건(종단 `e2e/mail-flow.integration-spec.ts` 7건 포함), 파일 채널 폴러 구현 뒤 단위 370건·통합 199건. 1단계 마무리 때 쓰지 않던 `smtp/backoff.ts`와 그 테스트를 지워 단위가 이전 보고(287건)보다 13건 줄었다.
-- 모든 SMTP 검증은 로컬 `smtp-server` 대상이다. 실제 Gmail·Workspace SMTP와 실제 NAS 제품은 확인하지 않았다. NFS는 같은 호스트 loopback에서 `pnpm test:nfs`로 확인했다(ADR-0004 구현 중 확정 20~27, `docs/operations/nfs.md`). 이 테스트와 `scripts/volume/` 스크립트는 `pnpm test`·`pnpm test:integration`에 포함되지 않고 CI에도 연결하지 않았다.
+- 모든 SMTP 검증은 로컬 `smtp-server` 대상이다. 실제 Gmail·Workspace SMTP와 실제 NAS 제품은 확인하지 않았다. NFS는 같은 호스트 loopback에서 `pnpm test:nfs`로 확인했다(ADR-0004 구현 중 확정 20~27, `docs/operations/nfs.md`). 이 테스트와 `scripts/volume/` 스크립트는 `pnpm test`·`pnpm test:integration`에 포함되지 않는다. GitHub Actions 워크플로(`.github/workflows/ci.yml`, `docs/operations/ci.md`)에 연결하는 코드를 작성했으나 GitHub에서 실행해 본 적이 없다.
 - 2026-11-23 3단계 마무리에서 RQ-003·004·013·016·021·022·024·028·032와 문서 정합을 갱신했다(운영 문서 `docs/operations/`).
 
 ## 구현 단계
@@ -103,7 +103,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 구현·검증 완료: NAS/NFS loopback 통합 테스트(`pnpm test:nfs` 31건, NFSv4.1·4.2 각각), 같은 호스트 Docker named volume 권한·e2e 스크립트(`scripts/volume/` 7항목 a~g), `ESTALE` 처리 수정(`file-channel/errno.ts`), 호출처별 발송 할당(RQ-032).
 - 문서: 운영 문서 `docs/operations/`(README, deployment, key-management, caller-onboarding, troubleshooting, nfs), 사용처 연동 지침(`caller-onboarding.md`의 outbox + relay, 이벤트 피드 소비, Key 조회 404 처리).
 - 권한 문구: 사용자 위임 결정으로 ADR-0004 결정 8과 RQ-024에 "default ACL 권장, 공용 그룹 + setgid는 대안" 보완 표기를 달았다(ADR-0004 구현 중 확정 28).
-- 미검증 목록: 실제 Gmail·Workspace SMTP, 실제 NAS 제품(서버 재시작·failover, NFSv3·4.0·Kerberos 포함), CI 러너, SIGKILL로 인한 실제 중복 발송 여부, 컨테이너 기동·재시작·SIGTERM, bind mount·rootless Docker, 호스트 외 환경, Java 사용처 구현과 JOSE 상호 운용.
+- 미검증 목록: 실제 Gmail·Workspace SMTP, 실제 NAS 제품(서버 재시작·failover, NFSv3·4.0·Kerberos 포함), GitHub 호스티드 러너(워크플로는 작성만 했고 실행하지 않았다), bind mount·rootless Docker, 호스트 외 환경, Java 사용처 구현과 JOSE 상호 운용. SIGKILL 중복 발송과 컨테이너 SIGTERM은 로컬 Docker에서 관찰했다.
 
 ## 1. 입력 채널과 경계
 
@@ -150,7 +150,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - [x] 점(`.`)으로 시작하는 임시 이름으로 쓴 뒤 같은 폴더 안에서 `*.json`으로 rename한 파일만 수집된다.
 - [x] `Idempotency-Key`가 없는 파일은 등록되지 않고 거부 기록과 `INTAKE_REJECTED` 이벤트가 남는다.
 - [x] 심볼릭 링크와 등록되지 않은 호출처 폴더의 파일은 수집되지 않는다. 원시 크기 상한(RQ-030)을 넘은 파일은 수집 거부한다.
-- [ ] 같은 호스트 볼륨(2단계)과 NAS/NFS 폴더(3단계) 모두에서 수집된다. (같은 호스트 Docker named volume은 확인했다: 실제 Mailo 컨테이너 e2e 15개 확인, 두 방식 모두 통과, 임시 이름·rename 가시성 포함. `scripts/volume/verify-e2e.sh`이고 jest 통합 테스트·CI에는 없다. bind mount와 실제 NAS는 확인하지 않았다. NFS loopback(NFSv4.1·4.2)은 `pnpm test:nfs`로 확인했다: 호출처 UID가 NFS에 rename한 파일을 별개 NFS 클라이언트의 Mailo가 수집·삭제하고, 기존 폴더 rename 가시성은 mount 옵션과 무관하게 7~13 ms, 새 폴더는 기본 mount 옵션에서 31초라 `lookupcache=pos`를 권장한다. CI에는 연결하지 않았다.)
+- [ ] 같은 호스트 볼륨(2단계)과 NAS/NFS 폴더(3단계) 모두에서 수집된다. (같은 호스트 Docker named volume은 확인했다: 실제 Mailo 컨테이너 e2e 15개 확인, 두 방식 모두 통과, 임시 이름·rename 가시성 포함. `scripts/volume/verify-e2e.sh`이고 jest 통합 테스트에는 없다. CI 워크플로 `container` 잡에 연결했으나 GitHub에서 실행하지 않았다. bind mount와 실제 NAS는 확인하지 않았다. NFS loopback(NFSv4.1·4.2)은 `pnpm test:nfs`로 확인했다: 호출처 UID가 NFS에 rename한 파일을 별개 NFS 클라이언트의 Mailo가 수집·삭제하고, 기존 폴더 rename 가시성은 mount 옵션과 무관하게 7~13 ms, 새 폴더는 기본 mount 옵션에서 31초라 `lookupcache=pos`를 권장한다. `nfs` 잡(수동·주 1회, 선택)을 작성했으나 GitHub에서 실행하지 않았다.)
 - [x] 수집한 파일은 큐 등록 후 입력 폴더에서 사라진다.
 - [x] 큐 등록 후 파일 정리 전에 Mailo가 종료돼 같은 파일이 다시 수집돼도 중복 등록되지 않는다.
 - [x] 형식이 잘못된 파일은 거부 기록과 `INTAKE_REJECTED` 이벤트를 남기고 원본이 삭제되며 재처리되지 않는다.
@@ -168,7 +168,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 구현 세부와 추정과 다른 점: ADR-0004 "구현 중 확정".
 - Docker named volume(2026-11-23, `scripts/volume/verify-e2e.sh`, `verify-atomic-rename.sh`): Mailo(UID 1000)·호출처 B(10002)·C(10003)가 볼륨 하나를 공유한 상태에서 파일 → 폴링 → 발송 → 삭제 e2e를 default ACL·공용 그룹 두 방식으로 각 15개 확인해 모두 통과했다. 같은 요청은 1회만 발송, 점(.) 임시 이름 파일은 rename 전 수집되지 않고 rename 뒤 수집된다. rename 원자성은 4 MiB × 100건에서 부분 파일 0건이다. 호출처가 mode 0600으로 만든 파일은 Mailo가 읽지 못해 남고 `unreadable`로 기록되며 chmod 0660 뒤 수집된다(ADR-0004 구현 중 확정 16).
 - NFS loopback(2026-11-23, `test/nfs/file-channel.nfs-spec.ts`, `pnpm test:nfs` 31건, NFSv4.1·4.2 기본값 각각 통과): 호출처 UID → `w` 클라이언트 rename → Mailo(`m1`) 수집·삭제. mount 옵션 6종의 기존 폴더 가시성 7~13 ms, 새 호출처 폴더 가시성(기본값 31.3초, `acdirmin=acdirmax=3` 3.0초, `lookupcache=pos` 9 ms), `close` 전 `rename`에서도 전체 내용을 읽음(ADR-0004 결정 3의 추정과 다름), rename 뒤 덧쓰기는 부분 노출, 2 MiB × 16건 rename 원자성(부분 0건), 심볼릭 링크·FIFO·하드링크 처리, `ESTALE`(수정 전 40회 중 8회 던짐, 수정 후 0회), 서로 다른 NFS 클라이언트의 두 폴러 동시 수집(60건, 중복 0, 오류 0).
-- 미확인: 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, rootless Docker, CI 러너.
+- 미확인: 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, rootless Docker, GitHub 호스티드 러너(워크플로 작성만 함).
 
 **제한:**
 
@@ -612,7 +612,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 
 **수용 조건:**
 
-- [ ] 대기 중 작업이 있는 상태에서 Mailo를 재시작해도 작업이 남아 있고 이어서 처리된다. (큐는 PostgreSQL에 있고 lease 회수 테스트가 있다. 자동 테스트에는 프로세스 재시작을 재현한 것이 없다. `e2e/mail-flow.integration-spec.ts`의 재기동 시나리오는 실제 프로세스 재시작이 아니다. 2026-11-23 `scripts/container/`로 컨테이너를 SIGKILL·SIGTERM으로 죽였다 다시 띄웠을 때 `SENDING` 작업(SIGKILL)과 남은 파일(SIGTERM)이 유실 없이 이어서 처리됨을 관찰했다. 스크립트는 자동 테스트·CI에 포함되지 않고 `PENDING` 상태 작업이 있는 채로 재시작하는 경우는 따로 만들지 않아 `[ ]`로 둔다.)
+- [ ] 대기 중 작업이 있는 상태에서 Mailo를 재시작해도 작업이 남아 있고 이어서 처리된다. (큐는 PostgreSQL에 있고 lease 회수 테스트가 있다. 자동 테스트에는 프로세스 재시작을 재현한 것이 없다. `e2e/mail-flow.integration-spec.ts`의 재기동 시나리오는 실제 프로세스 재시작이 아니다. 2026-11-23 `scripts/container/`로 컨테이너를 SIGKILL·SIGTERM으로 죽였다 다시 띄웠을 때 `SENDING` 작업(SIGKILL)과 남은 파일(SIGTERM)이 유실 없이 이어서 처리됨을 관찰했다. 스크립트는 jest 자동 테스트에 포함되지 않고 CI `container` 잡에 연결했으나 GitHub에서 실행하지 않았다. `PENDING` 상태 작업이 있는 채로 재시작하는 경우는 따로 만들지 않아 `[ ]`로 둔다.)
 
 **판정 근거:**
 
@@ -650,7 +650,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 **판정 근거:**
 
 - `worker/worker.integration-spec.ts`: 프로세스 종료를 lease 만료로 재현해 다른 Worker가 회수하고 `LEASE_EXPIRED` 시도가 남는다.
-- 실제 프로세스 kill(2026-11-23, `scripts/container/verify-sigkill-duplicate.sh`): 컨테이너를 `docker kill -s KILL`로 죽인 뒤 재기동하자 `SENDING`이던 작업이 lease 만료 뒤 회수돼 다시 발송됐다(`attempts=2`, `SENT`).
+- 실제 프로세스 kill(2026-11-23, `scripts/container/verify-sigkill-duplicate.sh`): 컨테이너를 `docker kill -s KILL`로 죽인 뒤 재기동하자 `SENDING`이던 작업이 lease 만료 뒤 회수돼 다시 발송됐다(`attempts=2`, `SENT`). 종료 순서·compose 기본값 변경 뒤 같은 날 다시 실행해 같은 결과를 얻었다(kill 뒤 101초에 같은 `Message-ID` 2통). 이 스크립트는 관찰만 기록하므로 CI에서 통과는 "끝까지 실행됨"이다. 자동 테스트에는 없고 CI `container` 잡에 연결했으나 GitHub에서 실행하지 않았다.
 
 ## 8. 트랜잭션
 
@@ -788,7 +788,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - [x] 호출처 계정이 자기 폴더의 목록을 조회할 수 없다. (같은 호스트 Docker named volume, default ACL·공용 그룹 두 방식에서 차단을 확인했다. 이름을 알면 `stat`·읽기·삭제는 가능하다. 스크립트 검증이다. NFS loopback에서도 자기 폴더와 `inbox` 목록 조회가 `EACCES`이고 폴더 `chmod`가 거부됐다: `pnpm test:nfs`.)
 - [x] 호출처 계정이 다른 호출처 폴더의 파일을 읽거나 만들 수 없다. (같은 환경, 두 방식에서 목록·읽기·생성·rename·삭제와 inbox 루트 목록이 모두 차단됐다. root나 Mailo와 같은 UID로 실행하면 성립하지 않음을 보였다. NFS loopback에서도 같은 호출처 UID 2개로 서로의 폴더 만들기·목록·읽기·삭제가 `EACCES`이고, root는 `root_squash`로 거부됐다.)
 - [x] Mailo 계정이 호출처가 만든 파일을 호출처 umask와 무관하게 읽을 수 있다. (default ACL 방식 한정이다. 2026-11-23 보완: 공용 그룹 방식은 이 조건을 만족하지 않는다. default ACL 방식에서 umask 022·027·077·000 모두 읽었다. 공용 그룹 + setgid는 umask 077에서 읽지 못한다. 두 방식 모두 호출처가 생성 mode를 0600으로 명시한 파일은 읽지 못하므로 rename 전에 chmod 0660이 필요하다. ADR-0004 구현 중 확정 15·16·18. NFS loopback에서는 default ACL 폴더에서 NFSv4.2 클라이언트가 만든 파일만 umask 077에서 읽힌다. NFSv4.1 클라이언트는 umask 077이면 Mailo가 읽지 못해 `unreadable`로 남는다. 호출처 호스트도 `vers=4.2`가 필요하다. ADR-0004 구현 중 확정 22.)
-- [ ] 같은 호스트 볼륨(2단계)과 NAS/NFS 환경(3단계)에서 각각 통합 테스트로 확인한다. (같은 호스트 Docker named volume은 `scripts/volume/` 스크립트로 확인했다. jest 통합 테스트·CI에는 넣지 않았다. NFS는 loopback에서 `pnpm test:nfs` 31건(NFSv4.1·4.2 기본값 각각)으로 확인했다. 실제 NAS 제품과 CI 러너는 확인하지 않았다.)
+- [ ] 같은 호스트 볼륨(2단계)과 NAS/NFS 환경(3단계)에서 각각 통합 테스트로 확인한다. (같은 호스트 Docker named volume은 `scripts/volume/` 스크립트로 확인했다. jest 통합 테스트에는 넣지 않았다. CI 워크플로 `container` 잡에는 연결했으나 GitHub에서 실행하지 않았다. NFS는 loopback에서 `pnpm test:nfs` 31건(NFSv4.1·4.2 기본값 각각)으로 확인했다. 실제 NAS 제품과 GitHub 호스티드 러너는 확인하지 않았다. `nfs` 잡은 작성만 했다.)
 
 **판정 근거(서명 부분):**
 
@@ -798,7 +798,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 파일시스템 접근 통제(2026-11-23, 같은 호스트 Docker named volume): 코드는 폴더를 만들거나 chmod하지 않는다(ADR-0004 결정 8). 구성은 `scripts/volume/init-volume.sh`와 `docker-compose.volume-example.yml`이 만든다. `verify-permissions.sh acl|group`은 방식별 28개 확인, `verify-root-model.sh`는 15개 확인, `verify-e2e.sh`는 방식별 15개 확인이고 기대와 다른 결과가 0건이다. 권장 구성은 default ACL이다(ADR-0004 구현 중 확정 14·15). Mailo 쪽에서 읽기 권한이 없는 파일은 거부하지 않고 남겨 `unreadable` 로그로 드러난다(e2e로 확인).
 - 문서와 어긋난 점(해소됨 2026-11-23): 이 RQ 요구사항의 "공용 그룹과 setgid 디렉터리 또는 default ACL ... 호출처 umask에 의존하지 않는다"에서 공용 그룹 + setgid는 umask 077에서 읽기에 실패한다. 사용자 위임 결정으로 위 요구사항 항목 아래에 "보완됨" 표기를 달았다(ADR-0004 구현 중 확정 18·28). 원문은 지우지 않았다. 호출처 구성 절차는 `docs/operations/caller-onboarding.md` 4절이다.
 - NFS 권한 모델(2026-11-23, `test/nfs/file-channel.nfs-spec.ts`, `docs/operations/nfs.md`): 폴더 구성은 `apps/mailo/scripts/nfs/lib.sh`의 `nfs_make_inbox`가 만든다. 같은 default ACL 모델이 NFS에서도 성립했다. 공용 그룹 + setgid 대안은 NFS에서도 umask 077에 읽지 못했고, 서버가 보조 그룹을 서버 조회(`--manage-gids`)로 판정하면 보조 그룹만 가진 계정이 거부된다.
-- 미확인: 실제 NAS 환경, bind mount, rootless Docker·`userns-remap`, 파일시스템 ACL 지원이 없는 환경. 같은 호스트 볼륨 검증은 스크립트이고 jest 통합 테스트·CI에 포함되지 않는다.
+- 미확인: 실제 NAS 환경, bind mount, rootless Docker·`userns-remap`, 파일시스템 ACL 지원이 없는 환경. 같은 호스트 볼륨 검증은 스크립트이고 jest 통합 테스트에 포함되지 않는다. CI 워크플로(`container` 잡)에는 연결했으나 GitHub에서 실행하지 않았다.
 
 ## 10. Docker 운영
 
@@ -823,10 +823,10 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 
 - `worker/worker.integration-spec.ts`: 종료 신호 뒤 진행 중 전송을 끝까지 기다리고 새 작업을 점유하지 않음, `pause()` 뒤 새 작업을 점유하지 않고 진행 중 전송은 끝냄, drain 상한을 `pause()` 시점부터 셈, 대기 시간 초과 시 포기하고 lease를 풀지 않은 채 회수에 맡김. `http/lifecycle.integration-spec.ts`: 기동 때 `start` 한 번, 종료 때 `pause`를 먼저 부르고 HTTP 서버를 닫은 뒤 `stop`을 호출하며 외부에서 받은 풀은 닫지 않음, 본문을 다 보내지 않은 느린 POST가 열려 있어도 `pause`가 먼저 일어나고 요청 시간제한 안에 종료함(시간제한은 테스트에서 줄여 확인. 운영 기본 30초는 실행하지 않았다).
 - `config/load-config.spec.ts`: 기동 시 설정 검증, `.env.example`의 활성 변수가 그대로 통과. DB 접속 URL을 분리 변수(`MAILO_DB_*`)로 조립하는 규칙과 비밀번호 URL 인코딩(`@ / : # %` 포함)도 이 파일이 확인한다.
-- 컨테이너 SIGTERM(2026-11-23, `scripts/container/verify-sigterm-file.sh`, 파일 1000개, 폴링 500ms, lease 45초): 폴러가 처리하는 도중(남은 파일 997개일 때) `docker compose stop mailo`를 보냈다. 종료 코드 0, 소요 0.4초, OOMKilled false였다. 로그 순서는 `file_poll`(registered 19) → `file_channel_stopped` → `worker_stopping inFlight 0` → `worker_stopped drained true`였다. 종료 뒤 DB 작업 19건 = 처리한 파일 19건(1000 − 남은 981), 남은 파일 중 DB에 등록된 것 0건, `SENDING` 0건이었다. 다시 띄우자 남은 파일이 수집돼 작업 1000건 모두 `SENT`, SMTP 수신 1000통(유일 `Message-ID` 1000개)이었다. 진행 중 전송이 있는 상태의 SIGTERM(전송 응답 지연 중 종료 대기)은 이 스크립트가 만들지 않았고 `worker/worker.integration-spec.ts`만 확인한다.
+- 컨테이너 SIGTERM(2026-11-23, `scripts/container/verify-sigterm-file.sh`, 파일 1000개, 폴링 500ms, lease 45초): 폴러가 처리하는 도중(남은 파일 997개일 때) `docker compose stop mailo`를 보냈다. 종료 코드 0, 소요 0.4초, OOMKilled false였다. 로그 순서는 `file_poll`(registered 19) → `file_channel_stopped` → `worker_stopping inFlight 0` → `worker_stopped drained true`였다. 종료 뒤 DB 작업 19건 = 처리한 파일 19건(1000 − 남은 981. 같은 날 종료 순서 변경 뒤 재실행에서는 22건 = 22건, 종료 코드 0, 0.4초, 재기동 뒤 1000건 `SENT`), 남은 파일 중 DB에 등록된 것 0건, `SENDING` 0건이었다. 다시 띄우자 남은 파일이 수집돼 작업 1000건 모두 `SENT`, SMTP 수신 1000통(유일 `Message-ID` 1000개)이었다. 진행 중 전송이 있는 상태의 SIGTERM(전송 응답 지연 중 종료 대기)은 이 스크립트가 만들지 않았고 `worker/worker.integration-spec.ts`만 확인한다.
 - 컨테이너 기동(2026-11-23, 같은 스크립트와 `verify-sigkill-duplicate.sh`): 저장소 `Dockerfile`로 빌드한 이미지가 compose의 `MAILO_DB_*` 분리 변수(비밀번호 `p@ss/w:rd#1%2x`)로 PostgreSQL에 접속해 마이그레이션을 적용하고 healthcheck(`/health/live`)가 `healthy`가 됐다.
 
-- 개발·운영 구분(2026-11-23 코드 리뷰 반영): `NODE_ENV=production`이면 `.env.example` 등 저장소에 공개된 DB 본문 키·지문 키 샘플과 같은 바이트(같은 바이트가 반복된 키 포함)를 거부한다. `config/load-config.spec.ts`가 base64·hex 표기, 이전 버전 변수, 오류에 키 값이 없음, development·test 허용을 확인한다. `MAILO_DB_HOST`는 호스트 이름·IPv4·대괄호 IPv6만 받고 포트·경로가 섞이면 기동을 거부하며, `..._V01`처럼 앞자리 0이 있는 키 버전 변수도 거부한다(같은 파일). compose의 HTTP 포트는 기본 `127.0.0.1`에만 연다(`MAILO_PUBLISH_HOST`). `scripts/container/`는 이 변경으로 실행마다 일회용 키를 만들도록 고쳤으나 변경 뒤 다시 실행하지 않았다.
+- 개발·운영 구분(2026-11-23 코드 리뷰 반영): `NODE_ENV=production`이면 `.env.example` 등 저장소에 공개된 DB 본문 키·지문 키 샘플과 같은 바이트(같은 바이트가 반복된 키 포함)를 거부한다. `config/load-config.spec.ts`가 base64·hex 표기, 이전 버전 변수, 오류에 키 값이 없음, development·test 허용을 확인한다. `MAILO_DB_HOST`는 호스트 이름·IPv4·대괄호 IPv6만 받고 포트·경로가 섞이면 기동을 거부하며, `..._V01`처럼 앞자리 0이 있는 키 버전 변수도 거부한다(같은 파일). compose의 HTTP 포트는 기본 `127.0.0.1`에만 연다(`MAILO_PUBLISH_HOST`). `scripts/container/`는 실행마다 일회용 키를 만들도록 고쳤고 변경 뒤 2026-11-23에 SIGKILL·SIGTERM 두 스크립트를 다시 실행해 기동·종료가 기대와 일치했다(production 기본값, 포트 `127.0.0.1`, 일회용 키로 기동).
 
 ### RQ-026 영속 보관과 자동 복구
 
@@ -848,7 +848,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 **수용 조건:**
 
 - [ ] 컨테이너를 재생성해도 큐와 이력이 남아 있다. (compose가 `postgres-data` 볼륨을 쓴다. 재생성을 실행하지 않았다.)
-- [ ] 재시작 후 사람의 개입 없이 미처리 작업이 이어서 처리된다. (compose `restart: unless-stopped`와 lease 회수. 재시작을 실행하지 않았다.)
+- [ ] 재시작 후 사람의 개입 없이 미처리 작업이 이어서 처리된다. (compose `restart: unless-stopped`와 lease 회수. 재시작을 실행하지 않았다. `scripts/container/`는 `restart: "no"`로 덮어쓰고 kill·stop 뒤 스크립트가 `compose start`로 수동 재기동해 이어서 처리됨만 관찰했다. 자동 재시작 정책은 확인하지 않았다.)
 - [x] 보존 기간이 지난 작업 행을 삭제하면 그 행의 시도 기록과 이벤트 행도 함께 삭제된다.
 - [x] 종결되지 않은 작업의 Key는 보존 기간이 지나도 삭제되지 않는다.
 
@@ -1043,7 +1043,7 @@ NFS 통합 테스트 환경(3단계, 추정):
 - `root_squash`를 켜고 서로 다른 non-root UID 2개로 실행한다.
 - WSL 로컬에서는 건너뛴다. 특권 컨테이너는 필요 없다. (실행 결과: WSL2 커널 6.6에 nfsd 모듈이 있어 건너뛰지 않고 실행했다. `apps/mailo/scripts/nfs/run.sh`.)
 - 속성 캐시는 커널 NFS 클라이언트에서 생기므로 loopback으로 재현된다고 본다. (실행 결과: 주소·호스트 이름이 다른 클라이언트 3개를 mount하면 새 폴더 가시성 지연 31초가 재현됐다.)
-- CI 러너에서 mount가 되는지는 확인하지 않았다.
+- GitHub 호스티드 러너에서 mount가 되는지는 확인하지 않았다. `nfs` 잡(선택, `continue-on-error`)을 작성했고 실행해 본 뒤에야 알 수 있다.
 
 ## 미결정 항목
 
