@@ -1,6 +1,20 @@
 # CI (GitHub Actions)
 
-`.github/workflows/ci.yml`이 정의한다. 2026-11-23에 작성했다. 같은 날 수동 실행 1회(run 45119061025, `run_nfs=true`, 커밋 `9c31318`)에서 `static`·`integration`·`container` 잡은 성공했고 `nfs` 잡은 취소됐다. 두 번째 수동 실행(run 45126208202)에서 `nfs` 잡이 처음 끝까지 실행됐고 31건 중 3건이 실패했다(아래 "NFS 잡"). 아래 "로컬 확인"은 워크플로의 각 명령을 같은 순서로 로컬에서 실행한 결과다. **`nfs` 잡은 GitHub 러너에서 통과를 확인하지 못했다.**
+`.github/workflows/ci.yml`이 CI를, `.github/workflows/release.yml`이 태그 발행을 정의한다("릴리스 워크플로"). 아래 "로컬 확인"은 워크플로의 각 명령을 같은 순서로 로컬에서 실행한 결과다.
+
+GitHub 실행 기록(2026-11-23, `gh run view`로 확인):
+
+| run | 브랜치·커밋 | 트리거 | 결과 |
+| --- | ----------- | ------ | ---- |
+| 45106405209 | main `1f2326b` | push | `static`·`container` 성공, `integration` 실패(원인은 이 문서에 기록하지 않았다), `nfs` 건너뜀 |
+| 45118335600 | main `9c31318` | push | `static`·`integration`·`container` 성공, `nfs` 건너뜀 |
+| 45119061025 | main `9c31318` | 수동(`run_nfs=true`) | `static`·`integration`·`container` 성공, `nfs` 취소(아래 "NFS 잡") |
+| 45126208202 | dev `addecd0` | 수동(`run_nfs=true`) | `static`·`integration`·`container` 성공, `nfs` 실패(31건 중 3건) |
+| 45127889424 | dev `c75052a` | 수동(`run_nfs=true`) | 네 잡 모두 성공 |
+| 45152251322 | dev `dee5d49` | 수동 | `static`·`integration`·`container` 성공, `nfs` 건너뜀 |
+| 45182590945 | dev `365a9d4` | 수동 | `static`·`integration`·`container` 성공, `nfs` 건너뜀 |
+
+run 45127889424의 `nfs` 성공은 아래 "NFS 잡" 절과 `nfs.md`에 반영하지 않았다. 그 실행의 `[nfs-measure]` 줄(ESTALE 표본, ACCESS 경고)은 확인하지 않았다.
 
 ## 잡
 
@@ -46,6 +60,80 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 - 설치(`MAILO_NFS_INSTALL=1`, `acl`)는 일회용 러너를 전제로 한다. `teardown.sh`는 설치를 되돌리지 않는다.
 - 이 잡이 러너에서 통과하면 `nfs.md`의 "CI 러너 미확인" 항목을 갱신한다.
 
+## 릴리스 워크플로
+
+`.github/workflows/release.yml`. `vX.Y.Z` 태그 push 때 이미지를 `ghcr.io/cp949/mailo`에 발행하고 GitHub Release를 만든다. GitHub에서 실행한 적이 없다("확인하지 않은 것").
+
+| 항목 | 내용 |
+| ---- | ---- |
+| 트리거 | `push: tags: ["v[0-9]+.[0-9]+.[0-9]+"]`만. 수동 실행은 없다 |
+| 동시 실행 | `release-<ref>` 그룹으로 같은 태그를 직렬화한다. `cancel-in-progress: false`라 진행 중 발행을 취소하지 않는다 |
+| 권한 | 최상위 `contents: read`. `release` 잡만 `contents: write`(Release 생성, 릴리스 노트 생성 API)와 `packages: write`(GHCR push). `verify` 잡은 읽기 권한으로 의존성 설치·검사를 돌린다 |
+| 시크릿 | `GITHUB_TOKEN`만 쓴다 |
+| 이미지 태그 | `ghcr.io/cp949/mailo:vX.Y.Z`, `ghcr.io/cp949/mailo:latest`. `linux/amd64`만 |
+| 라벨 | `org.opencontainers.image.revision`(태그 커밋), `version`(태그), `created`(빌드 시각 UTC), `source`(저장소 URL) |
+
+`verify` 잡(가드와 검사):
+
+1. 태그 커밋이 `origin/main`의 조상이 아니면 실패한다(`git merge-base --is-ancestor`).
+2. 태그 버전(`v` 제외)이 루트 `package.json`과 `apps/mailo/package.json`의 `version`과 모두 같지 않으면 실패한다.
+3. `ci.yml`의 `static` 잡과 같은 Node·pnpm 설정으로 `pnpm install --frozen-lockfile`, `format:check`, `typecheck`, `lint`, `build`, `test`를 돌린다.
+
+- 통합·컨테이너·NFS 검사는 돌리지 않는다. 태그 커밋은 가드 1로 main의 조상이고, main push마다 `ci.yml`이 `integration`·`container` 잡을 돌린다.
+- 이 판단은 main push의 CI가 성공했다는 것을 확인하지 않는다. 태그를 달기 전에 그 커밋의 main CI 결과를 사람이 확인한다("릴리스 절차").
+
+`release` 잡(`verify` 성공 뒤):
+
+1. `docker/build-push-action`으로 빌드·push한다. `provenance`·`sbom` 입력은 주지 않는다. v7.4.0 코드(`src/context.ts`) 기준 기본값은 provenance attestation 생성(공개 저장소는 `mode=max`, 비공개는 `mode=min`)이고 SBOM은 만들지 않는다. 그래서 push한 태그는 이미지 manifest와 attestation manifest(`unknown/unknown`)를 가진 index다(buildx 동작, 이 저장소에서 발행해 확인하지 않았다).
+2. 스모크: push한 태그를 pull한다. 이어 compose와 같은 보안 옵션(`--read-only`, `--cap-drop ALL`, `no-new-privileges`)으로 다음을 확인한다. DB가 필요한 확인은 하지 않는다.
+   - `revision` 라벨이 태그 커밋과 같다.
+   - `id`가 `uid=1000(node) gid=1000(node)`로 시작한다.
+   - `node --version`이 `NODE_VERSION`과 같다.
+   - `dist/main.js`, `dist/db/migrate-cli.js`, `migrations/*.sql`이 있다. `/repo/apps/mailo/dist`·`/repo/node_modules`에 쓸 수 없다. `npm`이 없다.
+   - 설정 없이 기본 `CMD`로 기동하면 종료 코드 1과 `startup_failed` 로그로 끝난다. `main.ts`가 모든 모듈을 import한 뒤 설정 검증에서 끝나므로 운영 의존성 누락을 잡는다.
+3. GitHub Release를 만든다. 노트는 `releases/generate-notes` API로 생성한 본문 끝에 pull 명령, digest, 마이그레이션 안내(`deployment.md` "기동 순서와 마이그레이션" 링크)를 덧붙인다.
+   - `gh release create --generate-notes`에 `--notes`·`--notes-file`을 함께 주면 그 내용이 생성 노트 앞에 붙는다(gh 2.100.0 `--help`). 안내를 끝에 두려고 API로 생성한 뒤 `--notes-file`로 만든다.
+   - 같은 태그의 Release가 이미 있으면 만들지 않고 `::notice::`만 남긴다(재실행 대비).
+
+### 실패 시 재실행
+
+| 실패 위치 | 상태 | 조치 |
+| --------- | ---- | ---- |
+| `verify` 가드(조상·버전) | 이미지·Release 없음 | 아래 "태그 다시 달기" |
+| `verify` 검사 | 이미지·Release 없음 | 일시 실패면 Actions의 "Re-run all jobs". 코드 결함이면 main에서 고친 뒤 새 버전으로 태그를 단다 |
+| `release` 빌드·push | push 전이면 이미지 없음 | "Re-run failed jobs"(`verify`는 다시 돌지 않는다) |
+| `release` 스모크 | `vX.Y.Z`·`latest`가 이미 GHCR에 있다. Release 없음 | 일시 실패면 "Re-run failed jobs". 이미지 결함이면 고친 뒤 다음 패치 버전을 발행한다. 그 전까지 `latest`가 결함 이미지를 가리킨다 |
+| `release` Release 생성 | 이미지 있음, Release 없음 | "Re-run failed jobs". 이미지는 같은 태그로 다시 push된다(`created` 라벨이 바뀌어 digest가 달라질 수 있다) |
+
+태그 다시 달기(가드 실패, 이미지 발행 전에만):
+
+```txt
+위험도: 중간 (원격 태그 삭제. 이미 태그를 받아 간 사람과 어긋난다)
+롤백: 지운 태그를 같은 커밋에 다시 push한다
+```
+
+```sh
+git push origin :refs/tags/vX.Y.Z   # 원격 태그 삭제
+git tag -d vX.Y.Z                   # 로컬 태그 삭제
+# 원인(버전 불일치, main 미병합)을 고친 뒤 main의 커밋에 다시 단다
+git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
+```
+
+이미지를 발행한 뒤에는 태그를 옮기지 않고 다음 패치 버전을 발행한다.
+
+### GHCR 공개 범위
+
+- 첫 발행 뒤 `https://github.com/users/cp949/packages/container/package/mailo`의 Package settings에서 공개 범위와 저장소 연결을 확인한다.
+- 추정: 새 container 패키지의 기본 공개 범위는 private다. private이면 `docker pull`에 `read:packages` 권한 토큰으로 `docker login ghcr.io`가 필요하다. 익명 pull이 필요하면 Public으로 바꾼다. 확인하지 않았다.
+- 추정: `org.opencontainers.image.source` 라벨로 패키지가 `cp949/mailo` 저장소에 연결된다. 확인하지 않았다.
+
+### 릴리스 절차
+
+1. dev에서 루트 `package.json`과 `apps/mailo/package.json`의 `version`을 같은 값(`X.Y.Z`)으로 올려 커밋한다.
+2. dev를 main에 병합하고 push한다. main push의 `ci.yml` 실행이 성공했는지 확인한다.
+3. main의 그 커밋에 태그를 달고 push한다: `git tag vX.Y.Z origin/main && git push origin vX.Y.Z`.
+4. `Release` 워크플로 결과와 GHCR 패키지, GitHub Release를 확인한다. 첫 발행이면 "GHCR 공개 범위"를 확인한다.
+
 ## 로컬에서 확인한 범위 (2026-11-23)
 
 | 항목 | 결과 |
@@ -54,6 +142,9 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 | `static` 명령 | `format:check`·`typecheck`·`lint`·`build`·`test` 통과. 단위 407건 통과. turbo 캐시 적중 때문에 `typecheck`·`lint`·`test`는 이전 실행 결과의 재생이다 |
 | `integration` 명령 | 로컬 PostgreSQL(`postgres:17-alpine`)로 `pnpm test:integration` 15개 파일 222건 통과 |
 | `container` 스크립트 | 9개 모두 통과(관찰값은 아래) |
+| `release.yml` 문법 | `actionlint`(rhysd/actionlint 1.7.7 이미지, shellcheck 0.10.0 포함) 오류 0건 |
+| `release.yml` 가드 | 워크플로의 `run` 본문을 그대로 꺼내 임시 클론에서 실행했다. 조상: main 커밋 태그 성공, dev 커밋 태그 실패. 버전: `v0.1.0` 성공, `v0.2.0` 실패 |
+| `release.yml` 이미지 | `docker build --platform linux/amd64 .` 성공(Docker 29.8.0). 스모크 본문을 `docker pull`만 빼고 이 이미지에 실행해 통과했다. `revision` 라벨을 다르게 주면 실패했다 |
 | `nfs` | 작성 시에는 실행하지 않았다. 첫 GitHub 실행은 위 "NFS 잡"에 적었다. 수정 뒤 로컬에서는 먼저 NFS 없이 `CallerClient`의 사본 실행·종료 감지·응답 timeout·`run.sh` timeout을 확인했고, 이어 `nfs-kernel-server`를 설치해 `run.sh` 전체(31건)가 통과했다. 러너에서는 재실행 전이다 |
 
 컨테이너·볼륨 스크립트 관찰값(로컬 Docker 29.8.0, compose v5.5.1):
@@ -64,6 +155,7 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 
 ## 확인하지 않은 것
 
-- GitHub 러너에서의 모든 동작: Docker·compose 버전, 이미지 pull·빌드 시간, 서브넷 충돌, `timeout-minutes` 적정성, 서비스 컨테이너 포트 매핑.
+- `ci.yml`: `static`·`integration`·`container` 잡은 러너에서 성공했다(위 실행 기록). 러너의 Docker·compose 버전, 이미지 pull·빌드 시간, `timeout-minutes` 여유는 기록하지 않았다.
+- `release.yml`: GitHub에서 실행한 적이 없다. 태그 push, GHCR 로그인·push, provenance attestation, 러너에서의 스모크, 릴리스 노트 생성 API, Release 생성, GHCR 패키지 공개 범위를 확인하지 않았다. 로컬에서 확인한 것은 위 "로컬에서 확인한 범위"의 `release.yml` 행이다.
 - `actions/*` 세 액션의 이 워크플로 입력(`cache: pnpm`, `persist-credentials`, `if-no-files-found`, `retention-days`)은 `actionlint`가 문법을 통과시켰을 뿐 실행하지 않았다.
 - `schedule`은 기본 브랜치에서만 돈다. 저장소가 비활성이면 GitHub가 schedule을 멈출 수 있다.

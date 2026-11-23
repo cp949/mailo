@@ -1,0 +1,197 @@
+# Mailo 릴리스. vX.Y.Z 태그 push 때 이미지를 ghcr.io/cp949/mailo에 발행하고 GitHub Release를 만든다(docs/operations/ci.md "릴리스 워크플로").
+# 시크릿은 GITHUB_TOKEN만 쓴다. 이미지에는 시크릿을 넣지 않는다(RQ-025).
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+# 최상위는 읽기만 한다. 쓰기 권한은 release 잡에만 준다.
+permissions:
+  contents: read
+
+# 같은 태그의 실행을 직렬화한다. 진행 중 실행은 취소하지 않는다(발행 도중 중단 방지).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # ci.yml의 NODE_VERSION과 같은 값(Dockerfile의 node:24.20.0-alpine). 올릴 때 세 곳을 함께 바꾼다.
+  NODE_VERSION: "24.20.0"
+  IMAGE: ghcr.io/cp949/mailo
+
+# 액션은 태그가 가리키는 커밋 SHA로 고정한다. checkout·setup-node는 ci.yml과 같은 SHA다.
+# docker 액션 세 개는 2026-11-23에 releases/latest와 git/ref/tags로 조회한 값이다(세 태그 모두 lightweight, 커밋을 직접 가리킨다).
+# - actions/checkout             v7.0.1
+# - actions/setup-node           v7.1.0
+# - docker/login-action          v4.8.0
+# - docker/setup-buildx-action   v4.4.1
+# - docker/build-push-action     v7.4.0
+
+jobs:
+  verify:
+    name: verify (가드, format, typecheck, lint, build, 단위 테스트)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # 조상 확인에 main 이력이 필요해 전체 이력을 받는다.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 태그 커밋이 origin/main의 조상인지 확인
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          tag_commit="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main; then
+            echo "::error::태그 ${TAG}(${tag_commit})가 origin/main의 조상이 아니다. main에 병합한 커밋에 태그를 단다."
+            exit 1
+          fi
+          echo "태그 ${TAG} 커밋 ${tag_commit}은 origin/main의 조상이다."
+      - name: 태그 버전과 package.json version 일치 확인
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          root_version="$(jq -r .version package.json)"
+          app_version="$(jq -r .version apps/mailo/package.json)"
+          if [ "$root_version" != "$version" ] || [ "$app_version" != "$version" ]; then
+            echo "::error::태그 버전 ${version}이 package.json(${root_version}), apps/mailo/package.json(${app_version})과 다르다."
+            exit 1
+          fi
+          echo "버전 ${version} 일치."
+      # 통합·컨테이너 검사는 돌리지 않는다. 태그 커밋은 위에서 main의 조상임을 확인했고, main push마다 ci.yml이 전체 잡을 돌린다.
+      - run: corepack enable
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm test
+
+  release:
+    name: release (GHCR 이미지 발행, 스모크, GitHub Release)
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write # GitHub Release 생성과 릴리스 노트 생성 API
+      packages: write # GHCR push
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 메타데이터 계산
+        id: meta
+        run: |
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # provenance·sbom 입력을 주지 않는다. v7.4.0 기본값: provenance는 공개 저장소에서 mode=max로 붙고, SBOM은 만들지 않는다.
+      - name: 이미지 빌드·push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.revision=${{ steps.meta.outputs.commit }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+      # DB 없이 할 수 있는 확인만 한다. 앱 기동·발송은 ci.yml의 container 잡이 main에서 확인한다.
+      - name: 발행한 이미지 스모크
+        env:
+          REF: ${{ env.IMAGE }}:${{ github.ref_name }}
+          COMMIT: ${{ steps.meta.outputs.commit }}
+        run: |
+          docker pull "$REF"
+          revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$REF")"
+          if [ "$revision" != "$COMMIT" ]; then
+            echo "::error::이미지 revision 라벨 ${revision}이 태그 커밋 ${COMMIT}과 다르다."
+            exit 1
+          fi
+          # compose와 같은 보안 옵션으로 실행한다(read_only, cap_drop ALL, no-new-privileges).
+          run=(docker run --rm --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true)
+          id_out="$("${run[@]}" --entrypoint id "$REF")"
+          echo "id: ${id_out}"
+          case "$id_out" in
+            "uid=1000(node) gid=1000(node)"*) ;;
+            *) echo "::error::컨테이너가 node(UID 1000)로 실행되지 않는다."; exit 1 ;;
+          esac
+          node_out="$("${run[@]}" --entrypoint node "$REF" --version)"
+          if [ "$node_out" != "v${NODE_VERSION}" ]; then
+            echo "::error::이미지 Node ${node_out}이 NODE_VERSION ${NODE_VERSION}과 다르다."
+            exit 1
+          fi
+          # 빌드 결과·마이그레이션 존재, 런타임 사용자의 코드 쓰기 불가, npm 제거(Dockerfile runtime 단계).
+          "${run[@]}" --entrypoint sh "$REF" -c '
+            set -e
+            test -f dist/main.js
+            test -f dist/db/migrate-cli.js
+            ls migrations/*.sql >/dev/null
+            test ! -w /repo/apps/mailo/dist
+            test ! -w /repo/node_modules
+            if command -v npm >/dev/null; then echo "npm이 남아 있다"; exit 1; fi
+          '
+          # 설정 없이 기동하면 모든 모듈을 import한 뒤 설정 검증에서 종료 코드 1과 startup_failed 로그로 끝나야 한다.
+          # 운영 의존성 누락이면 import 단계에서 다른 오류로 끝난다.
+          set +e
+          start_out="$("${run[@]}" "$REF" 2>&1)"
+          start_code=$?
+          set -e
+          echo "$start_out"
+          if [ "$start_code" -ne 1 ] || ! grep -q '"event":"startup_failed"' <<<"$start_out"; then
+            echo "::error::설정 없는 기동이 종료 코드 1·startup_failed로 끝나지 않았다(종료 코드 ${start_code})."
+            exit 1
+          fi
+      # gh release create는 --generate-notes와 --notes(-file)를 함께 주면 노트를 생성 노트 앞에 붙인다(gh 2.100.0 help).
+      # 안내를 끝에 두려고 생성 노트를 API로 받아 뒤에 덧붙인 뒤 --notes-file로 만든다.
+      - name: GitHub Release 생성
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          # 재실행 때 이미 만든 Release는 건드리지 않는다(이미지는 같은 태그로 다시 push된다).
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::Release ${TAG}가 이미 있어 만들지 않는다."
+            exit 0
+          fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          gh api --method POST "repos/${GH_REPO}/releases/generate-notes" -f tag_name="$TAG" --jq .body > "$notes"
+          {
+            echo ""
+            echo "## 이미지"
+            echo ""
+            echo '```sh'
+            echo "docker pull ${IMAGE}:${TAG}"
+            echo '```'
+            echo ""
+            echo "- 플랫폼: linux/amd64"
+            echo "- digest: \`${DIGEST}\`"
+            echo ""
+            echo "## 업그레이드 주의"
+            echo ""
+            echo "- 마이그레이션은 자동으로 되돌리지 않는다(down 마이그레이션 없음). 업그레이드 전에 \`pg_dump\`로 백업한다."
+            echo "- 이미지 기본 \`CMD\`는 마이그레이션을 실행하지 않는다. compose 밖에서 실행하면 \`node dist/db/migrate-cli.js\`를 먼저 실행한다."
+            echo "- 절차: [docs/operations/deployment.md](${REPO_URL}/blob/${TAG}/docs/operations/deployment.md#기동-순서와-마이그레이션)"
+          } >> "$notes"
+          gh release create "$TAG" --title "$TAG" --notes-file "$notes" --verify-tag

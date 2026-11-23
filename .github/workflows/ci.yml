@@ -1,4 +1,4 @@
-# Mailo CI. 이 워크플로는 작성만 했고 GitHub에서 실행해 본 적이 없다(docs/operations/ci.md).
+# Mailo CI. GitHub 실행 기록과 로컬 재현은 docs/operations/ci.md에 있다(최근 성공: run 45182590945, dev, 2026-11-23).
 # 시크릿은 쓰지 않는다. 아래 비밀번호·키는 모두 테스트용 가짜 값이다.
 name: CI
 

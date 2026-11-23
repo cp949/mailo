@@ -48,6 +48,23 @@ cp callers.example.json callers.json   # 해시를 실제 호출처 키의 SHA-2
 docker compose up -d --build
 ```
 
+### GHCR 이미지
+
+- 릴리스 태그마다 `ghcr.io/cp949/mailo:vX.Y.Z`와 `latest`가 발행된다(`linux/amd64`만). 발행 절차는 `ci.md` "릴리스 워크플로"다.
+- 태그를 고정해 쓴다: `docker pull ghcr.io/cp949/mailo:vX.Y.Z`. `latest`는 다음 릴리스에서 옮겨지므로 운영에 쓰지 않는다. 더 엄격하게 고정하려면 Release 노트의 digest(`ghcr.io/cp949/mailo@sha256:...`)를 쓴다.
+- 기본 `CMD`는 마이그레이션을 실행하지 않는다("기동 순서와 마이그레이션").
+- `docker-compose.yml`의 `mailo`는 `build: context: .`로 로컬 빌드한다. 발행 이미지를 쓰려면 override 파일에서 `build`를 지우고 `image`를 준 뒤 `--build` 없이 띄운다. `docker-compose.migrate-once.yml`을 쓰면 `mailo-migrate`에도 같은 두 줄을 준다.
+
+```yaml
+# docker-compose.override.yml
+services:
+  mailo:
+    image: ghcr.io/cp949/mailo:vX.Y.Z
+    build: !reset null
+```
+
+- compose v5.5.1에서 `docker compose config --images`가 `ghcr.io/cp949/mailo:<태그>`를 내고 `mailo`에 `build`가 없는 것을 확인했다(2026-11-23). `!reset`은 compose v2.24 이상이 필요하다. 이 구성으로 실제 기동은 하지 않았다.
+
 ### 개발용 Mailpit
 
 로컬 개발에서 실제 메일 서버 없이 Mailo의 발송 결과를 보는 구성이다. 운영용이 아니다. 운영에서 profile `mailpit`을 켜지 않는다.
