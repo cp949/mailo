@@ -14,21 +14,11 @@ import {
   type Priority,
 } from "../queue/index.js";
 import { WORKER_RUNNER, type WorkerRunner } from "../worker-port.js";
+import { lastReasonOf } from "./breaker-reason.js";
+import { withBoundedClient } from "./bounded-client.js";
 
 const logger = new Logger("health");
 const CHECK_TIMEOUT_MS = 3000;
-// 서버 쪽 쿼리 시간 상한. 응답만 포기하면 쿼리가 풀 슬롯을 계속 잡으므로 `CHECK_TIMEOUT_MS`보다 짧게 둔다(추정).
-const CHECK_STATEMENT_TIMEOUT_MS = 2000;
-
-/** 큐의 차단기 사유(`AccountErrorReason`)를 계약의 `lastReason` 값으로 바꾼다. 알 수 없는 값은 `OTHER`다. */
-const LAST_REASON: Record<string, string> = {
-  AUTH: "AUTH_FAILED",
-  TLS: "TLS_FAILED",
-  CONNECTION: "CONNECTION_FAILED",
-  DAILY_LIMIT: "QUOTA_DAILY",
-  RATE_LIMIT: "QUOTA_BURST",
-  OTHER: "OTHER",
-};
 
 /** 등급별 적체 값을 등급 이름 키의 객체로 펼친다. 키 순서는 `PRIORITIES`(LOW → URGENT)다. */
 function byPriority<V, T>(
@@ -98,62 +88,6 @@ export interface ReadyResult {
   };
 }
 
-/**
- * 연결 하나를 읽기 전용 트랜잭션으로 열어 `work`를 실행한다. 전체가 `ms`를 넘으면 reject하고 그 연결을 버린다.
- * `SET LOCAL statement_timeout`으로 서버도 쿼리를 취소하게 한다. 응답만 포기하면 쿼리가 풀 슬롯을 계속 잡는다.
- * 버린 연결은 풀에 돌아가지 않으므로 응답 없는 연결이 다음 헬스체크를 막지 않는다.
- */
-function withBoundedClient<T>(
-  pool: pg.Pool,
-  ms: number,
-  work: (client: pg.PoolClient) => Promise<T>,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    let client: pg.PoolClient | undefined;
-    let released = false;
-    const release = (discard?: Error): void => {
-      if (client === undefined || released) return;
-      released = true;
-      client.release(discard);
-    };
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      release(new Error("timeout"));
-      reject(new Error("timeout"));
-    }, ms);
-    timer.unref();
-
-    void (async () => {
-      try {
-        client = await pool.connect();
-        if (settled) return release(); // 시간 초과 뒤에 얻은 연결은 그대로 돌려준다.
-        await client.query("BEGIN READ ONLY");
-        await client.query(
-          `SET LOCAL statement_timeout = ${CHECK_STATEMENT_TIMEOUT_MS}`,
-        );
-        const result = await work(client);
-        await client.query("COMMIT");
-        if (!settled) {
-          settled = true;
-          resolve(result);
-        }
-        release();
-      } catch (error) {
-        if (!settled) {
-          settled = true;
-          reject(error);
-        }
-        // 트랜잭션이 열린 채 오류가 난 연결은 상태를 알 수 없어 버린다.
-        release(error instanceof Error ? error : new Error("health failed"));
-      } finally {
-        clearTimeout(timer);
-      }
-    })();
-  });
-}
-
 @Injectable()
 export class HealthService {
   constructor(
@@ -216,7 +150,7 @@ export class HealthService {
                   lastReason:
                     breaker.state === "closed" || breaker.lastReason === null
                       ? null
-                      : (LAST_REASON[breaker.lastReason] ?? "OTHER"),
+                      : lastReasonOf(breaker.lastReason),
                 }
               : {}),
           },

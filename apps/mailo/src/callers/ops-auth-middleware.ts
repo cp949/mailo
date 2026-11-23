@@ -28,3 +28,23 @@ export function createOpsAuthMiddleware(
     next();
   };
 }
+
+/**
+ * `/metrics`의 인증을 라우트 매칭보다 먼저 한다(ADR-0012 결정 1). `app.use("/metrics", ...)`로 걸어야 한다.
+ * `/ops`와 같은 이유다. 경로 디코딩 오류가 인증 실패보다 먼저 나가 라우트의 존재를 드러내지 않게 한다.
+ * 읽기 토큰만 통과하고 관리 토큰은 403, 그 밖은 401이다. 컨트롤러의 `MetricsReadGuard`가 같은 판정을 한 번 더 한다(이중 방어).
+ */
+export function createMetricsAuthMiddleware(
+  registry: CallerRegistry,
+  opsConfig: OpsConfig,
+): (req: HttpRequest, res: HttpResponse, next: () => void) => void {
+  const ops = createOpsTokenMatcher(opsConfig);
+  return (req, res, next) => {
+    const result = checkBearer(req, registry, ops);
+    if (result.kind !== "operator")
+      return sendProblem(res, req.requestId, problems.unauthorized());
+    if (result.role !== "read")
+      return sendProblem(res, req.requestId, problems.forbidden());
+    next();
+  };
+}

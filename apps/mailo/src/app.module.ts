@@ -1,4 +1,4 @@
-import { Module, type DynamicModule } from "@nestjs/common";
+import { Global, Module, type DynamicModule } from "@nestjs/common";
 import type pg from "pg";
 import { AppLifecycle, HTTP_TIMEOUTS } from "./app-lifecycle.js";
 import {
@@ -28,6 +28,7 @@ import { HealthModule } from "./health/index.js";
 import { HttpModule } from "./http/index.js";
 import { IntakeModule } from "./intake/index.js";
 import { APP_LOGGER, type AppLogger } from "./logging/index.js";
+import { APP_METRICS, createMetrics } from "./metrics/index.js";
 import { OpsModule } from "./ops/index.js";
 import { QueueModule } from "./queue/index.js";
 import { SmtpModule, type MailSender } from "./smtp/index.js";
@@ -79,6 +80,34 @@ export interface AppModuleOptions {
   http?: HttpServerTimeouts;
 }
 
+/**
+ * 앱이 공유하는 counter 저장소(`APP_METRICS`)를 전역으로 둔다(ADR-0012 결정 7).
+ * 호출처 ID 집합은 기동 때 읽은 레지스트리에서 받는다. 시리즈 상한에 닿으면 지표 이름만 `metrics_series_limit`(warn)로 남긴다.
+ * `metrics/`는 leaf라 레지스트리와 로거를 모른다. 여기서 연결한다.
+ */
+@Global()
+@Module({})
+class AppMetricsModule {
+  static forRoot(logger: AppLogger): DynamicModule {
+    return {
+      module: AppMetricsModule,
+      providers: [
+        {
+          provide: APP_METRICS,
+          inject: [CALLER_REGISTRY],
+          useFactory: (registry: CallerRegistry) =>
+            createMetrics({
+              callerIds: registry.callers.map((c) => c.id),
+              onSeriesLimit: (metric) =>
+                logger.warn("metrics_series_limit", { metric }),
+            }),
+        },
+      ],
+      exports: [APP_METRICS],
+    };
+  }
+}
+
 @Module({})
 export class AppModule {
   static forRoot(options: AppModuleOptions): DynamicModule {
@@ -89,6 +118,7 @@ export class AppModule {
         DbModule.forRoot(options.pool ? { pool: options.pool } : {}),
         HttpModule,
         CallersModule,
+        AppMetricsModule.forRoot(options.logger),
         CryptoModule,
         EnvelopeModule,
         IntakeModule,

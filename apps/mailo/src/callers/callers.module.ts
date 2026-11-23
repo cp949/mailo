@@ -7,6 +7,7 @@ import {
 } from "../config/index.js";
 import {
   BearerAuthGuard,
+  MetricsReadGuard,
   OpsAdminGuard,
   OpsReadGuard,
   OptionalBearerAuthGuard,
@@ -72,6 +73,7 @@ function assertOpsTokensDistinctFromCallerKeys(
     OptionalBearerAuthGuard,
     OpsReadGuard,
     OpsAdminGuard,
+    MetricsReadGuard,
   ],
   exports: [
     CALLER_REGISTRY,
@@ -79,6 +81,7 @@ function assertOpsTokensDistinctFromCallerKeys(
     OptionalBearerAuthGuard,
     OpsReadGuard,
     OpsAdminGuard,
+    MetricsReadGuard,
   ],
 })
 export class CallersModule {}

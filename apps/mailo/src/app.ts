@@ -7,7 +7,11 @@ import {
   DEFAULT_HTTP_TIMEOUTS,
   type AppModuleOptions,
 } from "./app.module.js";
-import { CALLER_REGISTRY, createOpsAuthMiddleware } from "./callers/index.js";
+import {
+  CALLER_REGISTRY,
+  createMetricsAuthMiddleware,
+  createOpsAuthMiddleware,
+} from "./callers/index.js";
 import {
   requestContext,
   type HttpRequest,
@@ -75,6 +79,11 @@ export async function createApp(
   server.use(
     "/ops",
     createOpsAuthMiddleware(app.get(CALLER_REGISTRY), options.config.ops),
+  );
+  // `/metrics`도 같은 이유로 라우트 매칭 전에 인증한다. 읽기 토큰만 통과한다(ADR-0012 결정 1).
+  server.use(
+    "/metrics",
+    createMetricsAuthMiddleware(app.get(CALLER_REGISTRY), options.config.ops),
   );
   return app;
 }

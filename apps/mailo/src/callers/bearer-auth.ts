@@ -175,6 +175,32 @@ export class OpsAdminGuard implements CanActivate {
   }
 }
 
+/**
+ * `GET /metrics`용. 읽기 토큰만 받는다. 관리 토큰은 403(`forbidden`), 호출처 키·자격 없음·모르는 값은 401이다
+ * (ADR-0012 결정 1, ADR-0011 결정 1의 "관리는 읽기 포함"에서 이 endpoint만 예외).
+ * 읽기 토큰(`MAILO_OPS_TOKEN`)이 없으면 어떤 값도 읽기 권한이 아니라 401이다. 관리 토큰만 설정돼 있으면 그 토큰은 403이다.
+ * Prometheus 설정에 관리 토큰이 놓인 오설정이 403으로 바로 드러나게 한다.
+ */
+@Injectable()
+export class MetricsReadGuard implements CanActivate {
+  private readonly ops: OpsTokenMatcher;
+
+  constructor(
+    @Inject(CALLER_REGISTRY) private readonly registry: CallerRegistry,
+    @Inject(APP_CONFIG) config: AppConfig,
+  ) {
+    this.ops = createOpsTokenMatcher(config.ops);
+  }
+
+  canActivate(context: ExecutionContext): boolean {
+    const req = context.switchToHttp().getRequest<HttpRequest>();
+    const result = checkBearer(req, this.registry, this.ops);
+    if (result.kind !== "operator") throw problems.unauthorized();
+    if (result.role !== "read") throw problems.forbidden();
+    return true;
+  }
+}
+
 /** 인증된 호출처 ID를 핸들러 인자로 받는다. 가드 뒤에서만 쓴다. */
 export const CallerId = createParamDecorator(
   (_data: unknown, context: ExecutionContext): string | undefined => {

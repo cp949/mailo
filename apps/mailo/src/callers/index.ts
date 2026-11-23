@@ -2,13 +2,17 @@ export { CallersModule } from "./callers.module.js";
 export {
   BearerAuthGuard,
   CallerId,
+  MetricsReadGuard,
   OpsAdminGuard,
   OpsReadGuard,
   OptionalBearerAuthGuard,
   checkBearer,
   createOpsTokenMatcher,
 } from "./bearer-auth.js";
-export { createOpsAuthMiddleware } from "./ops-auth-middleware.js";
+export {
+  createMetricsAuthMiddleware,
+  createOpsAuthMiddleware,
+} from "./ops-auth-middleware.js";
 export type {
   BearerResult,
   OperatorRole,
