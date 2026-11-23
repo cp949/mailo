@@ -12,6 +12,16 @@ import {
   type HttpRequest,
   type HttpResponse,
 } from "./http/index.js";
+import {
+  createNestLogger,
+  createStdoutLogger,
+  type AppLogger,
+} from "./logging/index.js";
+
+/** `createApp` 옵션. 로거는 생략하면 표준 출력 JSON 로거를 여기서 한 번 만든다(테스트가 수집기를 넣는다). */
+export type CreateAppOptions = Omit<AppModuleOptions, "logger"> & {
+  logger?: AppLogger;
+};
 
 /**
  * 앱을 만든다. main.ts와 통합 테스트가 같은 설정을 쓴다.
@@ -21,18 +31,24 @@ import {
  *   종료 때의 상한은 `AppLifecycle`이 따로 건다(Node는 `server.close()` 뒤 이 시간제한 점검을 멈춘다).
  */
 export async function createApp(
-  options: AppModuleOptions,
+  createOptions: CreateAppOptions,
 ): Promise<INestApplication> {
+  // 앱의 로거는 이 한 곳에서 만든다. Worker·파일 폴러는 DI(APP_LOGGER)로, Nest와 HTTP 계층은 Nest 로거 어댑터로 받아
+  // 모든 로그가 `{ts, instance, level, event, ...}` 한 줄 JSON이 된다(M10).
+  const logger =
+    createOptions.logger ??
+    createStdoutLogger({ instance: createOptions.config.instanceId });
+  const options: AppModuleOptions = { ...createOptions, logger };
   const httpTimeouts = options.http ?? DEFAULT_HTTP_TIMEOUTS;
   const app = await NestFactory.create(AppModule.forRoot(options), {
     bodyParser: false,
     // 기동 중 오류를 process.abort() 대신 reject로 올린다. main.ts가 이름·코드만 출력하고 exit(1)한다.
     abortOnError: false,
     // 운영은 debug를 끈다. 헬스 프로브 요청 로그가 debug라서 프로브마다 한 줄씩 쌓이지 않게 한다.
-    logger:
-      options.config.env === "production"
-        ? ["log", "warn", "error"]
-        : ["log", "warn", "error", "debug"],
+    // 인스턴스를 직접 넘기면 부트스트랩 로그도 처음부터 JSON이라 bufferLogs가 필요 없다.
+    logger: createNestLogger(logger, {
+      debug: options.config.env !== "production",
+    }),
   });
   const server = app.getHttpAdapter().getInstance() as {
     disable(name: string): void;

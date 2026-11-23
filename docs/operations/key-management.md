@@ -134,7 +134,7 @@ openssl rsa -in mailo-2026-12.private.pem -pubout -out mailo-2026-12.public.pem
 umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 ```
 
-- 호출처마다 다른 키를 쓴다. 한 호출처의 키로 다른 호출처 이름의 서명은 통과하지 못한다.
+- 호출처마다 다른 키를 쓴다. 한 호출처의 키로 다른 호출처 이름의 서명은 통과하지 못한다. 같은 키를 두 호출처·두 `kid`에 쓰거나 DB 본문 키·지문 키와 같은 키를 쓰면 Mailo가 기동하지 않는다. `NODE_ENV`가 `development`·`test`가 아니면 같은 바이트가 반복된 키와 공개 샘플 키도 거부한다(ADR-0008 구현 중 확정 13).
 - `signature.mode=none` 호출처는 inbox 쓰기 권한자의 수신자 바꿔치기를 막지 못한다. JWE 본문 유출을 막아야 하면 `required`로 두고 이 키를 발급한다(`caller-onboarding.md` "`none`의 한계", ADR-0008 구현 중 확정 9).
 - `callers.json`의 `signature.keys[]`는 `kid`와 변수 이름(`secretVar`, `MAILO_JWS_SECRET_`로 시작하는 대문자)만 가진다. 호출처당 1~2개다.
 

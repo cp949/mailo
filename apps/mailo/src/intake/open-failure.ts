@@ -1,4 +1,4 @@
-import type { ValidationErrorItem } from "../http/index.js";
+import type { ValidationErrorItem } from "../validation/index.js";
 import type { OpenRequestFailure } from "../envelope/index.js";
 
 /**

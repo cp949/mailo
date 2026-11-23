@@ -16,7 +16,7 @@
 ```sh
 # 인증된 준비 상태. 차단기와 피드 지연을 함께 본다
 curl -s -H "Authorization: Bearer $KEY" http://<host>:3000/health/ready
-# 로그(컨테이너 표준 출력). Worker·파일 폴러는 한 줄 JSON이다
+# 로그(컨테이너 표준 출력). 모든 로그는 한 줄 JSON이고 ts·instance·level·event가 앞에 온다(deployment.md "로그")
 docker compose logs --since 1h mailo | grep -E '"level":"(warn|error)"'
 ```
 
@@ -35,7 +35,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | 같은 메일이 두 번 갔다 | `LEASE_EXPIRED` 시도, `drain_timeout`, `lease_lost` |
 | 입력 폴더의 파일이 남는다 | `file_poll`의 `unreadable`·`deleteFailed`, `file_inbox_missing` |
 | 이벤트가 안 온다 | 작업 상태, 긴 트랜잭션, cursor 저장 |
-| `/health/ready`가 503 | DB 연결(`readiness check failed`) |
+| `/health/ready`가 503 | DB 연결(`readiness_check_failed`) |
 | 기동하지 않는다 | `key-management.md`의 오류 표, `deployment.md`의 제약 표 |
 
 ## 전역 차단기가 open일 때
@@ -45,7 +45,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 확인:
 
 - `GET /health/ready`(유효한 Bearer): `circuitBreaker.state`(`closed`, `open`, `half_open`, `unknown`), `openUntil`(`open`일 때만 값), `lastReason`. 인증 없이는 `state`만 나온다.
-- 로그: `{"level":"warn","event":"breaker_not_closed","state":...,"reason":...,"openUntil":...,"waitSeconds":...}`. 계정 상태 오류 시도를 기록한 직후 차단기가 `closed`가 아닐 때 한 번 남는다. 연속 실패가 임계값(기본 3) 아래라 아직 `closed`이면 이 로그는 없다. `reason`은 `AUTH`, `TLS`, `CONNECTION`, `DAILY_LIMIT`, `RATE_LIMIT`, `OTHER`다.
+- 로그: `{"ts":…,"instance":…,"level":"warn","event":"breaker_not_closed","state":...,"reason":...,"openUntil":...,"waitSeconds":...}`. 계정 상태 오류 시도를 기록한 직후 차단기가 `closed`가 아닐 때 한 번 남는다. 연속 실패가 임계값(기본 3) 아래라 아직 `closed`이면 이 로그는 없다. `reason`은 `AUTH`, `TLS`, `CONNECTION`, `DAILY_LIMIT`, `RATE_LIMIT`, `OTHER`다.
 - DB(읽기): `SELECT state, open_until, probe_until, consecutive_failures, wait_seconds, last_reason FROM mail_circuit_breaker;`
 - 작업 쪽: `GET /jobs/{jobId}`의 `lastError.category`가 `ACCOUNT`이고 차단기를 연 시도는 `attempts`가 늘지 않는다. 차단기가 `closed`로 남은 계정 상태 오류(연속 실패가 임계값 아래이거나 일부 메시지에만 나는 `OTHER` 거부)는 작업별 오류라서 `attempts`가 늘고 일반 backoff로 재시도하며, 최대 시도(8)에 닿으면 `FAILED`(`MAX_ATTEMPTS_EXCEEDED`)다(ADR-0007 구현 중 확정 8).
 
@@ -108,7 +108,7 @@ SELECT job_id, started_at, finished_at FROM mail_attempts
 
 의미: Mailo가 읽기 권한이 없어 열지 못한 파일이다. 거부하지 않고 남겨 둔다. 권한 구성이 틀렸을 때 유효한 요청이 삭제되는 것을 막기 위해서다(ADR-0004 구현 중 확정 3).
 
-신호: 폴링 요약 로그 `{"level":"info","event":"file_poll","callerId":...,"registered":...,"unreadable":N,...}`의 `unreadable`이 0보다 크다. 요약은 폴링에서 처리·정리·오류가 있었을 때만 남는다.
+신호: 폴링 요약 로그 `{"ts":…,"instance":…,"level":"info","event":"file_poll","callerId":...,"registered":...,"unreadable":N,...}`의 `unreadable`이 0보다 크다. 요약은 폴링에서 처리·정리·오류가 있었을 때만 남는다.
 
 원인과 조치:
 
@@ -132,7 +132,9 @@ SELECT job_id, started_at, finished_at FROM mail_attempts
 | `file_channel_disabled` | warn | 호출처에 `fileChannel: true`가 있는데 `MAILO_FILE_CHANNEL_ROOT`가 없다(`callers` 수) |
 | `file_inbox_missing` / `file_inbox_found` | warn / info | 호출처 폴더가 없다(`code`: `ENOENT`·`ENOTDIR`) / 다시 생겼다. 폴더를 만드는 것은 운영자의 몫이다. 호출처당 한 번만 남는다 |
 | `file_inbox_stale` | warn | NFS `ESTALE`로 이번 폴링에서 호출처를 건너뛰었다. 다음 간격에 다시 본다 |
-| `file_rejected` | info | 수집 거부 기록. `callerId`, `reasonCode`, `fileName`, `sizeBytes`, `sha256`(본문 없음) |
+| `file_dir_unsafe` / `file_dir_safe` | warn / info | `<root>`·`inbox`·호출처 폴더가 심볼릭 링크이거나 디렉터리가 아니라서 그 폴링에서 읽지 않는다(`dir`: `root`·`inbox`·`callerInbox`, `why`: `SYMLINK`·`NOT_DIRECTORY`) / 복구됐다. 상태가 바뀔 때 한 번만 남는다. 링크를 지우고 실제 디렉터리를 둔다 |
+| `file_channel_dir_permissive` | warn | 폴더 권한이 넓다(`o+w`, `<root>`·`inbox`는 `g+w`도). `mode`는 8진수. 수집은 막지 않는다. 폴더당 한 번 남는다. 호출처 폴더의 `g+w`는 default ACL 마스크 때문에 정상이라 경고하지 않는다 |
+| `file_rejected` | info | 수집 거부 기록. `callerId`, `reasonCode`, `rejectionId`, `sizeBytes`, `sha256`(본문·파일 이름 없음). 파일 이름은 호출처가 정하므로 로그에 남기지 않는다. `rejectionId`로 `mail_intake_rejections.id`나 이벤트 피드의 `INTAKE_REJECTED`(`fileName` 포함)를 찾는다 |
 | `file_temp_delete_failed` | warn | 오래된 임시 파일 삭제 실패(`error`) |
 | `file_ingest_failed` | error | 한 파일 처리 중 오류(DB 오류 등, `error`). 같은 폴링에서 3번 연속이면 그 폴링을 접는다 |
 | `file_poll_failed`, `file_poll_crashed` | error | 폴링 단위 실패. 다음 간격에 다시 시도한다. `file_poll_failed`는 한 호출처의 폴더 목록을 읽지 못한 경우(권한 등)이고 다른 호출처 처리는 계속한다 |
@@ -157,7 +159,7 @@ SELECT id, caller_id, file_name, size_bytes, reason_code, created_at
 | `IDEMPOTENCY_KEY_MISSING` | 파일에 `idempotencyKey`가 없다 | 필드를 넣는다 |
 | `IDEMPOTENCY_KEY_INVALID` | Key가 1~128자, `[A-Za-z0-9._:-]` 형식이 아니다 | 형식에 맞는 Key를 쓴다 |
 | `FINGERPRINT_MISMATCH` | 같은 `(호출처, Key)`가 이미 있는데 내용이 다르다 | Key를 재사용하는 호출처 버그다. 요청 단위로 고유한 Key를 쓴다. 이미 등록된 작업은 그대로다 |
-| `VALIDATION_FAILED` | 수신자 형식·수, 제목 길이·CR/LF, 본문 크기, 정의되지 않은 필드, `version`이 1이 아님, `to` 없음, 평문과 `content` 혼용, 복호화한 제목·본문 검증 실패 | 파일을 계약(`docs/api/openapi.yaml`의 `SendRequest`)에 맞춘다. 위치는 이벤트에 없으므로 호출처가 필드를 점검한다 |
+| `VALIDATION_FAILED` | 허용 발신 주소가 아닌 `from`(`allowedFrom`·기본 발신 주소 확인), 수신자 형식·수, 제목 길이·CR/LF, 본문 크기, 정의되지 않은 필드, `version`이 1이 아님, `to` 없음, 평문과 `content` 혼용, 복호화한 제목·본문 검증 실패 | 파일을 계약(`docs/api/openapi.yaml`의 `SendRequest`)에 맞춘다. 위치는 이벤트에 없으므로 호출처가 필드를 점검한다 |
 | `ATTACHMENTS_NOT_SUPPORTED` | `attachments` 필드가 있다 | 첨부는 지원하지 않는다. 필드를 뺀다 |
 | `CALLER_MISMATCH` | JWS·JWE의 `caller`가 폴더 이름(`caller_id`)과 다르다 | `caller`를 호출처 `id`로 맞춘다. 파일을 다른 호출처 폴더에 넣지 않았는지도 본다 |
 | `IAT_OUT_OF_RANGE` | JWS `iat`가 허용 기간(기본 7일)보다 오래됐거나 허용 오차(기본 5분)를 넘어 미래다 | 호출처 호스트 시계를 NTP로 맞춘다. 파일을 새로 서명해 다시 넣는다 |
@@ -165,7 +167,7 @@ SELECT id, caller_id, file_name, size_bytes, reason_code, created_at
 - 고친 파일을 같은 이름으로 다시 넣어도 내용이 다르면 `sha256`이 달라 새 기록이 생긴다. 같은 이름·같은 내용을 다시 넣으면 새 거부 기록과 이벤트가 생기지 않고 원본만 삭제된다. 고치지 않은 같은 파일을 재투입하지 않는다.
 - `idempotencyKey`는 파싱할 수 있고 형식을 지킨 경우에만 이벤트에 들어간다. 서명이 `required`인 호출처에서 서명을 확인하지 못한 파일은 Key 없이(`null`) 나온다. `fileName`으로 찾는다.
 
-REST의 400 `validation-failed`는 `errors[]`에 `pointer`(또는 `parameter`)와 `code`를 준다. 코드: `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`(복호화 뒤 1 MiB 초과), `CONTROL_CHARACTER`(제목·주소의 CR/LF), `UNKNOWN_FIELD`(`pointer`는 빈 문자열), `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`. 복호화 관련 코드의 위치는 `/content`다. 409는 거부 기록이 아니라 응답이며 본문의 `jobId`가 먼저 등록된 작업이다.
+REST의 400 `validation-failed`는 `errors[]`에 `pointer`(또는 `parameter`)와 `code`를 준다. 코드: `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`(복호화 뒤 1 MiB 초과), `CONTROL_CHARACTER`(제목·주소의 CR/LF), `UNKNOWN_FIELD`(`pointer`는 빈 문자열), `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`(`pointer`는 `/from`, 요청의 `from`이 호출처의 허용 발신 주소가 아니다. `callers.json`의 `allowedFrom`을 확인한다). 복호화 관련 코드의 위치는 `/content`다. 409는 거부 기록이 아니라 응답이며 본문의 `jobId`가 먼저 등록된 작업이다.
 
 ## 피드 지연 해석
 
@@ -182,12 +184,12 @@ REST의 400 `validation-failed`는 `errors[]`에 `pointer`(또는 `parameter`)�
 3. 긴 트랜잭션을 찾는다.
 
 ```sql
-SELECT pid, datname, usename, state, xact_start, now() - xact_start AS age
-  FROM pg_stat_activity WHERE xact_start IS NOT NULL ORDER BY xact_start LIMIT 5;
+SELECT pid, datname, usename, state, backend_xid, xact_start, now() - xact_start AS age
+  FROM pg_stat_activity WHERE xact_start IS NOT NULL ORDER BY xact_start LIMIT 5;   -- backend_xid가 있는 세션이 피드를 붙잡는다
 SELECT gid, prepared FROM pg_prepared_xacts;   -- 끝나지 않은 prepared transaction
 ```
 
-- `idle in transaction`으로 오래 열린 세션, 대용량 `pg_dump`, 끝나지 않은 prepared transaction이 원인이 될 수 있다(추정, 일반 PostgreSQL 지식). 원인 세션을 끝내거나 작업이 끝나기를 기다린다.
+- `idle in transaction`으로 오래 열린 쓰기 트랜잭션, 끝나지 않은 prepared transaction이 원인이 된다. 피드는 트랜잭션 ID를 받은 트랜잭션만 기다린다. 읽기 전용 트랜잭션(`pg_dump`가 쓰는 `REPEATABLE READ`·`READ ONLY` 포함)은 트랜잭션 ID가 없어 피드를 지연시키지 않았다(2026-11-23 PostgreSQL 17에서 읽기 전용 트랜잭션을 연 채 새 이벤트의 가시성을 확인했고, 쓰기 트랜잭션을 연 채일 때만 `pg_snapshot_xmin`이 그 ID에 묶였다. 실제 `pg_dump`는 실행하지 않았다). `pg_stat_activity`의 `backend_xid`가 있는 세션을 찾는다. 원인 세션을 끝내거나 작업이 끝나기를 기다린다.
 - 호출처 쪽 원인도 본다. cursor를 저장하지 않아 같은 구간을 다시 읽거나, `type` 필터를 바꾸면서 같은 cursor를 쓰면 이벤트를 놓친 것처럼 보인다(cursor는 필터마다 따로 저장한다).
 - 호출처가 30일 넘게 폴링하지 않으면 그 사이 이벤트가 삭제됐다. 이 경우는 작업 상태 조회로 보완한다(Key 보존도 종결 후 30일이다).
 
@@ -202,10 +204,10 @@ SELECT gid, prepared FROM pg_prepared_xacts;   -- 끝나지 않은 prepared tran
 
 ## DB 연결 문제
 
-- `GET /health/ready`가 503이고 `checks.database`가 `DOWN`, `circuitBreaker.state`가 `unknown`이다. 로그에 `readiness check failed name=<오류 클래스> code=<pg 오류 코드>`가 남는다(접속 정보는 남기지 않는다).
+- `GET /health/ready`가 503이고 `checks.database`가 `DOWN`, `circuitBreaker.state`가 `unknown`이다. 로그에 `{"event":"readiness_check_failed","name":<오류 클래스>,"code":<pg 오류 코드>}`가 남는다(접속 정보는 남기지 않는다).
 - REST 등록·조회는 503(`service-unavailable`)이다. 사용처는 같은 Key로 재시도한다(ADR-0005 결정 5).
 - Worker는 `claim_failed`(error, `error`, `streak`)를 남기고 간격을 늘려(최대 30초) 다시 시도한다. DB가 돌아오면 자동 재개된다.
-- 풀의 유휴 연결 오류는 `idle client error name=... code=...`로 남는다.
+- 풀의 유휴 연결 오류는 `{"event":"db_idle_client_error","name":...,"code":...}`로 남는다.
 - DB 시간제한 오류: SQLSTATE `57014`(`statement_timeout`), `55P03`(`lock_timeout`), `25P03`(`idle_in_transaction_session_timeout`으로 연결이 끊김), 메시지 `Query read timeout`(`query_timeout`). 값은 `MAILO_DB_*_TIMEOUT_MS`이고 기본값과 조정 기준은 `deployment.md` "DB 시간제한과 장애 동작"이다.
 - 점유 루프가 예외로 죽으면 `poll_loop_crashed`(error) 뒤 `worker_fatal reason=poll_loop_crashed exitCode=70`이 stderr에 남고, 종료 순서(pause → drain → 풀 닫기)를 거쳐 종료 코드 70으로 끝난다. 컨테이너는 재시작한다. 반복되면 `poll_loop_crashed`의 `error` 이름을 본다.
 - 파일 채널은 파일과 무관한 오류(`file_ingest_failed`)가 3번 연속이면 그 폴링을 접고 다음 간격에 다시 시도한다. 폴더 목록 읽기 실패(`file_poll_failed`)는 이 횟수에 세지 않는다(ADR-0004 구현 중 확정 29).
@@ -218,6 +220,8 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 | ------ | ---- |
 | `sweep_expired` | 만료 시각을 넘긴 `PENDING`·`RETRY_WAIT` 작업을 `EXPIRED`로 바꾸고 `JOB_EXPIRED` 이벤트를 썼다 |
 | `lease_recovered` | lease가 지난 `SENDING` 작업을 회수했다 |
+
+- 인스턴스가 여럿이면 각 단계(`sweep_expired`, `lease_recovered`, 본문 삭제 `bodies_deleted`, 보존 삭제 `records_deleted`)는 배치마다 DB advisory lock을 잡은 인스턴스만 돌린다. 못 잡은 인스턴스는 기다리지 않고 건너뛰므로 로그에 `count`가 없다. 배치는 최대 1,000건이다(ADR-0002 구현 중 확정 10).
 | `bodies_deleted` | 종결 후 유예가 지난 작업의 본문을 비웠다 |
 | `records_deleted` | 보존 기간이 지난 작업 행(시도·이벤트 포함)과 거부 기록을 삭제했다 |
 | `<이름>_failed`(error) | 위 작업의 실패. `error`에 오류 이름 |
@@ -226,6 +230,6 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 
 ## 검증하지 않은 것
 
-- 위 신호와 SQL을 운영 환경에서 실행해 결과를 확인하지 않았다. 로그 이벤트 이름과 필드는 코드와 통합 테스트(차단기, 할당, 파일 폴러)로 확인했다. `breaker_not_closed`는 테스트로 단언하지 않았다.
+- 위 신호와 SQL을 운영 환경에서 실행해 결과를 확인하지 않았다. 로그 이벤트 이름과 필드는 코드와 통합 테스트(차단기, 할당, 파일 폴러)로 확인했다. `breaker_not_closed`는 `worker/worker.integration-spec.ts`가 단언한다.
 - 실제 Gmail의 응답 코드·텍스트로 `lastReason` 분류를 대조하지 않았다(ADR-0007 구현 중 확정 2).
 - 긴 트랜잭션의 원인 목록(`pg_dump`, prepared transaction)은 일반 지식이며 Mailo 피드로 재현하지 않았다.

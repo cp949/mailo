@@ -3,7 +3,8 @@
  * `createWorker`는 순수 의존성만 받는다. 이 파일이 환경 변수에서 읽은 값을 Worker 옵션·SMTP 발송기 설정으로 바꾼다.
  */
 import type pg from "pg";
-import { workerDrainTimeoutMs, type AppConfig } from "../config/index.js";
+import type { AppConfig } from "../config/index.js";
+import type { AppLogger } from "../logging/index.js";
 import type { BodyCipher } from "../queue/index.js";
 import {
   checkSmtpTimeouts,
@@ -13,8 +14,7 @@ import {
   type SmtpSenderConfig,
 } from "../smtp/index.js";
 import type { Clock } from "./clock.js";
-import { createJsonLogger, type WorkerLogger } from "./logger.js";
-import type { WorkerOptions } from "./options.js";
+import { workerOptionsFromConfig, type WorkerOptions } from "./options.js";
 import { createWorker, type WorkerDeps, type WorkerHandle } from "./worker.js";
 
 export interface WorkerRunnerDeps {
@@ -26,40 +26,20 @@ export interface WorkerRunnerDeps {
   /** 발송기를 직접 넘기면 설정으로 만들지 않는다. 테스트용이다. */
   sender?: MailSender;
   clock?: Clock;
-  logger?: WorkerLogger;
+  /** 앱이 만든 로거. 로거는 `createApp` 한 곳에서 만든다(M10). */
+  logger: AppLogger;
   /** 호출처별 24시간 발송 할당(호출처 ID -> 건수, RQ-032). 생략하면 모든 호출처가 무제한이다. */
   callerQuotas?: ReadonlyMap<string, number>;
   /** 점유 루프가 예외로 끝났을 때 부른다(`WorkerDeps.onFatal`). */
   onFatal?: WorkerDeps["onFatal"];
 }
 
-/**
- * 설정 값을 Worker 옵션으로 바꾼다.
- * - 환경 변수로 받지 않는 값은 `defaultWorkerOptions`와 같은 기본값을 쓴다(독성 작업 3회).
- * - 만료 sweep과 보존 삭제는 같은 주기(`MAILO_MAINTENANCE_INTERVAL_SECONDS`)로 돈다.
- * - drain 상한은 lease보다 10초 짧다. `stop_grace_period`(lease 이상) 안에 스스로 포기하기 위해서다.
- */
+/** 설정 값을 Worker 옵션으로 바꾼다(`workerOptionsFromConfig`). */
 export function toWorkerOptions(
   config: AppConfig,
   callerQuotas?: ReadonlyMap<string, number>,
 ): WorkerOptions {
-  const w = config.worker;
-  return {
-    retry: { ...w.retry, random: Math.random },
-    breaker: w.breaker,
-    leaseSeconds: w.lease.seconds,
-    pollMs: w.pollMs,
-    concurrency: w.concurrency,
-    sweepIntervalMs: w.retention.maintenanceIntervalMs,
-    cleanupIntervalMs: w.retention.maintenanceIntervalMs,
-    retention: {
-      bodyGraceSeconds: w.retention.bodyGraceSeconds,
-      recordSeconds: w.retention.recordRetentionSeconds,
-    },
-    drainTimeoutMs: workerDrainTimeoutMs(w.lease.seconds),
-    poisonMaxAttempts: 3,
-    ...(callerQuotas && callerQuotas.size > 0 && { callerQuotas }),
-  };
+  return workerOptionsFromConfig(config.worker, callerQuotas);
 }
 
 /**
@@ -110,9 +90,7 @@ export function createWorkerRunner(deps: WorkerRunnerDeps): WorkerHandle {
       defaultFrom: config.smtp.defaultFrom,
       ...(deps.clock && { clock: deps.clock }),
       ...(deps.onFatal && { onFatal: deps.onFatal }),
-      logger:
-        deps.logger ??
-        createJsonLogger((line) => void process.stdout.write(`${line}\n`)),
+      logger: deps.logger,
     },
     toWorkerOptions(config, deps.callerQuotas),
   );

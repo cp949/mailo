@@ -98,3 +98,33 @@ describe("docker-compose.yml의 DB 비밀번호 (M4)", () => {
     expect(message).toContain("DB 비밀번호");
   });
 });
+
+const dockerfile = readFileSync(`${REPO}Dockerfile`, "utf8");
+const rootPackage = readFileSync(`${REPO}package.json`, "utf8");
+const mailoService = compose.slice(compose.indexOf("\n  mailo:"));
+
+describe("이미지·컨테이너 강화 (M9)", () => {
+  it("mailo 서비스는 read_only 루트와 /tmp tmpfs, 모든 capability 제거, no-new-privileges를 쓴다", () => {
+    expect(mailoService).toMatch(/^ {4}read_only: true$/m);
+    expect(mailoService).toMatch(/^ {4}tmpfs:\n {6}- \/tmp$/m);
+    expect(mailoService).toMatch(/^ {4}cap_drop:\n {6}- ALL$/m);
+    expect(mailoService).toMatch(
+      /^ {4}security_opt:\n {6}- no-new-privileges:true$/m,
+    );
+  });
+
+  it("Dockerfile은 base 이미지를 sha256 digest로 고정하고 /repo 전체를 node에 chown하지 않는다", () => {
+    expect(dockerfile).toMatch(
+      /^FROM node:\d+\.\d+\.\d+-alpine@sha256:[0-9a-f]{64} AS base$/m,
+    );
+    // 주석은 제외하고 명령에서만 찾는다.
+    expect(dockerfile.replace(/^\s*#.*$/gm, "")).not.toMatch(/chown/);
+    expect(dockerfile).toMatch(/^USER node$/m);
+  });
+
+  it("packageManager는 pnpm 버전과 sha512 해시를 함께 고정한다", () => {
+    expect(rootPackage).toMatch(
+      /"packageManager": "pnpm@\d+\.\d+\.\d+\+sha512\.[0-9a-f]{128}"/,
+    );
+  });
+});

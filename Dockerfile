@@ -1,4 +1,7 @@
-FROM node:24.20.0-alpine AS base
+# 태그 대신 다중 아키텍처 index digest로 고정한다(태그는 옮겨질 수 있다). 2026-11-23에 조회한 값이다.
+# 갱신: `docker buildx imagetools inspect node:<버전>-alpine`의 Digest로 바꾸고 .github/workflows/ci.yml의 NODE_VERSION도 맞춘다
+# (Renovate나 Dependabot을 쓰면 digest를 자동 갱신한다). pnpm은 package.json의 packageManager가 sha512 해시로 고정한다.
+FROM node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS base
 RUN corepack enable
 WORKDIR /repo
 
@@ -21,7 +24,8 @@ RUN pnpm install --frozen-lockfile --prod
 COPY --from=build /repo/apps/mailo/dist apps/mailo/dist
 COPY apps/mailo/migrations apps/mailo/migrations
 # SMTP 인증 정보와 암호화 키는 이미지에 넣지 않는다. 환경 변수나 시크릿 마운트로 받는다.
-RUN chown -R node:node /repo
+# /repo 전체가 root 소유(읽기 전용)다. node는 읽고 실행만 하고 dist·node_modules·migrations를 바꿀 수 없다.
+# 런타임이 쓰는 경로는 없다(파일 채널·시크릿은 마운트, 임시 파일은 /tmp). `chown -R`은 레이어를 한 벌 더 만들어 뺐다.
 USER node
 WORKDIR /repo/apps/mailo
 EXPOSE 3000

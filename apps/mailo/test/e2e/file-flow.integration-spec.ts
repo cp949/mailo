@@ -20,7 +20,11 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type pg from "pg";
-import { FileChannelStartError } from "../../src/file-channel/index.js";
+import {
+  FILE_POLLER,
+  FileChannelStartError,
+  type FilePollerRunner,
+} from "../../src/file-channel/index.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
 import { fileRequest } from "../support/file-channel.js";
 import { startFakeSmtp, type FakeSmtp } from "../support/fake-smtp.js";
@@ -223,15 +227,22 @@ describe("e2e: 파일 -> 폴러 -> Worker -> SMTP -> 조회·이벤트 (RQ-002)"
   it("앱을 닫으면 폴러가 멈춘다(닫은 뒤에 넣은 파일은 수집되지 않는다)", async () => {
     mkdirSync(path.join(root, "inbox", "alpha"), { recursive: true });
     app = await startApp();
+    const poller = app.app.get<FilePollerRunner>(FILE_POLLER);
+    await waitFor(async () => poller.status?.().lastPollAt != null);
     await app.close();
     app = undefined;
+    // 폴러 정지는 close가 끝난 시점에 확정된다(stop은 루프 종료까지 기다린다). 고정 sleep 대신 상태로 확인한다.
+    expect(poller.status?.().running).toBe(false);
+    const stoppedAt = poller.status?.().lastPollAt;
 
     drop(
       "after.json",
       JSON.stringify(fileRequest({ idempotencyKey: "after" })),
     );
-    await sleep(300);
+    // 폴링 간격(50ms)의 여러 배 동안 폴러가 다시 돌지 않았는지(마지막 폴링 시각 불변) 본다.
+    await sleep(4 * 50);
 
+    expect(poller.status?.().lastPollAt).toEqual(stoppedAt);
     expect(inboxFiles()).toEqual(["after.json"]);
     const count = await pool.query("SELECT count(*)::int AS n FROM mail_jobs");
     expect(count.rows[0].n).toBe(0);

@@ -2,7 +2,7 @@
  * 헤더·쿼리 파라미터 검증. 오류는 파라미터 이름과 고정 코드만 담는다(요청 값은 담지 않는다).
  */
 import type { EventType } from "../events/index.js";
-import type { ValidationErrorItem } from "../http/index.js";
+import type { ValidationErrorItem } from "../validation/index.js";
 import { validateIdempotencyKey } from "../validation/index.js";
 
 export const EVENT_TYPES: readonly EventType[] = [

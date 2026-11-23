@@ -122,7 +122,7 @@ ADR-0001이 파일을 입력 채널로 정했다.
 - 공통 스키마의 필드명. 수신자·발신자 필드(CC, BCC, From, Reply-To)는 요청에 포함하고 ADR-0005 결정 3의 지문 입력 범위에 든다.
 - 결정됨: 봉투 암호화 암호문 형식과 알고리즘은 ADR-0008 결정 1이 JWE(`RSA-OAEP-256`, `A256GCM`)로 정했다.
 - 파일 크기 상한은 원시 요청 2 MiB로 정했다(RQ-030). 폴링 간격과 임시 파일 정리 시간의 기본값은 미결정이다. 결정됨(구현 중 확정): 폴링 30초, 임시 파일 정리 1시간(둘 다 추정).
-- `link` 방식으로 덮어쓰기를 막을지 여부. 미결정으로 남는다. 구현은 막지 못한다(구현 중 확정 10).
+- `link` 방식으로 덮어쓰기를 막을지 여부. 결정됨: 채택하지 않는다(구현 중 확정 10·30·32). 호출처는 `rename`만 쓰고 완성 이름을 고유하게 만든다.
 - 해소됨: `rejected/` 보존 기간과 사유 기록 형식은 필요 없다. ADR-0006 결정 4가 폴더를 폐지했고, 거부 기록과 이벤트의 보존 기간은 30일이다(ADR-0006 결정 8).
 - 호출처 계정·폴더 모드 구성. 운영 문서에서 정한다.
   - 결정됨(구현 중 확정 14~16, 같은 호스트 Docker 볼륨 한정): default ACL 방식을 권장하고 공용 그룹 + setgid는 대안이다. NAS/NFS의 계정·폴더 모드는 미확정이다.
@@ -138,8 +138,8 @@ ADR-0001이 파일을 입력 채널로 정했다.
 
 1. **활성 조건과 수명 주기.** `MAILO_FILE_CHANNEL_ROOT`(절대 경로)가 있을 때만 폴러가 켜진다. 기본은 꺼짐이다.
    - 호출처 레지스트리에서 `fileChannel: true`인 호출처의 `<root>/inbox/<caller_id>/`만 수집한다. `fileChannel: false`이거나 등록되지 않은 폴더는 읽지도 않고 거부 기록도 만들지 않는다.
-   - 앱 기동 때 폴러를 Worker보다 먼저 시작한다. root가 읽을 수 있는 디렉터리가 아니면 `FileChannelStartError`로 기동하지 않는다.
-   - 종료 순서는 HTTP 서버 닫기, 폴러 정지, Worker drain, DB 풀 닫기다. 폴러 정지는 새 파일을 시작하지 않고 진행 중인 파일의 등록·삭제를 끝낸 뒤 끝난다.
+   - 앱 기동 때 폴러를 Worker보다 먼저 시작한다. root가 읽을 수 있는 디렉터리가 아니면 `FileChannelStartError`로 기동하지 않는다. [대체됨(일부): 구현 중 확정 34. `<root>/inbox`도 같은 검사를 한다.]
+   - 종료 순서는 HTTP 서버 닫기, 폴러 정지, Worker drain, DB 풀 닫기다. [대체됨: 구현 중 확정 33. Worker `pause()`가 맨 앞이고 HTTP 닫기와 폴러 정지는 병행한다.] 폴러 정지는 새 파일을 시작하지 않고 진행 중인 파일의 등록·삭제를 끝낸 뒤 끝난다.
    - 코드는 폴더를 만들거나 chmod하지 않는다. inbox가 없으면 호출처별로 한 번만 경고 로그를 남기고 건너뛴다.
 2. **설정과 기본값(모두 추정).** `MAILO_FILE_POLL_INTERVAL_MS`(30000, 간격은 ±10%로 흩뿌린다), `MAILO_FILE_MAX_BYTES`(기본은 `MAILO_MAX_REQUEST_BYTES`와 같은 2 MiB), `MAILO_FILE_TEMP_MAX_AGE_SECONDS`(3600), `MAILO_FILE_BATCH_PER_CALLER`(100).
    - 시간 단위를 ms로 둔 것은 `MAILO_WORKER_POLL_MS`와 맞추고 테스트가 짧은 간격을 쓰기 위해서다.
@@ -167,6 +167,13 @@ ADR-0001이 파일을 입력 채널로 정했다.
 10. **덮어쓰기.** `link` 방식은 채택하지 않았다. 호출처가 같은 이름으로 rename하면 아직 수집되지 않은 기존 파일이 사라지는 것을 폴러는 막을 수 없다. 완성 파일 이름은 호출처가 고유하게 만들어야 한다(결정 3).
 11. **헬스.** `/health` 계약(openapi)은 바꾸지 않았다. 폴러는 마지막 폴링 시각·성공 여부·처리 대상 호출처 수를 내부 상태(`status()`)로 갖고, 파일이 처리된 폴링마다 호출처별 요약(등록·중복·거부·삭제 실패 건수)을 한 줄 JSON 로그로 남긴다. 외부에서 폴러가 멈췄는지 확인하는 신호는 아직 없다.
 12. **검증 범위(결정 10).** 통합 테스트는 WSL2 로컬 파일시스템의 임시 디렉터리와 PostgreSQL 17에서 실행했다. 확인한 것: 정상·서명·JWE 수집, 임시 이름·비json 무시, FIFO·심볼릭 링크·하드링크·크기 상한, 종료 뒤 재수집, 두 폴러 동시 수집, 거부 기록 멱등, 호출처 분리, 배치 상한, 종료 시 진행 중 파일 완료, 파일에서 Worker와 SMTP까지의 e2e. 확인하지 않은 것: NAS/NFS의 rename 가시성·`close` 전 `rename`·캐시 지연, Docker 볼륨 마운트, 공용 그룹·setgid·ACL로 Mailo가 호출처 파일을 읽는 구성, 호출처 계정의 목록 조회·다른 폴더 접근 차단. 실제 SIGTERM 수신 상태의 프로세스는 실행하지 않았고 폴러 `stop()`과 앱 종료 훅만 확인했다.
+
+32. **디렉터리 경로 검사와 거부 로그의 파일 이름(결정 8, 2026-11-23 코드 리뷰, `src/file-channel/dir-check.ts`, `poller.ts`, `ingest.ts`).** 결정 문구는 바꾸지 않는다.
+    - **링크 검사.** 파일은 `O_NOFOLLOW`로 열지만 디렉터리 경로는 따라간다. 호출처 폴더나 `inbox`가 심볼릭 링크로 바뀌면 다른 곳의 파일을 읽을 수 있다. 그래서 폴링마다 `<root>`, `<root>/inbox`, `<root>/inbox/<caller_id>`를 `lstat`한다. 링크이거나 디렉터리가 아니면 그 폴링에서 읽지 않는다(`<root>`·`inbox`는 모든 호출처, 호출처 폴더는 그 호출처만). `file_dir_unsafe`(warn, `dir`, `why`, `callerId`)를 상태가 바뀔 때 한 번 남기고 복구되면 `file_dir_safe`(info)를 남긴다. 호출처 폴더 검사 실패는 그 호출처의 `errors`에 세어 폴링 결과를 실패로 둔다. 없는 디렉터리는 이 검사가 아니라 기존 `file_inbox_missing`이 맡는다. 호스트가 `<root>`를 심볼릭 링크로 연결하는 운영 구성은 `docs/operations`에 없다. 컨테이너에서는 bind mount나 volume이 `<root>` 자리에 디렉터리로 보인다. 그래서 `<root>`도 링크를 거부한다. 링크 경로를 쓰는 배치가 생기면 `MAILO_FILE_CHANNEL_ROOT`를 링크가 아닌 실제 경로로 지정한다.
+    - **권한 경고.** 권한이 넓어도 기동·수집을 막지 않는다. NFS·ACL·umask가 어긋난 환경에서 수집을 멈추면 운영 피해가 더 크기 때문이다. `other` 쓰기 비트(`o+w`)가 있으면 세 종류 모두, 그룹 쓰기 비트(`g+w`)는 `<root>`·`inbox`에서만 `file_channel_dir_permissive`(warn, `dir`, `mode`, `callerId`)를 디렉터리마다 한 번 남긴다. 호출처 폴더의 `g+w`는 default ACL 권장 구성에서 ACL 마스크가 그룹 비트로 보여 정상이므로 경고하지 않는다.
+    - **거부 로그.** `file_rejected` 로그에서 `fileName`을 뺐다. 파일 이름은 호출처가 정하는 값이라 로그에 남기지 않는 원칙(RQ-027)과 맞지 않았다. 대신 `rejectionId`(`mail_intake_rejections.id`)를 남긴다. 파일 이름은 거부 기록과 `INTAKE_REJECTED` 이벤트에는 남는다. 호출처가 이벤트 피드에서 이름으로 찾는 절차는 그대로다.
+    - **`link` 방식 미결정 잔재 정리.** 미확정 절의 "`link` 방식으로 덮어쓰기를 막을지 여부"는 구현 중 확정 10·30이 이미 결정했다(채택하지 않음, 호출처는 `rename`만 쓴다). 코드는 `nlink > 1`을 `HARDLINK`으로 거부하는 그대로이고 이 확정과 일치한다.
+    - 검증: `test/file-channel/poller.integration-spec.ts`("디렉터리 경로 검사"의 호출처 폴더 링크, `inbox` 링크, 링크 해제 뒤 재개, `o+w` 경고 1회, 호출처 폴더 `g+w` 무경고, `file_rejected`의 파일 이름 부재). NFS에서의 `lstat` 동작은 확인하지 않았다.
 
 ## 구현 중 확정: 같은 호스트 Docker 볼륨 권한 (2026-11-23, 3단계)
 
@@ -268,3 +275,11 @@ ADR-0001이 파일을 입력 채널로 정했다.
 결정 문구는 바꾸지 않는다. GitHub Actions 첫 실행의 통합 테스트 실패에서 재현된 결함을 고친 내용이다.
 
 31. **열린 뒤 지워진 파일(`nlink == 0`)을 하드링크로 거부하던 결함(결정 5, 결정 6).** 폴러 둘이 같은 폴더를 읽을 때 한쪽이 등록·커밋 뒤 `unlink`하는 틈에 다른 쪽이 그 파일을 `open`하면 `fstat`의 `st_nlink`가 0이다. 수정 전 `readInboxFile`은 `nlink !== 1`이면 `HARDLINK`으로 `not_read` 처리해, 이미 등록된 파일이 `MALFORMED`(크기 0, 빈 입력 sha256)로 거부 기록과 `INTAKE_REJECTED` 이벤트에 남았다. 요청은 다른 폴러가 정상 등록했으므로 작업 유실은 없지만 거짓 거부 기록과 이벤트가 생기고 호출처가 거부로 오해할 수 있다. 재현: `taskset -c 0,1` + `yes` 24개 부하에서 "두 폴러가 같은 파일들을 동시에 수집해도 Key마다 하나만 등록된다"가 25회 중 5회 실패했고, 임시 로그로 실패 때마다 `nlink=0`임을 확인했다(부하 없이는 60회 중 0회). 수정: `nlink == 0`이면 `gone`으로 다룬다(`nlink > 1`은 그대로 `HARDLINK`). 단위 테스트는 `readInboxFile`의 `afterOpen` 훅으로 `open`과 `fstat` 사이의 삭제를 흉내 낸다(`test/file-channel/read-file.spec.ts`). NFS는 이 경로를 따로 검증하지 않았다.
+
+## 구현 중 확정: 운영·컨테이너 보완 (2026-11-23, 코드 리뷰 반영)
+
+결정 문구는 바꾸지 않는다. 컨테이너·NFS 운영 리뷰에서 나온 보완이다.
+
+33. **종료 순서 정정(구현 중 확정 1의 종료 순서를 대체).** 실제 순서는 `app-lifecycle.ts`가 정한다. SIGTERM → Worker `pause()`(새 점유 중지, 진행 중 전송은 계속) → HTTP 서버 닫기와 파일 폴러 정지(진행 중 파일의 등록·삭제 완료)를 병행 → Worker drain → DB 풀 닫기다. 확정 1이 적은 "HTTP 서버 닫기, 폴러 정지, Worker drain" 직렬 순서는 ADR-0002 구현 중 확정 6 이전의 구현이다. 폴러 정지의 의미(새 파일을 시작하지 않고 진행 중인 파일을 끝낸다)는 같다.
+34. **`<root>/inbox`가 없으면 기동을 거부한다(확정 1의 "root가 읽을 수 있는 디렉터리가 아니면 기동 거부"를 보완).** `checkRoot`(`poller.ts`)가 root(읽기·통과)와 `<root>/inbox`(디렉터리, 통과)를 확인하고 `inbox`가 없거나 통과할 수 없으면 `FileChannelStartError`다(오류에는 변수 이름과 errno 코드만). `inbox`의 읽기 권한은 요구하지 않는다. 결정 8의 모델이 `inbox`를 `0711`(통과만)로 두기 때문이다. 처음 구현은 `inbox`에도 읽기를 요구해 `scripts/volume/verify-e2e.sh`(`inbox` `0711`)에서 `EACCES`로 기동하지 못했고, 그 결과로 고쳤다. 이유: 호스트의 NFS mount가 끝나기 전에 컨테이너가 떠서 bind가 빈 디렉터리를 잡으면 호출처 폴더가 하나도 없는 채로 조용히 돌기 때문이다. 호출처 폴더 하나가 없는 것(호출처를 추가한 직후 운영자가 폴더를 만들기 전)은 확정 1대로 경고(`file_inbox_missing`)만 남기고 건너뛴다. 한계: `inbox`가 있는 빈 디렉터리를 bind하는 경우는 막지 못한다. 검증: `test/file-channel/poller.integration-spec.ts`.
+35. **컨테이너에서 NFS(결정 8·10 보완, 미검증).** non-root 컨테이너는 직접 `mount`할 수 없고 호스트 mount를 bind하는 방식은 mount 순서 문제가 있다. 예시로 Docker `local` 드라이버 NFS named volume(`type: nfs`, `o: addr=<서버>,vers=4.2,sec=sys,hard,lookupcache=pos`)을 `docker-compose.nfs-example.yml`에 두었다. 실행해 확인하지 않았다(작성 환경에 `nfs-kernel-server` 없음). 재현 스크립트 `apps/mailo/scripts/nfs/verify-docker-volume.sh`는 작성만 했고 실행하지 못했다. `hard` mount에서 NAS가 멈추면 폴링이 끝나지 않아 `filePoller.lastPollAt`(폴링 끝에 기록)이 갱신되지 않는다. 운영자 토큰의 `/health/ready`로 보인다(코드 읽기 결과, 실행하지 않았다). 상세는 `docs/operations/nfs.md` "컨테이너에서 쓰는 방법"이다.

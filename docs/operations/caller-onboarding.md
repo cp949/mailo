@@ -46,7 +46,8 @@
           { "kid": "billing-2026-11", "secretVar": "MAILO_JWS_SECRET_BILLING_2026_11" }
         ]
       },
-      "sendQuota24h": 500
+      "sendQuota24h": 500,
+      "allowedFrom": ["billing@example.com"]
     },
     {
       "id": "reports",
@@ -66,9 +67,15 @@
 | `signature.mode` | 예(기본값 없음) | `required` 또는 `none`. 빠지면 기동하지 않는다 |
 | `signature.keys` | `required`이면 1~2개, `none`이면 둘 수 없음 | 각 항목 `kid`(`[A-Za-z0-9][A-Za-z0-9._:-]{0,63}`)와 `secretVar`(`MAILO_JWS_SECRET_`로 시작하는 대문자·숫자·`_`). 값은 변수로 받는다 |
 | `sendQuota24h` | 아니오 | 1~10000000의 정수, 생략하면 무제한. 0은 허용하지 않는다(중지는 호출처를 빼서 표현) |
+| `allowedFrom` | 아니오 | 요청의 `from`으로 쓸 수 있는 발신 주소(addr-spec) 배열, 최대 20개, 생략하면 빈 목록. 형식이 틀리면 기동하지 않는다 |
 | `jwe` | 아니오 | 코드가 읽기만 하고 쓰지 않는다. JWE는 호출처 항목이 아니라 Mailo 키 목록(`key-management.md`)으로 정한다 |
 
+- 서명 키(`signature.keys`)의 값은 호출처 사이·`kid` 사이·DB 본문 키·지문 키와 달라야 한다. 같은 바이트이면 기동하지 않는다(표기가 base64와 hex로 달라도 같다). `NODE_ENV`가 `development`·`test`가 아니면 같은 바이트가 반복된 키와 공개 샘플 키도 거부한다(ADR-0008 구현 중 확정 13). 오류에는 위치만 나오고 값은 나오지 않는다.
 - 알 수 없는 필드가 있으면 기동하지 않는다. 오류 메시지는 위치(`callers[0]`)와 고정 사유만 담는다.
+- 발신 주소(`allowedFrom`, ADR-0008 구현 중 확정 12): 호출처가 쓸 수 있는 `from`은 Mailo의 기본 발신 주소(`MAILO_SMTP_FROM`, 없으면 `MAILO_SMTP_USER`)와 이 목록이다. 비교는 대소문자를 무시한다. `from`을 생략하면 기본 발신 주소로 나간다. 집합 밖이면 REST는 400(`errors`의 `pointer: /from`, `code: FROM_NOT_ALLOWED`), 파일은 `VALIDATION_FAILED` 거부다. 새 호출처가 다른 발신 주소를 써야 하면 여기에 넣고 재시작한다.
+  - 배포 순서: 이미 `defaultFrom` 외의 `from`을 보내는 호출처가 있으면 Mailo를 올리기 전에 그 주소를 `allowedFrom`에 넣는다. 이미 큐에 등록된 작업은 검사하지 않고 그대로 나간다. 이미 등록된 `Idempotency-Key`의 재전송은 허용 여부와 무관하게 기존 작업을 돌려받는다.
+  - `replyTo`는 제한하지 않는다. 위험은 회신을 다른 주소로 유도하는 피싱이다. SPF·DMARC는 `From`만 정렬 대상이라 `Reply-To`가 발신 사칭을 늘리지는 않는다.
+  - Gmail 인증 모드: `allowedFrom` 주소를 Gmail "다른 주소에서 메일 보내기"(send-as) 별칭으로 등록해야 From이 유지된다. 등록하지 않으면 Gmail이 From을 계정 주소로 바꾼다. 이 동작은 확인하지 않았다(미검증). IP 허용 relay(인증 없음)에서는 relay 정책이 허용하는 주소여야 한다(미검증).
 - 발송 할당: 24시간 rolling이고 단위는 메시지 시도 수다(수신자 수로 가중하지 않는다). 초과하면 그 호출처의 작업은 점유되지 않고 대기하며 시도 횟수는 늘지 않는다. 대기 중 만료 시각에 이르면 `EXPIRED`다. 등록 응답에는 영향이 없다(429 없음). 로그 이벤트는 `caller_quota_exceeded`·`caller_quota_recovered`다(`troubleshooting.md`). 값을 바꾸면 재시작이 필요하다.
 
 ## 3. API 키 발급·교체·폐기
@@ -109,6 +116,7 @@ printf '%s' "$KEY" | sha256sum | cut -d' ' -f1   # callers.json의 apiKeyHashes�
 | default ACL(권장) | 파일시스템이 POSIX ACL을 지원할 때 | 호출처 umask 022·027·077·000 모두 읽음 | 호출처가 파일 생성 mode를 `0600`으로 만들면 읽지 못한다 |
 | 공용 그룹 + setgid(대안) | ACL을 쓸 수 없는 파일시스템 | umask 027까지 읽고 077은 못 읽음 | 호출처 umask를 `027` 이하로 고정해야 한다. 호출처가 자기 폴더 권한을 바꿀 수 있다 |
 
+- Mailo는 폴링마다 `<root>`, `inbox`, `inbox/<caller_id>`가 링크가 아닌 디렉터리인지 확인한다. 링크이면 그 폴링에서 읽지 않고 `file_dir_unsafe`를 남긴다(`MAILO_FILE_CHANNEL_ROOT`에는 링크가 아닌 실제 경로를 준다). `o+w`가 있는 폴더(`<root>`·`inbox`는 `g+w`도)는 `file_channel_dir_permissive` 경고를 한 번 남기고 수집은 계속한다. 호출처 폴더의 `g+w`는 default ACL 마스크 때문에 정상이라 경고하지 않는다(ADR-0004 구현 중 확정 32).
 - 호출처가 `0600`으로 만든 파일은 두 방식 모두 수집되지 않는다. 파일은 삭제되지 않고 남으며 `file_poll` 로그의 `unreadable`로 드러난다. 호출처가 `rename` 전에 `0660`으로 `chmod`해야 수집된다(`troubleshooting.md`).
 - 계정은 Mailo 1개와 호출처마다 1개이고 모두 non-root, UID가 서로 달라야 한다. root나 Mailo와 같은 UID의 호출처는 다른 호출처 폴더를 읽고 쓴다(검증됨, `verify-root-model.sh`).
 

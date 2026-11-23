@@ -19,11 +19,11 @@ import {
   canonicalizeFingerprintInput,
   type QueueFingerprinter,
 } from "../crypto/index.js";
-import type { ValidationErrorItem } from "../http/index.js";
 import {
   validateMailRequest,
   type MailRequestLimits,
   type ValidatedMailRequest,
+  type ValidationErrorItem,
 } from "../validation/index.js";
 import { openJws, type IatPolicy, type JwsKey } from "./jws.js";
 import type { JweDecryptor } from "./jwe.js";

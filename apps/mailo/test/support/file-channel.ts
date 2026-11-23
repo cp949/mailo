@@ -29,7 +29,7 @@ import {
   type FilePoller,
   type FilePollerDeps,
 } from "../../src/file-channel/index.js";
-import { createJsonLogger } from "../../src/worker/index.js";
+import { createJsonLogger } from "../../src/logging/index.js";
 import { b64url, jwsSecret, rsaKey, signJws } from "./envelope.js";
 import { testEnv } from "./rest-app.js";
 
@@ -219,6 +219,7 @@ export function createFileHarness(
         fingerprinter,
         config: fileChannel,
         jobExpirySeconds: config.queue.jobExpirySeconds,
+        defaultFrom: config.smtp.defaultFrom,
         logger,
         ...overrides,
       });

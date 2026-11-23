@@ -29,7 +29,7 @@ const PUBLIC_SAMPLE_KEYS: readonly Buffer[] = [
  * 공개된 샘플 키이거나 같은 바이트가 반복된 키인지 본다. 반복 바이트 키(`Buffer.alloc(32, n)`)는 테스트 픽스처가 쓰는 형태다.
  * 검사 대상 문자열을 오류 메시지에 넣지 않으므로 호출하는 쪽도 변수 이름만 적는다.
  */
-function isPublicOrWeakKey(key: Buffer): boolean {
+export function isPublicOrWeakKey(key: Buffer): boolean {
   if (key.every((byte) => byte === key[0])) return true;
   return PUBLIC_SAMPLE_KEYS.some(
     (sample) => sample.length === key.length && timingSafeEqual(sample, key),

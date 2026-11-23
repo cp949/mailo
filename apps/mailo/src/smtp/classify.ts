@@ -15,10 +15,10 @@
  * - ASSUMED(추정): 문서로 확인하지 못했다. 일반 지식이나 안전 쪽 판단이다.
  *
  * 응답 텍스트는 분류 입력으로만 쓰고, 분류 결과에는 넣지 않는다(RQ-027: 수신자 주소가
- * 텍스트에 들어갈 수 있다. 마스킹 방식은 ADR-0003 미결정).
+ * 텍스트에 들어갈 수 있다. 마스킹 방식은 ADR-0007 구현 중 확정 5).
  */
 
-import { EMAIL_LIKE } from "./email-pattern.js";
+import { maskEmailLike } from "./email-pattern.js";
 
 export type SmtpStage = "CONN" | "TLS" | "AUTH" | "MAIL_FROM" | "RCPT" | "DATA";
 
@@ -316,7 +316,7 @@ function normalize(f: SmtpFailure): Normalized {
     code: f.responseCode,
     enhanced: f.enhancedStatus,
     // 서버가 되풀이한 수신자 주소(`<daily-limit@example.com>`) 안의 글자가 텍스트 규칙에 맞지 않도록 주소를 뺀다.
-    text: (f.responseText ?? "").replace(EMAIL_LIKE, " ").toLowerCase(),
+    text: maskEmailLike(f.responseText ?? "", " ").toLowerCase(),
     transportFault: f.transportFault,
   };
 }

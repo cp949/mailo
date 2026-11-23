@@ -12,6 +12,7 @@ import {
   completeAttempt,
   deleteExpiredBodies,
   deleteExpiredRecords,
+  recoverExpiredLeases,
   register,
   sweepExpired,
 } from "../../src/queue/index.js";
@@ -114,6 +115,78 @@ describe("PostgreSQL 통합: 만료 sweep과 보존 삭제(ADR-0002 결정 7, AD
     expect(new Set(page.events.map((e) => e.jobId))).toEqual(
       new Set([pending, retryWait]),
     );
+  });
+
+  describe("정리 단계 배타 잠금(L10, ADR-0002 구현 중 확정)", () => {
+    // 다른 인스턴스가 같은 단계를 도는 상태를 흉내 낸다: 별도 연결이 트랜잭션 안에서 단계 잠금을 쥔다.
+    // 잠금 키는 src/queue/maintenance.ts의 MAINTENANCE_LOCK_CLASS(7364223)와 단계 번호(sweep 1, lease 2, bodies 3, records 4)다.
+    async function holdingLock<T>(
+      step: number,
+      fn: () => Promise<T>,
+    ): Promise<T> {
+      const holder = await db.pool.connect();
+      try {
+        await holder.query("BEGIN");
+        const { rows } = await holder.query(
+          "SELECT pg_try_advisory_xact_lock(7364223, $1::int) AS locked",
+          [step],
+        );
+        expect(rows[0].locked).toBe(true);
+        return await fn();
+      } finally {
+        await holder.query("ROLLBACK");
+        holder.release();
+      }
+    }
+
+    it("sweep 잠금을 다른 연결이 쥐고 있으면 기다리지 않고 0건으로 건너뛰고, 풀리면 처리한다", async () => {
+      const id = await createJob(db.pool);
+      await expire(id);
+
+      const skipped = await holdingLock(1, () => sweepExpired(db.pool));
+
+      expect(skipped).toBe(0);
+      expect(await status(id)).toBe("PENDING");
+      expect(await sweepExpired(db.pool)).toBe(1);
+      expect(await status(id)).toBe("EXPIRED");
+    });
+
+    it("본문 삭제·보존 삭제·유지보수 루프의 lease 회수도 각자의 잠금으로 건너뛴다", async () => {
+      const id = await createJob(db.pool);
+      await sendOne(id);
+      await ago(id, "finished_at", 40 * DAY);
+
+      expect(
+        await holdingLock(3, () => deleteExpiredBodies(db.pool, DAY)),
+      ).toBe(0);
+      expect(
+        await holdingLock(4, () => deleteExpiredRecords(db.pool, 30 * DAY)),
+      ).toEqual({ jobs: 0, rejections: 0 });
+      expect(
+        await holdingLock(2, () =>
+          recoverExpiredLeases(db.pool, deps, 100, { exclusive: true }),
+        ),
+      ).toBe(0);
+      // 다른 단계의 잠금은 영향을 주지 않는다.
+      expect(
+        await holdingLock(1, () => deleteExpiredBodies(db.pool, DAY)),
+      ).toBe(1);
+    });
+
+    it("점유 앞단의 lease 복구는 정리 잠금과 무관하게 복구한다(ADR-0002 결정 5)", async () => {
+      const id = await createJob(db.pool);
+      await claim(db.pool, { leaseSeconds: 120, limit: 1, deps });
+      await db.pool.query(
+        "UPDATE mail_jobs SET lease_until = now() - interval '1 second' WHERE id = $1",
+        [id],
+      );
+
+      const recovered = await holdingLock(2, () =>
+        recoverExpiredLeases(db.pool, deps),
+      );
+
+      expect(recovered).toBe(1);
+    });
   });
 
   it("점유 중인 SENDING 작업은 만료 시각이 지나도 sweep이 건드리지 않는다", async () => {

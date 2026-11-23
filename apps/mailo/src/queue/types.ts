@@ -63,6 +63,12 @@ export interface RegisterInput {
   canonicalRequest: string;
   /** 만료 TTL 초. 만료 시각은 DB now()에 더해 계산한다(ADR-0002 결정 10). */
   expiresInSeconds: number;
+  /**
+   * true이면 새 작업을 만들지 않는다. 같은 Key의 기존 작업이 있을 때만 `duplicate`·`fingerprint_mismatch`를 돌려주고
+   * 없으면 `denied`다. 호출자의 승인 정책(예: 발신 주소 허용 범위)을 통과하지 못한 요청이 이미 등록된 Key를
+   * 재전송했을 때는 기존 작업을 그대로 돌려주기 위한 것이다(ADR-0005 결정 4의 멱등 재시도를 정책 변경이 깨지 않게 한다).
+   */
+  denyNew?: boolean;
 }
 
 export interface RegisterDeps {
@@ -75,7 +81,9 @@ export type RegisterResult =
   /** 같은 Key, 같은 내용. 기존 작업을 반환한다(REST 200). */
   | { kind: "duplicate"; jobId: string; status: JobStatus }
   /** 같은 Key, 다른 내용. 거부한다(REST 409, 파일은 수집 거부). 기존 작업 정보는 넘기지 않는다. */
-  | { kind: "fingerprint_mismatch" };
+  | { kind: "fingerprint_mismatch" }
+  /** `denyNew`이고 같은 Key의 기존 작업이 없다. 아무것도 쓰지 않았다. */
+  | { kind: "denied" };
 
 /** `claim`이 반환하는 점유 작업. 본문은 암호화된 채로 넘기고 Worker가 `BodyCipher.decrypt`로 푼다. */
 export interface ClaimedJob {

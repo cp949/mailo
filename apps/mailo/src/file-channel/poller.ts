@@ -7,7 +7,7 @@
  *   상한에 걸려 남은 파일이 있고 이번 폴링이 진전했으면 간격을 두지 않고 바로 다음 폴링을 한다.
  * - `*.json`이 아닌 파일과 점(.)으로 시작하는 파일은 수집하지 않는다. 점 파일은 `tempFileMaxAgeSeconds`가 지나면 지운다
  *   (호출처는 목록을 볼 수 없어 직접 정리할 수 없다, ADR-0004 결정 3). 나이는 파일 mtime과 Mailo 시계의 차이다.
- * - 코드는 폴더를 만들거나 chmod하지 않는다(ADR-0004 결정 8, 운영 문서의 몫). 시작할 때 root가 읽을 수 있는 디렉터리인지만 확인한다.
+ * - 코드는 폴더를 만들거나 chmod하지 않는다(ADR-0004 결정 8, 운영 문서의 몫). 시작할 때 root가 읽을 수 있는 디렉터리인지, `<root>/inbox`가 통과할 수 있는 디렉터리인지만 확인한다(`inbox`가 없으면 기동 실패, 호출처 폴더 하나가 없는 것은 경고).
  * - 종료: `stop()`은 새 파일을 시작하지 않고 진행 중인 파일의 등록·삭제를 끝낸 뒤 resolve한다.
  * - 여러 인스턴스가 같은 파일을 동시에 읽어도 `register`의 `(caller_id, idempotency_key)` 유일성이 하나만 등록한다.
  */
@@ -20,11 +20,11 @@ import type { FileChannelConfig } from "../config/index.js";
 import type { QueueBodyCipher, QueueFingerprinter } from "../crypto/index.js";
 import type { OpenRequestDeps } from "../envelope/index.js";
 import {
-  createJsonLogger,
   describeError,
   silentLogger,
-  type WorkerLogger,
-} from "../worker/index.js";
+  type AppLogger,
+} from "../logging/index.js";
+import { inspectDir, isPermissive, type DirKind } from "./dir-check.js";
 import { FileChannelStartError } from "./errors.js";
 import { isStale } from "./errno.js";
 import { ingestFile, removeStaleTemp, type IngestDeps } from "./ingest.js";
@@ -38,7 +38,9 @@ export interface FilePollerDeps {
   /** `root`는 폴러를 켠 설정이라 null이 아니다. */
   config: FileChannelConfig & { root: string };
   jobExpirySeconds: number;
-  logger?: WorkerLogger;
+  /** `IngestDeps.defaultFrom`과 같다. */
+  defaultFrom: string;
+  logger?: AppLogger;
   /** 현재 시각(ms). 임시 파일 나이 계산에 쓴다. */
   now?: () => number;
   /** `IngestDeps.beforeDelete`와 같다. 테스트용이다. */
@@ -133,21 +135,36 @@ function hasActivity(s: CallerPollSummary): boolean {
   );
 }
 
-/** root가 읽을 수 있는 디렉터리인지 확인한다. 값(경로)은 설정이므로 오류에 변수 이름만 쓴다. */
+/**
+ * root와 `<root>/inbox`를 확인한다. 값(경로)은 설정이므로 오류에 변수 이름만 쓴다.
+ * - root: 읽을 수 있는 디렉터리여야 한다.
+ * - `inbox`: 디렉터리이고 통과(X)할 수 있어야 한다. 읽기(R)는 요구하지 않는다. 운영 권한 모델은 `inbox`를 `0711`(통과만, 호출처 이름 목록을
+ *   숨긴다)로 두고 호출처 폴더를 이름으로 직접 연다(ADR-0004 결정 8, nfs.md).
+ * `inbox`가 없으면 기동을 거부한다. 호스트 mount(NFS 등)가 끝나기 전에 컨테이너가 떠서 mount 전의 빈 디렉터리를
+ * 보고 있는 경우를 걸러내기 위해서다. 호출처 폴더 하나가 없는 것은 호출처를 추가한 직후의 정상 상태라 경고로 둔다.
+ */
 async function checkRoot(root: string): Promise<void> {
-  try {
-    if (!(await stat(root)).isDirectory())
-      throw new FileChannelStartError(
-        "MAILO_FILE_CHANNEL_ROOT가 디렉터리가 아니다",
-      );
-    await access(root, constants.R_OK | constants.X_OK);
-  } catch (error) {
-    if (error instanceof FileChannelStartError) throw error;
-    const code = (error as NodeJS.ErrnoException).code ?? "UNKNOWN";
-    throw new FileChannelStartError(
-      `MAILO_FILE_CHANNEL_ROOT를 읽을 수 없다(${code})`,
-    );
-  }
+  const check = async (
+    dir: string,
+    label: string,
+    mode: number,
+  ): Promise<void> => {
+    try {
+      if (!(await stat(dir)).isDirectory())
+        throw new FileChannelStartError(`${label}가 디렉터리가 아니다`);
+      await access(dir, mode);
+    } catch (error) {
+      if (error instanceof FileChannelStartError) throw error;
+      const code = (error as NodeJS.ErrnoException).code ?? "UNKNOWN";
+      throw new FileChannelStartError(`${label}를 읽을 수 없다(${code})`);
+    }
+  };
+  await check(root, "MAILO_FILE_CHANNEL_ROOT", constants.R_OK | constants.X_OK);
+  await check(
+    join(root, "inbox"),
+    "MAILO_FILE_CHANNEL_ROOT 아래 inbox 폴더(mount가 끝났는지, 폴더를 만들었는지 확인한다)",
+    constants.X_OK,
+  );
 }
 
 export function createFilePoller(deps: FilePollerDeps): FilePoller {
@@ -162,6 +179,7 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
     fingerprinter: deps.fingerprinter,
     maxFileBytes: config.maxFileBytes,
     jobExpirySeconds: deps.jobExpirySeconds,
+    defaultFrom: deps.defaultFrom,
     logger: log,
     ...(deps.beforeDelete && { beforeDelete: deps.beforeDelete }),
   };
@@ -175,6 +193,52 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
   let lastPollOk: boolean | null = null;
   // 폴더가 없는 상태가 바뀔 때만 로그를 남겨 폴링마다 반복되지 않게 한다.
   const missingInbox = new Set<string>();
+  // 링크·비디렉터리와 넓은 권한도 상태가 바뀔 때(처음 발견할 때)만 로그를 남긴다. 키는 `종류:호출처`다.
+  const unsafeDirs = new Set<string>();
+  const permissiveDirs = new Set<string>();
+
+  /**
+   * 디렉터리가 링크가 아닌 디렉터리인지 확인한다(L3). 읽어도 되면 true다.
+   * 없는 디렉터리는 true다(이후 `opendir`의 기존 처리가 맡는다). 링크·비디렉터리는 `file_dir_unsafe` 경고를 남기고 false다.
+   * 권한이 넓으면 `file_channel_dir_permissive` 경고를 남기되 막지 않는다.
+   */
+  async function dirIsSafe(
+    path: string,
+    kind: DirKind,
+    callerId?: string,
+  ): Promise<boolean> {
+    const key = `${kind}:${callerId ?? ""}`;
+    const state = await inspectDir(path);
+    if (state.kind === "unsafe") {
+      if (!unsafeDirs.has(key)) {
+        unsafeDirs.add(key);
+        log.warn("file_dir_unsafe", {
+          dir: kind,
+          why: state.why,
+          ...(callerId !== undefined && { callerId }),
+        });
+      }
+      return false;
+    }
+    if (unsafeDirs.delete(key))
+      log.info("file_dir_safe", {
+        dir: kind,
+        ...(callerId !== undefined && { callerId }),
+      });
+    if (state.kind === "ok") {
+      if (isPermissive(kind, state.mode)) {
+        if (!permissiveDirs.has(key)) {
+          permissiveDirs.add(key);
+          log.warn("file_channel_dir_permissive", {
+            dir: kind,
+            mode: state.mode.toString(8).padStart(4, "0"),
+            ...(callerId !== undefined && { callerId }),
+          });
+        }
+      } else permissiveDirs.delete(key);
+    }
+    return true;
+  }
 
   async function pollCaller(
     caller: CallerEntry,
@@ -190,6 +254,11 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
     );
     // 이름 수집이 listLimit에서 잘렸는지. 잘리면 폴더에 아직 안 본 파일이 있다.
     let listTruncated = false;
+
+    if (!(await dirIsSafe(dir, "callerInbox", caller.id))) {
+      summary.errors += 1;
+      return summary;
+    }
 
     // 폴더 목록을 읽는다. 폴더가 없으면 false다.
     async function list(): Promise<boolean> {
@@ -334,6 +403,18 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
     const summaries: CallerPollSummary[] = [];
     const errorBudget = { consecutive: 0 };
     let failed = false;
+    // root·inbox가 링크이면 이번 폴링은 아무것도 읽지 않는다. 호출처가 없으면 확인하지 않는다.
+    if (
+      callers.length > 0 &&
+      !(
+        (await dirIsSafe(config.root, "root")) &&
+        (await dirIsSafe(join(config.root, "inbox"), "inbox"))
+      )
+    ) {
+      lastPollAt = new Date(now());
+      lastPollOk = false;
+      return { callers: summaries, more: false };
+    }
     for (const caller of callers) {
       if (stopController.signal.aborted) break;
       if (errorBudget.consecutive >= MAX_CONSECUTIVE_ERRORS) {
@@ -428,9 +509,4 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
       };
     },
   };
-}
-
-/** 운영 로그: 표준 출력 한 줄 JSON. Worker와 같은 형식이다. */
-export function createStdoutLogger(): WorkerLogger {
-  return createJsonLogger((line) => void process.stdout.write(`${line}\n`));
 }

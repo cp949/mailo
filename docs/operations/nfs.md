@@ -12,6 +12,8 @@
 - 호출처가 파일을 만드는 호스트의 클라이언트도 `vers=4.2`여야 한다. NFSv4.1 클라이언트가 만든 파일은 호출처 umask가 077이면 default ACL을 받아도 Mailo가 읽지 못했다(실측).
 - 기존 폴더에 rename한 파일은 mount 옵션과 무관하게 다음 폴링에서 보였다(실측, 6개 옵션). 폴링 간격이 지연의 상한이다.
 - `close` 전에 `rename`해도 Linux NFSv4 클라이언트에서는 Mailo가 전체 내용을 읽었다(실측). ADR-0004 결정 3의 추정(비어 보일 수 있다)은 이 환경에서 재현되지 않았다. 호출처 규약(쓰기, `fsync`, `close`, `rename`)은 유지한다.
+- 컨테이너에서는 호스트 mount를 bind하지 않고 Docker `local` 드라이버의 NFS named volume을 쓰는 구성(`docker-compose.nfs-example.yml`)을 예시로 둔다. 이 구성은 실행해 확인하지 않았다(미검증, "컨테이너에서 쓰는 방법").
+- 파일 채널이 켜져 있고 `<root>/inbox`가 없거나 통과(X)할 수 없으면 앱이 기동을 거부한다. mount 전의 빈 디렉터리를 읽는 상황을 막는다. `inbox`의 읽기(R) 권한은 요구하지 않는다(운영 모델의 `0711`). 호출처 폴더 하나가 없는 것은 경고(`file_inbox_missing`)다.
 - 폴러가 `ESTALE`을 오류로 세던 결함을 찾아 고쳤다(`src/file-channel/errno.ts`). 이전에는 Node가 `ESTALE`을 `code === "ESTALE"`로 주지 않아 어떤 분기에도 걸리지 않았다.
 
 ## 검증 환경과 한계
@@ -53,6 +55,25 @@ mount -t nfs4 -o vers=4.2,sec=sys,hard,lookupcache=pos <서버>:<export> <root>
 | `nosharecache`     | 운영에서는 필요 없다                         | 테스트가 같은 호스트에서 클라이언트를 분리하려고 쓴 옵션이다                                                                |
 
 호출처 호스트의 mount는 `vers=4.2,sec=sys,hard`를 권장한다. 호출처 쪽 캐시 옵션은 바꿔 비교하지 않았다(테스트의 호출처 클라이언트는 기본 캐시 옵션).
+
+## 컨테이너에서 쓰는 방법
+
+검증 상태: 이 절의 구성은 실행해 확인하지 않았다(미검증). 작성 환경에 `nfs-kernel-server`가 없어 `apps/mailo/scripts/nfs/verify-docker-volume.sh`를 실행하지 못했다. 이 호스트에는 비밀번호 없는 `sudo`가 있었지만 패키지 설치는 하지 않았다. 아래 "근거"는 코드·문서 읽기 결과다.
+
+구성: `docker-compose.nfs-example.yml`을 `docker-compose.yml` 위에 덮어 쓴다.
+
+```sh
+# .env: MAILO_FILE_CHANNEL_ROOT=/var/mailo/files, MAILO_NFS_ADDR=<서버 주소>, MAILO_NFS_EXPORT=<서버의 export 경로>
+docker compose -f docker-compose.yml -f docker-compose.nfs-example.yml up -d --build
+```
+
+- 예시 파일은 named volume `mailo-files`를 `driver: local`, `type: nfs`, `o: addr=<서버>,vers=4.2,sec=sys,hard,lookupcache=pos`, `device: :<export 경로>`로 정의하고 `/var/mailo/files`에 마운트한다. mount 옵션은 위 "권장 mount 옵션"과 같다.
+- 근거(추정): non-root(`node`, UID 1000) 컨테이너는 직접 `mount`할 수 없다. Docker 데몬이 컨테이너 시작 때 mount하므로 이 제약이 없다. 호스트에는 NFS 클라이언트(`nfs-common` 등)가 필요하다.
+- 호스트 mount를 bind하는 방식은 검증하지 않았다. mount가 끝나기 전에 컨테이너가 뜨면 bind가 빈 디렉터리를 잡을 수 있다. 앱이 `<root>/inbox`가 없으면 기동을 거부하므로(`checkRoot`, 통합 테스트와 로컬 Docker 볼륨 e2e로 확인) 호출처 폴더가 없는 상태로 조용히 도는 것은 막는다. `inbox`가 있는 빈 디렉터리를 bind하는 경우까지 막지는 못한다.
+- NFS 서버에 닿지 않으면 named volume mount가 실패해 컨테이너가 시작하지 않는다(fail closed, 추정, 실행하지 않았다).
+- 서버 쪽 전제: `root_squash`(기본)와 컨테이너 `node` UID 1000이 서버에서도 같은 UID로 보여야 한다. `all_squash`나 ID 매핑이 있으면 Mailo UID가 달라져 폴더 소유·ACL이 맞지 않는다(확인하지 않았다). 폴더와 권한은 서버에서 운영자가 만든다(다음 절). 앱은 만들지 않는다.
+- `hard` mount에서 NAS가 멈추면 폴러의 `opendir`·`stat` 같은 파일 호출이 응답이 올 때까지 끝나지 않는다. 그 폴링은 끝나지 않으므로 `filePoller.lastPollAt`(폴링이 끝난 시각, `poller.ts`가 폴링 끝에 기록한다)이 갱신되지 않는다. 운영자 토큰으로 `/health/ready`를 읽으면 `lastPollAt`이 폴링 간격보다 오래되는 것으로 알 수 있다(코드 읽기 결과, 서버를 멈춰 실행하지 않았다). `/health/ready`는 메모리 값만 읽어 계속 응답한다. 막힌 호출이 Node의 libuv 스레드 풀(기본 4개)을 점유하면 다른 파일 작업도 늦어질 수 있다(추정). DB와 SMTP는 파일 시스템을 쓰지 않아 영향이 없다.
+- 재현 스크립트: `apps/mailo/scripts/nfs/verify-docker-volume.sh`. 같은 호스트 loopback NFS를 만들고(`setup.sh`) 컨테이너가 named volume으로 파일을 읽어 등록·삭제하는지, `inbox`가 없으면 기동을 거부하는지, 읽기 전용 루트·capability 제거 상태에서 동작하는지 확인한다. 비밀번호 없는 `sudo`, `nfs-kernel-server`가 필요하고, 작성했으나 실행하지 못했다. 첫 실행에서 스크립트 자체의 오류가 나올 수 있다.
 
 ## 폴더와 계정 구성
 
@@ -144,6 +165,8 @@ MAILO_NFS_VERS=4.2 apps/mailo/scripts/nfs/run.sh   # 4.2 기준
 
 ## 남은 일
 
+- Docker local 드라이버 NFS named volume(`docker-compose.nfs-example.yml`)의 실제 동작. `verify-docker-volume.sh`를 `nfs-kernel-server`가 있는 호스트에서 실행한다.
+- NAS가 멈췄을 때(`hard` mount) 폴러 정지가 `filePoller.lastPollAt`으로 감지되는지와 다른 파일 작업에 미치는 영향.
 - 실제 NAS(대상 제품과 mount 옵션)에서 `apps/mailo/scripts/nfs/run.sh`를 대신할 검증. 최소한 (a) 새 폴더 가시성, (b) `close` 전 `rename`, (e) umask 077 읽기를 다시 확인한다.
 - `nfs` 잡을 GitHub에서 실행해 `run.sh` 동작 확인(워크플로는 작성함, 미실행). 성공을 확인한 뒤에도 필수 체크 지정 여부를 따로 정한다.
 - 서버 재시작·failover 뒤 폴러의 동작(ESTALE, 재연결 지연).

@@ -1,0 +1,28 @@
+# 파일 채널을 NAS/NFS의 Docker named volume(local 드라이버, type nfs)으로 쓰는 구성 예시(RQ-002·024, ADR-0004 결정 8, nfs.md).
+# docker-compose.yml 위에 덮어 쓴다. 호스트 mount를 bind하지 않고 Docker가 컨테이너 시작 때 NFS를 직접 mount한다.
+#   docker compose -f docker-compose.yml -f docker-compose.nfs-example.yml up -d --build
+# .env에 MAILO_FILE_CHANNEL_ROOT=/var/mailo/files, MAILO_NFS_ADDR(서버 주소), MAILO_NFS_EXPORT(서버의 export 경로)를 준다.
+#
+# 전제(서버·계정, nfs.md "폴더와 계정 구성"):
+#   - 컨테이너의 node(UID 1000)가 서버에서도 같은 UID로 보여야 한다. 서버가 root_squash(기본)이면 UID 매핑은 그대로고,
+#     all_squash나 ID 매핑이 있으면 Mailo UID가 달라져 폴더 소유·ACL이 맞지 않는다(확인하지 않았다).
+#   - <export>/inbox/<caller_id>/ 폴더와 권한은 서버에서 운영자가 만든다. 앱은 폴더를 만들지 않는다.
+#     <export>/inbox가 없으면 앱이 기동을 거부한다(NFS가 안 붙은 빈 디렉터리를 읽는 상황을 막는다).
+#   - 호출처 호스트의 NFS 클라이언트도 vers=4.2여야 한다(nfs.md).
+# 동작:
+#   - NFS 서버에 닿지 않으면 컨테이너 시작이 실패한다(fail closed). `hard`라 mount 이후 서버가 멈추면 폴러의 파일 호출이 막힌다(nfs.md).
+#   - Docker가 mount하므로 non-root 컨테이너가 mount 권한을 가질 필요가 없다. 호스트에 NFS 클라이언트(mount.nfs, nfs-common)가 필요하다.
+#   - 미검증: 이 구성(Docker local 드라이버 type=nfs)은 실행해 확인하지 않았다. 작성 환경에 nfs-kernel-server가 없어
+#     apps/mailo/scripts/nfs/verify-docker-volume.sh를 실행하지 못했다. 실제 NAS 제품에서도 확인하지 않았다(nfs.md "검증 상태").
+services:
+  mailo:
+    volumes:
+      - mailo-files:/var/mailo/files
+
+volumes:
+  mailo-files:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=${MAILO_NFS_ADDR:?MAILO_NFS_ADDR(NFS 서버 주소)를 .env나 환경에 설정한다},vers=4.2,sec=sys,hard,lookupcache=pos"
+      device: ":${MAILO_NFS_EXPORT:?MAILO_NFS_EXPORT(서버의 export 경로)를 .env나 환경에 설정한다}"

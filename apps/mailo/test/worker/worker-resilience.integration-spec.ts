@@ -11,7 +11,6 @@ import type pg from "pg";
 import { defaultRetryPolicy } from "../../src/queue/index.js";
 import type { MailSender, SmtpSendResult } from "../../src/smtp/index.js";
 import {
-  createJsonLogger,
   createWorker,
   defaultWorkerOptions,
   encodeBodyContent,
@@ -20,6 +19,7 @@ import {
   type WorkerHandle,
   type WorkerOptions,
 } from "../../src/worker/index.js";
+import { createJsonLogger } from "../../src/logging/index.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
 import { createJob, migrate, testCipher } from "../support/queue-fixtures.js";
 

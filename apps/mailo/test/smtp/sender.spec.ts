@@ -347,6 +347,19 @@ describe("응답 텍스트 정리와 단계 추적", () => {
     expect(sanitizeResponseText(undefined)).toBeUndefined();
   });
 
+  it("매우 긴 응답 텍스트는 앞 4 KiB만 처리하고 500자로 자른다(결과 길이와 마스킹만 확인)", () => {
+    // @ 없이 길게 이어지는 입력은 정규식 백트래킹 비용이 크다(시간은 단언하지 않는다).
+    const long = sanitizeResponseText(`550 ${"a".repeat(200_000)}`)!;
+    expect(long.length).toBe(503);
+    // 앞부분의 주소는 가려지고, 4 KiB 뒤에 있는 주소는 결과에 남지 않는다.
+    const mixed = sanitizeResponseText(
+      `550 <a@example.com> ${"b ".repeat(5000)}tail@example.com`,
+    )!;
+    expect(mixed.startsWith("550 <[address]> ")).toBe(true);
+    expect(mixed).not.toContain("tail@example.com");
+    expect(mixed.length).toBeLessThanOrEqual(503);
+  });
+
   it("StageTracker는 파이프라인 명령 중 응답이 없는 가장 오래된 명령을 단계로 본다", () => {
     const t = new StageTracker();
     const log = (tnx: string, m: string) => t.logger.debug({ tnx }, m);

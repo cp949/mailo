@@ -61,6 +61,35 @@ describe("PostgreSQL 통합: 멱등 등록(RQ-004, RQ-012, ADR-0005)", () => {
     expect(rows[0].n).toBe(1);
   });
 
+  it("denyNew는 새 Key를 등록하지 않고(denied), 이미 등록된 Key는 기존 판정(duplicate·지문 불일치)을 따른다(RQ-012, 발신 주소 정책)", async () => {
+    const input = jobInput({ idempotencyKey: "deny-new-key" });
+
+    const denied = await register(db.pool, registerDeps, {
+      ...input,
+      denyNew: true,
+    });
+    expect(denied).toEqual({ kind: "denied" });
+    const none = await db.pool.query(
+      "SELECT 1 FROM mail_jobs WHERE idempotency_key = 'deny-new-key'",
+    );
+    expect(none.rows).toHaveLength(0);
+
+    const created = await register(db.pool, registerDeps, input);
+    expect(created.kind).toBe("created");
+    const duplicate = await register(db.pool, registerDeps, {
+      ...input,
+      denyNew: true,
+    });
+    const mismatch = await register(db.pool, registerDeps, {
+      ...input,
+      canonicalRequest: "cc=other@example.invalid",
+      denyNew: true,
+    });
+
+    expect(duplicate.kind).toBe("duplicate");
+    expect(mismatch).toEqual({ kind: "fingerprint_mismatch" });
+  });
+
   it("지문 키를 교체한 뒤에도 저장된 키 버전으로 비교해 정상 재시도를 중복으로 본다", async () => {
     const input = jobInput({ idempotencyKey: "rotation-key" });
     await register(db.pool, registerDeps, input);

@@ -12,26 +12,27 @@ Mailo는 단일 컨텍스트다. 도메인 용어와 진행 상태 정의는 `do
 
 ## 모듈과 근거 문서
 
-| 모듈 (`apps/mailo/src/`) | 책임                                                                                           | 근거                           |
-| ------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------ |
-| `intake`                 | REST 등록·조회, `Idempotency-Key`                                                              | RQ-001, ADR-0005·0006          |
-| `queue`                  | 작업 점유(claim), lease 복구, 결과 기록, 만료 sweep, 차단기 저장소                             | ADR-0002·0003, ADR-0007 결정 5 |
-| `worker`                 | 점유·전송·기록 루프, SIGTERM drain, 설정→Worker·SMTP 옵션 조립                                 | ADR-0002 결정 4·9~12, RQ-025   |
-| `smtp`                   | SMTP 전송, 단계 기준 오류 분류, 백오프 계산                                                    | ADR-0007                       |
-| `crypto`                 | DB 본문 암호화, Key 내용 지문                                                                  | ADR-0005·0008                  |
-| `envelope`               | JWS 서명 검증, JWE 복호화, 수집 공용 파이프라인(`openRequest`), 큐 등록 입력 변환, 개인키 키링 | ADR-0008, RQ-022·024           |
-| `file-channel`           | 파일 채널 폴러(호출처별 `inbox/` 폴링 수집, 거부 기록, 임시 파일 정리), 수명 주기 연결         | ADR-0004, RQ-002·024           |
-| `events`                 | 종결 이벤트 피드, 수집 거부 기록                                                               | ADR-0006                       |
-| `callers`                | 호출처 레지스트리, API 키 인증                                                                 | RQ-028                         |
-| `health`                 | 헬스 응답, 차단기 상태 노출                                                                    | ADR-0007 결정 5                |
-| `config`                 | 환경 변수 로딩, Worker 옵션 값                                                                 | RQ-025                         |
-| `http`                   | problem+json 오류, 요청 ID, 본문 읽기 공통 처리                                                | RQ-030, ADR-0006               |
-| `validation`             | 요청 입력 검증(수신자·제목·본문 상한)                                                          | RQ-030                         |
-| `db`                     | `pg` 풀, SQL 마이그레이션 실행기                                                               | ADR-0002                       |
+| 모듈 (`apps/mailo/src/`) | 책임                                                                                                      | 근거                           |
+| ------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `intake`                 | REST 등록·조회, `Idempotency-Key`                                                                         | RQ-001, ADR-0005·0006          |
+| `queue`                  | 작업 점유(claim), lease 복구, 결과 기록, 만료 sweep, 차단기 저장소, 재시도 백오프 계산(`retry-policy.ts`) | ADR-0002·0003, ADR-0007 결정 5 |
+| `worker`                 | 점유·전송·기록 루프, SIGTERM drain, 설정→Worker·SMTP 옵션 조립                                            | ADR-0002 결정 4·9~12, RQ-025   |
+| `smtp`                   | SMTP 전송, 단계 기준 오류 분류                                                                            | ADR-0007                       |
+| `crypto`                 | DB 본문 암호화, Key 내용 지문                                                                             | ADR-0005·0008                  |
+| `envelope`               | JWS 서명 검증, JWE 복호화, 수집 공용 파이프라인(`openRequest`), 큐 등록 입력 변환, 개인키 키링            | ADR-0008, RQ-022·024           |
+| `file-channel`           | 파일 채널 폴러(호출처별 `inbox/` 폴링 수집, 거부 기록, 임시 파일 정리), 수명 주기 연결                    | ADR-0004, RQ-002·024           |
+| `events`                 | 종결 이벤트 피드, 수집 거부 기록                                                                          | ADR-0006                       |
+| `callers`                | 호출처 레지스트리, API 키 인증                                                                            | RQ-028                         |
+| `health`                 | 헬스 응답, 차단기 상태 노출                                                                               | ADR-0007 결정 5                |
+| `config`                 | 환경 변수 로딩, Worker 옵션 값                                                                            | RQ-025                         |
+| `http`                   | problem+json 오류, 요청 ID, 본문 읽기 공통 처리                                                           | RQ-030, ADR-0006               |
+| `logging`                | 한 줄 JSON 로거(`ts`·`instance`·`level`·`event`), Nest 로거 어댑터. 다른 모듈에 의존하지 않는다           | RQ-027                         |
+| `validation`             | 요청 입력 검증(수신자·제목·본문 상한)                                                                     | RQ-030                         |
+| `db`                     | `pg` 풀, SQL 마이그레이션 실행기                                                                          | ADR-0002                       |
 
 ## 앱 조립
 
-`app.module.ts`가 모듈을 묶고, `app-lifecycle.ts`가 기동(파일 폴러 start → Worker start)과 종료(HTTP 닫기 → 파일 폴러 정지 → Worker drain → 풀 닫기) 순서를 정한다. `worker-port.ts`의 `WorkerRunner`와 `file-channel/port.ts`의 `FilePollerRunner`가 각각의 연결 지점이다. 파일 채널은 `MAILO_FILE_CHANNEL_ROOT`가 있을 때만 켜진다.
+`app.module.ts`가 모듈을 묶고, `app-lifecycle.ts`가 기동(파일 폴러 start → Worker start)과 종료(Worker `pause()` → HTTP 닫기와 파일 폴러 정지 병행 → Worker drain → 풀 닫기) 순서를 정한다. `worker-port.ts`의 `WorkerRunner`와 `file-channel/port.ts`의 `FilePollerRunner`가 각각의 연결 지점이다. 파일 채널은 `MAILO_FILE_CHANNEL_ROOT`가 있을 때만 켜진다.
 
 ## 구현 단계
 

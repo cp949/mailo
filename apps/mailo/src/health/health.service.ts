@@ -210,11 +210,11 @@ export class HealthService {
     } catch (error) {
       // 원인 메시지에는 접속 정보가 섞일 수 있다. 클래스 이름과 pg 오류 코드만 남긴다.
       const code = (error as { code?: unknown } | null)?.code;
-      logger.warn(
-        `readiness check failed name=${error instanceof Error ? error.name : typeof error}${
-          typeof code === "string" ? ` code=${code}` : ""
-        }`,
-      );
+      logger.warn({
+        event: "readiness_check_failed",
+        name: error instanceof Error ? error.name : typeof error,
+        code: typeof code === "string" ? code : null,
+      });
       return {
         httpStatus: 503,
         body: {

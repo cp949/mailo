@@ -11,13 +11,13 @@ import type pg from "pg";
 import { defaultRetryPolicy } from "../../src/queue/index.js";
 import { createSmtpSender } from "../../src/smtp/index.js";
 import {
-  createJsonLogger,
   createWorker,
   defaultWorkerOptions,
   encodeBodyContent,
   type WorkerHandle,
   type WorkerOptions,
 } from "../../src/worker/index.js";
+import { createJsonLogger } from "../../src/logging/index.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
 import { startFakeSmtp, type FakeSmtp } from "../support/fake-smtp.js";
 import { createJob, migrate, testCipher } from "../support/queue-fixtures.js";

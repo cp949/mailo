@@ -21,7 +21,8 @@ import {
 } from "../envelope/index.js";
 import { recordIntakeRejection } from "../events/index.js";
 import { register } from "../queue/index.js";
-import type { WorkerLogger } from "../worker/index.js";
+import { isSenderAllowed } from "../validation/index.js";
+import type { AppLogger } from "../logging/index.js";
 import { errnoCode, isStale } from "./errno.js";
 import { peekIdempotencyKey } from "./key-hint.js";
 import { EMPTY_SHA256, readInboxFile, type FileIdent } from "./read-file.js";
@@ -51,7 +52,9 @@ export interface IngestDeps {
   fingerprinter: QueueFingerprinter;
   maxFileBytes: number;
   jobExpirySeconds: number;
-  logger: WorkerLogger;
+  /** 기본 발신 주소(`config.smtp.defaultFrom`). 모든 호출처가 쓸 수 있는 발신 주소다. */
+  defaultFrom: string;
+  logger: AppLogger;
   /** 등록·거부 기록 커밋 뒤, 원본 삭제 전에 부른다. 테스트가 이 시점의 종료·파일 교체를 흉내 낸다. */
   beforeDelete?: (info: {
     callerId: string;
@@ -138,7 +141,8 @@ export async function ingestFile(
       deps.logger.info("file_rejected", {
         callerId: caller.id,
         reasonCode,
-        fileName,
+        // 파일 이름은 호출처가 정하므로 로그에 남기지 않는다. 거부 기록 id로 DB·이벤트 피드에서 찾는다.
+        rejectionId: id,
         sizeBytes: record.sizeBytes,
         sha256: record.sha256,
       });
@@ -184,8 +188,16 @@ export async function ingestFile(
       callerId: caller.id,
       idempotencyKey: key,
       expiresInSeconds: deps.jobExpirySeconds,
+      denyNew: !isSenderAllowed(
+        opened.request.from,
+        deps.defaultFrom,
+        caller.allowedFrom,
+      ),
     }),
   );
+  // 허용되지 않은 발신 주소는 새 작업이 될 때만 거부한다. 이미 등록된 Key는 `duplicate`다(REST와 같은 규칙).
+  if (registered.kind === "denied")
+    return reject("VALIDATION_FAILED", { ...fileRecord, key });
   if (registered.kind === "fingerprint_mismatch")
     return reject("FINGERPRINT_MISMATCH", { ...fileRecord, key });
 

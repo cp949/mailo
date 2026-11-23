@@ -9,7 +9,7 @@ import {
   ConfigError,
   loadConfig,
   loadDatabaseUrlOnly,
-  type WorkerOptions,
+  type WorkerConfig,
 } from "../../src/config/index.js";
 import { CANARY, testEnv } from "../support/rest-app.js";
 
@@ -82,7 +82,7 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
         recordRetentionSeconds: 2_592_000,
         maintenanceIntervalMs: 60_000,
       },
-    } satisfies WorkerOptions);
+    } satisfies WorkerConfig);
     expect(config.queue.jobExpirySeconds).toBe(86_400);
     expect(config.http.maxRequestBytes).toBe(2 * 1024 * 1024);
     expect(config.limits).toMatchObject({
@@ -191,7 +191,11 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
       "MAILO_SMTP_USER와 MAILO_SMTP_PASSWORD",
     );
     expect(
-      issuesOf({ MAILO_SMTP_USER: "", MAILO_SMTP_PASSWORD: "" }),
+      issuesOf({
+        MAILO_SMTP_USER: "",
+        MAILO_SMTP_PASSWORD: "",
+        MAILO_SMTP_FROM: "",
+      }),
     ).toContain("MAILO_SMTP_FROM");
     const relay = loadConfig(
       env({

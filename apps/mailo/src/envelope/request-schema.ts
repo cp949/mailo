@@ -11,16 +11,14 @@
  * 암호화 모드(`content`)는 여기서 수신자·발신자 규칙까지만 본다. 제목·본문은 복호화한 뒤에 검증한다(ADR-0008 결정 3).
  * 그래서 성공 결과의 `outer`는 암호화 모드에서 제목·본문이 자리표시자다. 그대로 쓰지 않는다.
  */
-import type {
-  ValidationErrorCode,
-  ValidationErrorItem,
-} from "../http/index.js";
 import {
   validateIdempotencyKey,
   validateMailRequest,
   type MailRequestLimits,
   type ValidatedMailRequest,
   type ValidationCode,
+  type ValidationErrorCode,
+  type ValidationErrorItem,
 } from "../validation/index.js";
 
 export type SchemaChannel = "rest" | "file";

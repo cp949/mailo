@@ -1,5 +1,9 @@
+import {
+  defaultWorkerConfig,
+  workerDrainTimeoutMs,
+  type WorkerConfig,
+} from "../config/index.js";
 import type { BreakerConfig, RetryPolicy } from "../queue/index.js";
-import { defaultBreakerConfig, defaultRetryPolicy } from "../queue/index.js";
 
 export interface RetentionOptions {
   /** 종결 후 본문 컬럼을 비우기까지의 유예(초). 기본 1일(ADR-0008 결정 7). */
@@ -47,24 +51,43 @@ export class WorkerOptionsError extends Error {
   }
 }
 
+/** Mailo 내부 오류로 처리하지 못한 같은 작업을 이 횟수째 시도에서 FAILED로 만든다. 환경 변수로 받지 않는 추정값이다. */
+export const POISON_MAX_ATTEMPTS = 3;
+
 /**
- * 기본 옵션(모두 추정). 운영은 config 값으로 덮어쓴다.
- * drain 상한은 lease보다 10초 짧게 둔다. `stop_grace_period`(lease 이상)가 끝나기 전에 스스로 포기하고,
- * 포기한 작업은 lease 복구가 다룬다.
+ * 설정의 Worker 값(`AppConfig.worker`)을 Worker 옵션으로 바꾼다. 재시도 정책에는 `random: Math.random`을 붙인다.
+ * - 만료 sweep과 보존 삭제는 같은 주기(`MAILO_MAINTENANCE_INTERVAL_SECONDS`)로 돈다.
+ * - drain 상한은 lease보다 10초 짧다. `stop_grace_period`(lease 이상)가 끝나기 전에 스스로 포기하고,
+ *   포기한 작업은 lease 복구가 다룬다.
+ */
+export function workerOptionsFromConfig(
+  w: WorkerConfig,
+  callerQuotas?: ReadonlyMap<string, number>,
+): WorkerOptions {
+  return {
+    retry: { ...w.retry, random: Math.random },
+    breaker: w.breaker,
+    leaseSeconds: w.lease.seconds,
+    pollMs: w.pollMs,
+    concurrency: w.concurrency,
+    sweepIntervalMs: w.retention.maintenanceIntervalMs,
+    cleanupIntervalMs: w.retention.maintenanceIntervalMs,
+    retention: {
+      bodyGraceSeconds: w.retention.bodyGraceSeconds,
+      recordSeconds: w.retention.recordRetentionSeconds,
+    },
+    drainTimeoutMs: workerDrainTimeoutMs(w.lease.seconds),
+    poisonMaxAttempts: POISON_MAX_ATTEMPTS,
+    ...(callerQuotas && callerQuotas.size > 0 && { callerQuotas }),
+  };
+}
+
+/**
+ * 기본 옵션. 값의 단일 출처는 `loadConfig`의 기본값(`defaultWorkerConfig`)이다. 환경 변수를 주지 않은 운영과 같다.
+ * 테스트가 필드를 덮어써 쓴다.
  */
 export function defaultWorkerOptions(leaseSeconds = 120): WorkerOptions {
-  return {
-    retry: defaultRetryPolicy(),
-    breaker: defaultBreakerConfig(),
-    leaseSeconds,
-    pollMs: 1_000,
-    concurrency: 4,
-    sweepIntervalMs: 30_000,
-    cleanupIntervalMs: 10 * 60_000,
-    retention: { bodyGraceSeconds: 24 * 3600, recordSeconds: 30 * 24 * 3600 },
-    drainTimeoutMs: Math.max(1_000, (leaseSeconds - 10) * 1000),
-    poisonMaxAttempts: 3,
-  };
+  return workerOptionsFromConfig(defaultWorkerConfig(leaseSeconds));
 }
 
 export function validateWorkerOptions(options: WorkerOptions): void {

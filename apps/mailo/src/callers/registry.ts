@@ -14,6 +14,9 @@
  *   ]
  * }
  * ```
+ * 선택 필드 `allowedFrom`: 이 호출처가 요청의 `from`으로 쓸 수 있는 발신 주소 목록(addr-spec, 생략하면 빈 목록).
+ * 허용 집합은 `MAILO_SMTP_FROM`(또는 `MAILO_SMTP_USER`)의 기본 발신 주소에 이 목록을 더한 것이다.
+ * 집합 밖의 `from`을 보낸 요청은 400 validation-failed(`FROM_NOT_ALLOWED`)다. `from`을 생략하면 기본 발신 주소를 쓴다. `replyTo`는 제한하지 않는다.
  * 선택 필드 `sendQuota24h`: 호출처별 24시간 rolling 발송 할당(양의 정수, 생략하면 무제한, RQ-032).
  * 해시 만들기: `printf '%s' "$API_KEY" | sha256sum`. 키는 256비트 난수(`openssl rand -base64 32`)를 쓴다.
  *
@@ -26,6 +29,9 @@
  * 변수 이름(`secretVar`)만 둔다. 값은 `<변수>_FILE`(시크릿 파일 마운트, 우선) 또는 `<변수>`(환경 변수)로 받는다.
  * 파일 권한은 마운트가 정한다(Mailo 계정만 읽도록 둔다). 이 파일은 비밀이 없어 검토·배포 대상으로 다뤄도 된다.
  * 키 형식은 32바이트의 base64 또는 64자 hex다(`openssl rand -base64 32`). 호출처마다 다른 키를 쓴다.
+ * 같은 키 바이트가 다른 `kid`·호출처에 있으면 기동하지 않는다(어느 호출처의 서명인지 모호해진다). `options.otherKeys`로 받은
+ * 다른 키링(DB 본문 키, 지문 키)과 같은 바이트여도 거부한다. 공개 샘플 키나 같은 바이트가 반복된 키는 production
+ * (`NODE_ENV`가 development·test가 아닐 때)에서만 거부한다. DB 본문 키·지문 키와 같은 규칙이다.
  * `signature.mode`가 `none`이면 `keys`를 둘 수 없다. 서명 사용 여부를 한 곳에서만 정하기 위해서다.
  * `fileChannel`이 true인 호출처만 파일 채널 폴러가 `<root>/inbox/<id>/`를 수집한다(ADR-0004 결정 8). 기본은 false다.
  * `jwe`는 읽어 두기만 하고 해석하지 않는다.
@@ -33,8 +39,17 @@
  * 오류 메시지에는 항목 위치와 고정 사유만 담는다. 해시와 키 값은 담지 않는다.
  */
 import { readFileSync } from "node:fs";
-import { EnvReader, Secret, decodeKey } from "../config/index.js";
+import {
+  EnvReader,
+  Secret,
+  decodeKey,
+  isPublicOrWeakKey,
+} from "../config/index.js";
 import { verifyApiKeyAgainstAny } from "../crypto/index.js";
+import {
+  DEFAULT_MAIL_REQUEST_LIMITS,
+  checkAddress,
+} from "../validation/index.js";
 
 /** 호출처의 JWS HS256 키. 값은 `Secret`으로 감싸 로그와 직렬화에 나오지 않게 한다. */
 export interface CallerSignatureKey {
@@ -57,6 +72,8 @@ export interface CallerEntry {
    * 단위는 메시지 시도 수이며 수신자 수로 가중하지 않는다. 할당을 넘기면 작업은 점유되지 않고 대기한다.
    */
   sendQuota24h: number | null;
+  /** 요청의 `from`으로 쓸 수 있는 발신 주소(기본 발신 주소 외, 입력 표기 그대로). 비교는 대소문자를 무시한다. */
+  allowedFrom: readonly string[];
 }
 
 export interface CallerRegistry {
@@ -87,6 +104,7 @@ const ENTRY_FIELDS = new Set([
   "signature",
   "jwe",
   "sendQuota24h",
+  "allowedFrom",
 ]);
 const SIGNATURE_FIELDS = new Set(["mode", "keys"]);
 const SIGNATURE_KEY_FIELDS = new Set(["kid", "secretVar"]);
@@ -94,15 +112,22 @@ const KID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const SECRET_VAR = /^MAILO_JWS_SECRET_[A-Z0-9_]{1,80}$/;
 const MAX_KEYS_PER_CALLER = 2;
 const MAX_SEND_QUOTA = 10_000_000;
+const MAX_ALLOWED_FROM = 20;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export interface RegistryOptions {
+  env?: NodeJS.ProcessEnv;
+  /** 서명 키와 겹치면 안 되는 다른 키링의 키 바이트. `label`은 오류 메시지에 쓴다. */
+  otherKeys?: ReadonlyArray<{ label: string; keys: Iterable<Uint8Array> }>;
+}
+
 /** 파싱한 JSON을 검증해 레지스트리를 만든다. 문제를 모두 모아 `CallerRegistryError`로 던진다. */
 export function parseCallerRegistry(
   json: unknown,
-  options: { env?: NodeJS.ProcessEnv } = {},
+  options: RegistryOptions = {},
 ): CallerRegistry {
   const issues: string[] = [];
   // 서명 비밀키를 읽는 환경. 시크릿 파일 우선 규칙은 설정의 다른 시크릿과 같다.
@@ -123,6 +148,11 @@ export function parseCallerRegistry(
 
   const seenIds = new Set<string>();
   const seenHashes = new Set<string>();
+  // 키 바이트(hex) -> 처음 쓴 위치. 호출처 사이·키 사이의 중복을 잡는다. 값은 오류에 싣지 않고 위치만 쓴다.
+  const seenSecrets = new Map<string, string>();
+  for (const other of options.otherKeys ?? [])
+    for (const key of other.keys)
+      seenSecrets.set(Buffer.from(key).toString("hex"), other.label);
   json["callers"].forEach((raw: unknown, index: number) => {
     const where = `callers[${index}]`;
     if (!isRecord(raw)) {
@@ -200,6 +230,7 @@ export function parseCallerRegistry(
         where,
         issues,
         secrets,
+        seenSecrets,
       );
     }
 
@@ -221,6 +252,8 @@ export function parseCallerRegistry(
       );
     }
 
+    const allowedFrom = parseAllowedFrom(raw["allowedFrom"], where, issues);
+
     if (typeof id === "string" && CALLER_ID.test(id)) {
       entries.push({
         id,
@@ -229,6 +262,7 @@ export function parseCallerRegistry(
         signature: { mode, keys },
         jwe: isRecord(jwe) ? jwe : null,
         sendQuota24h: typeof sendQuota === "number" ? sendQuota : null,
+        allowedFrom,
       });
     }
   });
@@ -249,6 +283,33 @@ export function parseCallerRegistry(
   };
 }
 
+/** `allowedFrom`을 읽는다. 생략하면 빈 목록이다. 주소 형식은 요청의 `from`과 같은 규칙(`checkAddress`)이다. */
+function parseAllowedFrom(
+  raw: unknown,
+  where: string,
+  issues: string[],
+): string[] {
+  if (raw === undefined) return [];
+  const at = `${where}.allowedFrom`;
+  if (!Array.isArray(raw) || raw.length > MAX_ALLOWED_FROM) {
+    issues.push(`${at}는 주소 0~${MAX_ALLOWED_FROM}개의 배열이어야 한다`);
+    return [];
+  }
+  const addresses: string[] = [];
+  raw.forEach((item: unknown, i: number) => {
+    if (
+      typeof item !== "string" ||
+      checkAddress(item, DEFAULT_MAIL_REQUEST_LIMITS.maxAddressChars) !==
+        undefined
+    ) {
+      issues.push(`${at}[${i}]는 addr-spec 주소 문자열이어야 한다`);
+      return;
+    }
+    addresses.push(item);
+  });
+  return addresses;
+}
+
 /**
  * `signature.keys`를 읽는다. `required`는 1~2개가 필요하고 `none`은 비어 있어야 한다.
  * 비밀키 읽기 실패 사유는 변수 이름과 errno 코드만 `secrets.issues`에 쌓인다.
@@ -259,6 +320,7 @@ function parseSignatureKeys(
   where: string,
   issues: string[],
   secrets: EnvReader,
+  seenSecrets: Map<string, string>,
 ): CallerSignatureKey[] {
   const at = `${where}.signature.keys`;
   if (mode === "none") {
@@ -319,6 +381,21 @@ function parseSignatureKeys(
       issues.push(`${variable}은 32바이트 키(base64 또는 64자 hex)여야 한다`);
       return;
     }
+    if (secrets.strictEnv() && isPublicOrWeakKey(key)) {
+      issues.push(
+        `${variable}은 공개된 샘플 키이거나 같은 바이트가 반복된 키라 production에서 쓸 수 없다(${here}, openssl rand -base64 32로 새로 만든다)`,
+      );
+      return;
+    }
+    const fingerprint = key.toString("hex");
+    const sameAs = seenSecrets.get(fingerprint);
+    if (sameAs !== undefined) {
+      issues.push(
+        `${here}가 다른 서명 키 또는 키링과 같은 키를 쓴다(${sameAs})`,
+      );
+      return;
+    }
+    seenSecrets.set(fingerprint, here);
     keys.push({ kid, secret: new Secret<Uint8Array>(key) });
   });
   return keys;
@@ -332,7 +409,7 @@ function safeName(name: string): string {
 /** 파일에서 읽어 레지스트리를 만든다. 읽기·파싱 실패 사유에는 errno 코드만 적는다. */
 export function loadCallerRegistryFile(
   path: string,
-  options: { env?: NodeJS.ProcessEnv } = {},
+  options: RegistryOptions = {},
 ): CallerRegistry {
   let text: string;
   try {

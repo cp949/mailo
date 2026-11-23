@@ -106,8 +106,9 @@ const QUOTA_LOCK_CLASS = 7_364_222;
  *    두 값을 따로 세면 그 사이에 완료 트랜잭션이 커밋돼 작업 한 건을 놓칠 수 있다.
  *    시도 수는 `mail_attempts_quota_idx`, 점유 수는 `mail_jobs_sending_caller_idx`로 센다.
  *
- * 비용은 할당을 설정한 호출처 수와 그 호출처의 최근 시도 수에만 비례한다(시도 수는 `LIMIT 할당`으로 자른다).
- * 할당이 없는 호출처 수와 큐 길이에는 영향받지 않는다.
+ * 이 함수(사용량 쿼리)의 비용은 할당을 설정한 호출처 수와 그 호출처의 최근 시도 수에만 비례한다(시도 수는 `LIMIT 할당`으로 자른다).
+ * 큐 길이에는 영향받지 않는다. 점유 쿼리는 다르다. 할당 초과 호출처의 대기 작업은 `claim`에서
+ * 매 poll 필터로 읽고 버리므로 그 비용은 초과 호출처의 대기 건수에 선형이다(ADR-0007 구현 중 확정 10).
  */
 async function planQuotas(
   client: pg.PoolClient,
@@ -227,6 +228,8 @@ export async function claim(
     if (mode === "normal") {
       // 할당 초과 호출처는 `caller_id <> ALL`로 뺀다. 할당이 남은 호출처는 이번 배치에서 남은 건수까지만 점유한다.
       // 순위(rn)는 이미 잠근 최대 `limit`건 안에서만 매기므로 큐 길이에 영향받지 않는다.
+      // 단 `mail_jobs_claim_idx`에 caller_id가 없어 초과 호출처의 대기 행은 인덱스로 건너뛰지 못하고 매 poll 읽고 버린다.
+      // 측정: 대기 1만 건 1.4ms, 10만 건 11.8ms(ADR-0007 구현 중 확정 10). 기본 만료 24시간이 대기 건수를 제한한다.
       // 남은 건수를 넘긴 행은 잠겼지만 갱신하지 않고 커밋 때 풀린다. 이 호출은 `limit`보다 적게 점유할 수 있다.
       const { rows } = await client.query<JobRow>(
         `WITH picked AS (

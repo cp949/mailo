@@ -12,6 +12,7 @@ export {
   type CompleteDeps,
 } from "./complete.js";
 export {
+  MAINTENANCE_BATCH_SIZE,
   deleteExpiredBodies,
   deleteExpiredRecords,
   sweepExpired,

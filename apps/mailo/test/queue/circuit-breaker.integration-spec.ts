@@ -98,6 +98,29 @@ describe("PostgreSQL 통합: 전역 차단기(ADR-0007 결정 4·5, RQ-009)", ()
     expect(rows.map((r) => r.attempts)).toEqual([0, 0, 1, 1]);
   });
 
+  it("서로 다른 작업 8건의 계정 오류 결과가 동시에 들어와도 연속 실패는 임계값 3에서 멈추고 open 전이는 한 번이다(RQ-009, 여러 인스턴스 공유)", async () => {
+    for (let i = 0; i < 8; i += 1) await createJob(db.pool);
+    const jobs = await claim(db.pool, { ...claimOpts, limit: 8 });
+    expect(jobs).toHaveLength(8);
+
+    // 서로 다른 연결(풀)에서 동시에 완료한다. 인스턴스 여러 개가 같은 DB를 공유하는 상황이다.
+    const results = await Promise.all(
+      jobs.map((job) => failAccount(job, "CONNECTION")),
+    );
+
+    const state = await breaker();
+    expect(state.state).toBe("open");
+    expect(state.consecutiveFailures).toBe(3);
+    expect(state.waitSeconds).toBe(60);
+    expect(results.every((r) => r.applied)).toBe(true);
+    // 연속 실패가 3에서 멈추고 열기 전의 실패 2건만 시도 횟수에 든다. 차단기를 연 건과 open 중 늦게 도착한 건은 들지 않는다
+    // (open 전이가 두 번이었다면 연속 실패 수와 시도 횟수 합이 달라진다).
+    const attempts = await db.pool.query<{ total: number }>(
+      "SELECT COALESCE(sum(attempts), 0)::int AS total FROM mail_jobs",
+    );
+    expect(attempts.rows[0]!.total).toBe(2);
+  });
+
   it("성공이나 메시지 오류가 끝나면 닫힌 상태의 연속 실패 수가 0이 된다", async () => {
     await createJob(db.pool);
     await createJob(db.pool);

@@ -11,6 +11,11 @@ import type {
 } from "../../src/app.module.js";
 import { loadConfig, type AppConfig } from "../../src/config/index.js";
 import { hashApiKey } from "../../src/crypto/index.js";
+import {
+  createJsonLogger,
+  createNestLogger,
+  type AppLogger,
+} from "../../src/logging/index.js";
 import type { WorkerRunner } from "../../src/worker-port.js";
 
 // 테스트용 가짜 값이다. 실제 시크릿이 아니다.
@@ -40,6 +45,8 @@ export function testEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     MAILO_SMTP_HOST: "smtp.example.invalid",
     MAILO_SMTP_USER: "fake-user@example.invalid",
     MAILO_SMTP_PASSWORD: CANARY.smtpPassword,
+    // 테스트 요청(`plainMail`)의 from과 같다. 호출처 허용 발신 주소는 기본 발신 주소만 쓰는 것이 기본이다.
+    MAILO_SMTP_FROM: "no-reply@example.com",
     MAILO_DB_ENCRYPTION_KEY_V1: DB_KEY_B64,
     MAILO_FINGERPRINT_KEY_V1: FINGERPRINT_KEY_B64,
     ...overrides,
@@ -64,6 +71,8 @@ export function writeCallersFile(
           apiKeyHashes: [hashApiKey(ALPHA_KEY), hashApiKey(ALPHA_KEY_NEXT)],
           fileChannel: fileChannel.includes("alpha"),
           signature: { mode: "none" },
+          // 발신 주소 허용 시험용(allowedFrom). beta는 기본 발신 주소만 쓴다.
+          allowedFrom: ["Billing@Example.com"],
         },
         {
           id: "beta",
@@ -77,24 +86,25 @@ export function writeCallersFile(
   return file;
 }
 
+/** 테스트 로그의 `instance` 값. */
+export const TEST_INSTANCE = "test-instance";
+
 export interface CapturedLogs {
   lines: string[];
+  /** `createApp`에 넘기는 앱 로거. 수집기에 한 줄 JSON을 쓴다. */
+  appLogger: AppLogger;
+  /** 같은 앱 로거에 연결한 Nest 로거(`app.useLogger`로 전역 Nest 로거를 되돌릴 때 쓴다). */
   logger: LoggerService;
   stop(): void;
 }
 
-/** Nest 로거와 stdout·stderr 쓰기를 모두 모은다. 어느 경로로 새도 canary 검색에 걸리게 한다. */
+/** 앱 JSON 로거(Nest 로그 포함)와 stdout·stderr 쓰기를 모두 모은다. 어느 경로로 새도 canary 검색에 걸리게 한다. */
 export function captureLogs(): CapturedLogs {
   const lines: string[] = [];
-  const text = (args: unknown[]): string =>
-    args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
-  const logger: LoggerService = {
-    log: (...args: unknown[]) => void lines.push(text(args)),
-    error: (...args: unknown[]) => void lines.push(text(args)),
-    warn: (...args: unknown[]) => void lines.push(text(args)),
-    debug: (...args: unknown[]) => void lines.push(text(args)),
-    verbose: (...args: unknown[]) => void lines.push(text(args)),
-  };
+  const appLogger = createJsonLogger((line) => void lines.push(line), {
+    instance: TEST_INSTANCE,
+  });
+  const logger = createNestLogger(appLogger, { debug: true });
   const out = process.stdout.write.bind(process.stdout);
   const err = process.stderr.write.bind(process.stderr);
   const record =
@@ -109,6 +119,7 @@ export function captureLogs(): CapturedLogs {
   process.stderr.write = record(err) as typeof process.stderr.write;
   return {
     lines,
+    appLogger,
     logger,
     stop() {
       process.stdout.write = out;
@@ -154,11 +165,11 @@ export async function startRestApp(
       config,
       env,
       pool: options.pool,
+      logger: logs.appLogger,
       ...(options.workerRunner ? { workerRunner: options.workerRunner } : {}),
       ...(options.worker ? { worker: options.worker } : {}),
       ...(options.httpTimeouts ? { http: options.httpTimeouts } : {}),
     });
-    app.useLogger(logs.logger);
     await app.listen(0, "127.0.0.1");
   } catch (error) {
     // 기동에 실패해도 stdout 가로채기와 임시 파일을 남기지 않는다.

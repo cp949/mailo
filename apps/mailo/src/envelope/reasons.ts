@@ -2,7 +2,7 @@
  * 봉투 수집 파이프라인(`openRequest`)의 거부 사유(ADR-0008 결정 3, ADR-0006 결정 3).
  * 사유 코드와 위치(JSON Pointer)만 담는다. 요청에서 받은 값(제목, 본문, 주소, Key, 암호문)은 어디에도 넣지 않는다(RQ-027).
  */
-import type { ValidationErrorItem } from "../http/index.js";
+import type { ValidationErrorItem } from "../validation/index.js";
 
 export const OPEN_REQUEST_REASONS = [
   /** JSON·JWS 구조 오류, 헤더 형식 오류, `iat` 누락. */

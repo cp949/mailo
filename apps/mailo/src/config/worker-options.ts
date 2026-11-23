@@ -1,18 +1,11 @@
 /**
- * Worker가 읽는 옵션. 값은 `loadConfig`가 환경 변수에서 읽어 검증한 뒤 `AppConfig.worker`로 준다.
+ * Worker 설정(`AppConfig.worker`). Worker가 실제로 쓰는 `WorkerOptions`(`worker/options.ts`)는 이 값에서 만든다. 값은 `loadConfig`가 환경 변수에서 읽어 검증한 뒤 `AppConfig.worker`로 준다.
  * 큐 모듈의 `RetryPolicy`·`BreakerConfig`에서 함수 필드(`random`)와 같은 것을 뺀 구조다.
  * Worker는 이 값에 `random: Math.random`을 붙여 큐 정책 객체를 만든다.
  * 모든 수치는 추정 기본값이며 환경 변수로 바꾼다(RQ-008, ADR-0007 결정 4·5).
  */
 
-/** 계정 상태 오류 사유(큐의 `AccountErrorReason`과 같은 값). */
-export type WorkerAccountReason =
-  | "DAILY_LIMIT"
-  | "RATE_LIMIT"
-  | "CONNECTION"
-  | "TLS"
-  | "AUTH"
-  | "OTHER";
+import type { AccountErrorReason } from "../queue/index.js";
 
 export interface WorkerRetryOptions {
   /** 첫 시도를 포함한 최대 시도 횟수. */
@@ -30,11 +23,11 @@ export interface WorkerBreakerOptions {
   /** closed에서 open으로 가는 연속 계정 상태 오류 수. */
   failureThreshold: number;
   /** 사유별 open 초기 대기 시간(초). */
-  initialWaitSeconds: Record<WorkerAccountReason, number>;
+  initialWaitSeconds: Record<AccountErrorReason, number>;
   /** 대기 시간 상한은 `max(capFloorSeconds, 해당 사유의 초기값)`이다. */
   capFloorSeconds: number;
   /** 한도 초과 사유는 연속 실패 수와 무관하게 즉시 open한다(ADR-0007 결정 5). 설정으로 바꾸지 않는다. */
-  immediateOpenReasons: readonly WorkerAccountReason[];
+  immediateOpenReasons: readonly AccountErrorReason[];
   /** 같은 작업이 차단기를 이 횟수만큼 연 뒤에도 같은 응답을 받으면 FAILED(ADR-0007 결정 4). */
   maxAccountTrips: number;
 }
@@ -48,7 +41,7 @@ export interface WorkerRetentionOptions {
   maintenanceIntervalMs: number;
 }
 
-export interface WorkerOptions {
+export interface WorkerConfig {
   retry: WorkerRetryOptions;
   breaker: WorkerBreakerOptions;
   /** 작업 점유 lease. `stop_grace_period`는 이 값 이상이어야 한다(ADR-0002 결정 12). */

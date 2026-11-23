@@ -9,8 +9,6 @@ export {
 export type { RetentionOptions, WorkerOptions } from "./options.js";
 export { systemClock } from "./clock.js";
 export type { Clock } from "./clock.js";
-export { createJsonLogger, describeError, silentLogger } from "./logger.js";
-export type { LogFields, WorkerLogger } from "./logger.js";
 export {
   BodyContentError,
   decodeBodyContent,

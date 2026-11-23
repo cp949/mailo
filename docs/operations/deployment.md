@@ -10,6 +10,8 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 - 설정 오류는 기동 시점에 변수 이름과 사유를 출력하고 종료 코드 1로 끝난다. 값은 출력하지 않는다.
 - `stop_grace_period`는 drain 상한(`MAILO_LEASE_SECONDS` − 10초) + 10초 이상이어야 한다. compose는 `MAILO_STOP_GRACE_PERIOD`(기본 150s)로 이 값을 정하고 앱에도 같은 값을 전달한다. 앱은 변수가 있으면 관계를 검사해 어긋나면 기동을 거부한다.
 - PostgreSQL 13 이상이 필요하다. compose는 `postgres:17-alpine`이다.
+- `mailo` 컨테이너는 읽기 전용 루트(`read_only`), 모든 capability 제거, `no-new-privileges`로 실행한다. 이미지의 `/repo`는 root 소유라 런타임(`node`)이 코드·`node_modules`·마이그레이션을 바꿀 수 없다.
+- 로그는 모두 표준 출력의 한 줄 JSON(`ts`, `instance`, `level`, `event`, ...)이다("로그").
 - DB 쓰기 권한 계정은 Mailo 앱으로 최소화한다. DB 본문 AES-GCM의 AAD가 `job_id`뿐이라 쓰기 권한자의 `recipients` 변경은 막지 못한다(ADR-0008 구현 중 확정 10, `key-management.md`).
 - DB 암호화 키·지문 키·JWE 개인키를 DB 백업과 별도로 보관한다. 이 키 없이는 복원한 DB의 일부 기능이 동작하지 않는다("백업과 복구").
 
@@ -18,7 +20,7 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 | 서비스 | 이미지 | 노출 | 비고 |
 | ------ | ------ | ---- | ---- |
 | `postgres` | `postgres:17-alpine` | `127.0.0.1:${MAILO_DB_PUBLISH_PORT:-5432}` | 볼륨 `postgres-data`, `pg_isready` healthcheck, `restart: unless-stopped` |
-| `mailo` | 저장소 `Dockerfile` 빌드(`node:24.20.0-alpine`) | `${MAILO_PUBLISH_HOST:-127.0.0.1}:${MAILO_PUBLISH_PORT:-3000}:3000` (기본 같은 호스트만) | non-root(`node`, UID 1000), `restart: unless-stopped`, `stop_grace_period: ${MAILO_STOP_GRACE_PERIOD:-150s}`, healthcheck(`/health/live`) |
+| `mailo` | 저장소 `Dockerfile` 빌드(`node:24.20.0-alpine@sha256:e67514e5…`, digest 고정) | `${MAILO_PUBLISH_HOST:-127.0.0.1}:${MAILO_PUBLISH_PORT:-3000}:3000` (기본 같은 호스트만) | non-root(`node`, UID 1000), `restart: unless-stopped`, `stop_grace_period: ${MAILO_STOP_GRACE_PERIOD:-150s}`, healthcheck(`/health/live`), `read_only: true` + `tmpfs: /tmp`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]` |
 
 - `mailo`는 `.env`를 `env_file`로 읽는다. `.env`가 없으면 compose가 실패한다. `.env.example`을 복사해 만든다(`docker compose up -d postgres`만 실행할 때도 같다).
 - `POSTGRES_PASSWORD`에는 compose 기본값이 없다. `.env`나 환경에 없으면 `docker compose`가 변수 이름을 알리고 중단한다(`${POSTGRES_PASSWORD:?...}`). 공개 기본 비밀번호가 운영에 남는 것을 막기 위해서다. 영향: `scripts/container/`는 `POSTGRES_PASSWORD`를 환경으로 주므로 그대로 동작한다. CI의 `integration`·`nfs` 잡은 compose가 아니라 서비스 컨테이너를 쓰므로 영향이 없다(`ci.md`).
@@ -32,7 +34,9 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 - `./callers.json`을 컨테이너의 `/run/mailo/callers.json`에 읽기 전용으로 마운트한다. 파일이 없으면 `callers.example.json`을 복사해 만든다. `/callers.json`은 `.gitignore` 대상이다.
 - Mailo는 TLS를 종단하지 않는다(코드에 TLS 설정이 없다). Bearer 키가 평문으로 오가지 않도록 TLS를 종단하는 프록시 뒤에 두거나 신뢰하는 내부 망에서만 노출한다.
 - `mailo` healthcheck는 이미지에 curl이 없어 `node -e fetch(...)`로 `GET http://127.0.0.1:3000/health/live`를 10초마다 호출한다(타임아웃 5초, 3회 실패 시 unhealthy, `start_period` 30초). DB 상태는 보지 않는다. 준비 확인은 "헬스" 절을 따른다.
-- 파일 채널을 켜려면 `.env`에 `MAILO_FILE_CHANNEL_ROOT=/var/mailo/files`를 주고 `docker-compose.yml`의 주석 처리된 볼륨 줄을 연다. 폴더와 권한은 호스트에서 만든다(`caller-onboarding.md`, `nfs.md`).
+- 파일 채널을 켜려면 `.env`에 `MAILO_FILE_CHANNEL_ROOT=/var/mailo/files`를 주고 `docker-compose.yml`의 주석 처리된 볼륨 줄을 연다. 폴더와 권한은 호스트에서 만든다(`caller-onboarding.md`, `nfs.md`). `<root>/inbox`가 없거나 통과할 수 없으면 앱은 기동을 거부한다(mount 전의 빈 디렉터리를 읽는 상황을 막는다. 읽기 권한은 요구하지 않는다). 호출처 폴더 하나가 없는 것은 경고다.
+- NAS/NFS를 컨테이너에서 쓰는 구성 예시는 `docker-compose.nfs-example.yml`(Docker `local` 드라이버 NFS named volume)이다. 실행해 확인하지 않았다(`nfs.md` "컨테이너에서 쓰는 방법").
+- 읽기 전용 루트(`read_only`): 런타임이 쓸 수 있는 곳은 `/tmp`(tmpfs)와 파일 채널 볼륨(별도 마운트)뿐이다. 이 구성에서 컨테이너 검증 스크립트(`scripts/container/`, `scripts/volume/`)가 쓰기 오류 없이 통과했다(`/tmp`가 실제로 쓰였는지는 확인하지 않았다). 로그는 표준 출력이다. 이미지를 바꾸지 않고 쓰기가 필요한 경로가 생기면 그 경로만 `tmpfs`나 볼륨으로 연다.
 
 기동:
 
@@ -51,7 +55,34 @@ docker compose up -d --build
 - 인스턴스가 동시에 기동해도 advisory lock(키 `7364221001`)으로 직렬화한다.
 - `Dockerfile`의 기본 `CMD`는 `node dist/main.js`다. compose 밖에서 이미지를 실행하면 마이그레이션이 돌지 않는다. 먼저 `node dist/db/migrate-cli.js`를 실행한다.
 - 호스트에서 직접 적용: `MAILO_DATABASE_URL`을 주고 `pnpm build`를 한 뒤 `pnpm --filter @cp949/mailo migrate`(빌드 결과 `dist/db/migrate-cli.js`를 실행한다).
-- down 마이그레이션은 없다.
+- down 마이그레이션은 없다. 롤백은 적용 전에 받아 둔 `pg_dump`를 복원하는 방법뿐이다("백업과 복구"). 마이그레이션을 적용하기 전에 백업한다. 적용한 파일을 고쳐 되돌리지 않는다.
+- 트랜잭션 안에서 쓸 수 없는 문장(`CREATE INDEX CONCURRENTLY`)은 파일 첫 줄에 `-- mailo:no-transaction`을 둔다. 이 파일은 `BEGIN` 없이 실행된다. 규칙:
+  - 문장은 정확히 하나여야 한다. 실행기가 주석·문자열·달러 인용 안의 `;`를 빼고 세어 둘 이상이거나 판정이 애매하면(닫히지 않은 따옴표·`E'...'`) 실행 전에 거부한다. 여러 문장을 한 번에 보내면 PostgreSQL이 암묵 트랜잭션으로 묶어 `CONCURRENTLY`가 실패하기 때문이다.
+  - 성공하면 `schema_migrations`에 기록한다. 실패하면 기록하지 않아 다음 실행(컨테이너 재시작 포함)에서 다시 시도하므로 문장은 멱등해야 한다(`IF NOT EXISTS` 등).
+  - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다).
+  - 같은 실행에서 앞서 적용한 파일은 이미 커밋돼 있다. 표식 파일이 실패해도 앞 파일은 롤백되지 않는다.
+  - 현재 파일(`0001`, `0002`)은 모두 트랜잭션 실행이다.
+- 잠금 대기: 기본(트랜잭션) 실행은 풀에 `lock_timeout`이 걸려 있으면 그 값(CLI는 10초)을 쓰고, 없으면(0) 10초를 `SET LOCAL`로 건다. 표식 파일은 같은 값을 세션 `SET`으로 걸고 끝나면 `RESET`한다. 마이그레이션이 다른 쿼리를 막는 잠금을 10초 넘게 기다리면 실패한다(`55P03`). 인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
+
+### 마이그레이션 일회성 실행(선택)
+
+기본 compose는 `mailo` 컨테이너가 시작할 때마다 `migrate-cli`를 실행한다(앱 계정이 DDL 권한을 가진다). 이를 떼려면 `docker-compose.migrate-once.yml`을 덮어 쓴다.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.migrate-once.yml up -d --build
+```
+
+- `mailo-migrate`(같은 이미지) 서비스가 `migrate-cli`를 한 번 실행하고 끝난다. `mailo`는 그것이 성공해야(`service_completed_successfully`) 시작하고 시작 명령에서 `migrate-cli`를 뺀다. `mailo`가 재시작해도 마이그레이션은 다시 돌지 않는다. 마이그레이션이 실패하면 `mailo`는 시작하지 않는다.
+- 계정 분리: `.env`에 `MAILO_MIGRATE_DB_USER`·`MAILO_MIGRATE_DB_PASSWORD`를 주면 마이그레이션만 그 계정(테이블 소유자, DDL 권한)으로 돈다. 앱(`POSTGRES_USER`)은 DML 권한만 가진 계정으로 둘 수 있다. 앱 계정에는 다음을 준다(`<migrator>`는 마이그레이션 계정).
+
+```sql
+GRANT USAGE ON SCHEMA public TO <app>;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO <app>;
+ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO <app>;
+```
+
+- 확인한 것: 로컬 PostgreSQL 17에서 위 권한으로 `mail_intake_rejections`의 INSERT·UPDATE·DELETE(식별 컬럼 포함)와 `pg_current_xact_id()`가 되고 `CREATE TABLE`은 `permission denied`였다. 확인하지 않은 것: 이 권한으로 앱 전체(Worker, 이벤트 피드, 보존 삭제)를 돌리는 것, override 파일의 실제 기동(`docker compose config` 문법 확인만 했다). 이 구성은 기본이 아니다.
+- 이 파일을 쓰면 기동 때 자동 마이그레이션이 없으므로 배포 절차에서 `mailo-migrate`가 끝났는지 확인한다(`docker compose ps -a mailo-migrate`의 종료 코드 0).
 - 현재 파일: `0001_queue_schema.sql`(5개 테이블, PostgreSQL 13 이상 필요), `0002_caller_quota.sql`(`mail_attempts.caller_id` 추가·채움, 부분 인덱스 2개).
 - `0002`는 `mail_attempts` 전체를 `UPDATE`하고 인덱스를 `CONCURRENTLY` 없이 만든다. 시도 행이 많은 DB에서는 적용 중 쓰기가 잠시 막힐 수 있다(코드 읽기 결과, 대용량에서 측정하지 않았다).
 - 이전 버전 인스턴스가 `0002` 적용 뒤에도 돌면 `caller_id` 없이 시도를 기록한다. 그런 행은 호출처 할당 사용량에 잡히지 않는다(마이그레이션 주석). 롤링 배포가 끝나면 사라진다.
@@ -74,6 +105,10 @@ docker compose up -d --build
 | `MAILO_PORT` | 3000 | 1~65535 | listen 포트. 컨테이너 안은 3000 고정 |
 | `MAILO_DATABASE_URL` | 없음(`MAILO_DB_HOST`가 없으면 필수) | `postgres://` 또는 `postgresql://` URL | 시크릿(`_FILE` 지원). 비밀번호는 호출자가 URL 인코딩해야 한다. compose 컨테이너는 비운다 |
 | `MAILO_DB_HOST`, `MAILO_DB_PORT`, `MAILO_DB_USER`, `MAILO_DB_PASSWORD`, `MAILO_DB_NAME` | 포트 5432, 나머지 없음 | `MAILO_DB_HOST`를 주면 사용자·DB 이름 필수, 비밀번호 선택 | `MAILO_DATABASE_URL`의 대안. 앱이 URL 인코딩해 조립한다. `MAILO_DB_HOST`는 호스트 이름, IPv4, 대괄호 IPv6(`[::1]`)만 받는다. 포트·경로·공백이 있으면 기동 거부(포트는 `MAILO_DB_PORT`). `MAILO_DB_PASSWORD`는 `_FILE` 지원. `MAILO_DATABASE_URL`과 함께 주면 기동 거부 |
+| `MAILO_DB_SSLMODE` | 없음(암호화 설정을 하지 않는다) | `disable`, `require`, `verify-ca`, `verify-full` | `MAILO_DB_HOST` 경로 전용. 값을 pg의 `ssl` 옵션으로 직접 옮긴다(URL `sslmode`는 pg-connection-string이 `require`·`verify-ca`를 `verify-full`처럼 다루고 경고하므로 쓰지 않는다). `require`: 암호화만 하고 인증서를 검증하지 않는다(중간자 공격은 막지 못한다). `verify-ca`: 체인을 CA로 검증하고 호스트 이름은 보지 않는다. `verify-full`: 체인과 호스트 이름을 모두 검증한다(권장). `MAILO_DATABASE_URL`과 함께 주면 기동 거부(그 경로는 URL의 `sslmode` 매개변수를 pg가 해석한다) |
+| `MAILO_DB_SSLROOTCERT_FILE` | 없음(Node 기본 CA) | PEM 파일 경로 | `verify-ca`·`verify-full`에서 서버 인증서를 검증할 CA. 다른 모드와 함께 주면 기동 거부. 파일을 읽지 못하면 변수 이름과 errno만 알린다 |
+| `MAILO_DB_ALLOW_INSECURE` | `false` | `true`, `false` | production(`NODE_ENV`가 development·test가 아님)에서 DB 호스트가 원격인데 `MAILO_DB_SSLMODE`가 없거나 `disable`이면 기동을 거부한다. `true`면 거부하지 않는다. 원격 판정: 점 없는 단일 라벨(compose 서비스 이름 `postgres`), `localhost`, 루프백(`127.x`, `::1`)은 로컬이고 그 밖(FQDN, 10/8·192.168/16 같은 사설 IP 포함)은 원격이다. `MAILO_DATABASE_URL`이면 URL의 호스트와 `sslmode` 매개변수에 같은 규칙을 쓴다 |
+| `MAILO_INSTANCE_ID` | 호스트 이름(컨테이너에서는 컨테이너 ID) | 영문·숫자로 시작, 영문·숫자·`.`·`_`·`-`, 64자 이하 | 로그 줄의 `instance` 값. 컨테이너를 다시 만들어도 같은 이름이 필요하면 지정한다. 인스턴스를 가르는 용도이고 DB에는 쓰지 않는다 |
 | `MAILO_DB_POOL_MAX` | 10 | 1~200, `MAILO_WORKER_CONCURRENCY` + 4 이상 | 커넥션 풀 최대 수. 어기면 기동 거부 |
 | `MAILO_DB_CONNECT_TIMEOUT_MS` | 5000 | 100~60000 | 연결 대기 |
 | `MAILO_DB_STATEMENT_TIMEOUT_MS` | 30000 | 1000~3600000 | 서버가 쿼리 하나에 허용하는 시간(`statement_timeout`). 넘으면 서버가 취소한다(SQLSTATE 57014) |
@@ -140,7 +175,7 @@ docker compose up -d --build
 | `MAILO_SMTP_PORT` | 587 (`tls`면 465) | 1~65535 | |
 | `MAILO_SMTP_USER` | 없음 | 문자열 | `MAILO_SMTP_PASSWORD`와 함께 설정하거나 둘 다 비운다(IP 허용 릴레이) |
 | `MAILO_SMTP_PASSWORD` | 없음 | 시크릿(`_FILE` 지원) | |
-| `MAILO_SMTP_FROM` | `MAILO_SMTP_USER` | 주소 하나 | 요청이 `from`을 생략할 때의 발신 주소. USER도 없으면 필수 |
+| `MAILO_SMTP_FROM` | `MAILO_SMTP_USER` | 주소 하나 | 요청이 `from`을 생략할 때의 발신 주소이자 모든 호출처가 쓸 수 있는 발신 주소. 그 밖의 `from`은 호출처의 `allowedFrom`(`callers.json`)에 있어야 하고 없으면 400 `FROM_NOT_ALLOWED`다(ADR-0008 구현 중 확정 12). USER도 없으면 필수 |
 | `MAILO_SMTP_TIMEOUT_SECONDS` | 30 | 1~3600, `MAILO_LEASE_SECONDS` 미만. 기동 조건은 더 엄격하다(아래 표) | 소켓 무응답 상한. 연결·greeting·DNS는 이 값과 10초 중 작은 값, 한 건 전체 마감은 `min(이 값×3, lease−10초)` |
 
 ### 키·봉투(ADR-0005 결정 3, ADR-0008)
@@ -161,7 +196,7 @@ docker compose up -d --build
 
 | 변수 | 기본값 | 범위 | 설명 |
 | ---- | ------ | ---- | ---- |
-| `MAILO_FILE_CHANNEL_ROOT` | 없음(꺼짐) | 절대 경로 | 있을 때만 폴러가 켜진다. 읽을 수 있는 디렉터리가 아니면 기동 실패 |
+| `MAILO_FILE_CHANNEL_ROOT` | 없음(꺼짐) | 절대 경로 | 있을 때만 폴러가 켜진다. `<root>`가 읽을 수 있는 디렉터리가 아니거나 `<root>/inbox`가 없거나 통과할 수 없으면 기동 실패. 호출처 폴더 하나가 없는 것은 경고 |
 | `MAILO_FILE_POLL_INTERVAL_MS` | 30000 | 50~3600000 | 폴링 간격(±10%) |
 | `MAILO_FILE_BATCH_PER_CALLER` | 100 | 1~10000 | 폴링 한 번에 호출처 하나가 처리하는 파일 수 |
 | `MAILO_FILE_MAX_BYTES` | `MAILO_MAX_REQUEST_BYTES` | 1024~64 MiB | 파일 원시 바이트 상한 |
@@ -193,7 +228,26 @@ docker compose up -d --build
 - `_FILE`을 지원하는 변수: `MAILO_DATABASE_URL`, `MAILO_DB_PASSWORD`, `MAILO_OPS_TOKEN`, `MAILO_SMTP_PASSWORD`, `MAILO_DB_ENCRYPTION_KEY_V<n>`, `MAILO_FINGERPRINT_KEY_V<n>`, 개인키 `MAILO_JWE_KEY_*`, 호출처 비밀키 `MAILO_JWS_SECRET_*`.
 - 운영은 시크릿 파일 마운트를 권장한다(ADR-0008 결정 5·6). 환경 변수도 허용하지만 `docker inspect`와 프로세스 환경에서 보인다(일반 지식).
 - 이미지에는 시크릿을 넣지 않는다. `Dockerfile`에 시크릿을 넣는 단계가 없다(이미지를 빌드해 검사하지는 않았다).
-- 이 저장소의 `docker-compose.yml`은 compose `secrets:`를 정의하지 않는다. 쓰려면 호스트 파일을 컨테이너에 읽기 전용으로 마운트하고(`/run/secrets/...` 등) `.env`에 `_FILE` 변수를 준다. 이 방식은 실행해 확인하지 않았다(추정).
+- 이 저장소의 `docker-compose.yml`은 compose `secrets:`를 정의하지 않는다(기본 구성은 `.env`의 환경 변수다. `scripts/container/`와 CI가 이 구성에 의존한다). 운영은 아래처럼 compose `secrets:`와 `_FILE`로 바꾸는 것을 권한다. 이 방식은 실행해 확인하지 않았다(추정, compose는 파일 시크릿을 컨테이너의 `/run/secrets/<이름>`에 읽기 전용으로 둔다).
+
+```yaml
+# docker-compose.override.yml 예시. 값은 모두 가짜다. 시크릿 파일은 저장소 밖(예: /etc/mailo/secrets/)에 둔다.
+services:
+  mailo:
+    environment:
+      MAILO_SMTP_PASSWORD_FILE: /run/secrets/mailo_smtp_password
+      MAILO_DB_ENCRYPTION_KEY_V1_FILE: /run/secrets/mailo_db_key_v1
+      MAILO_FINGERPRINT_KEY_V1_FILE: /run/secrets/mailo_fingerprint_key_v1
+    secrets: [mailo_smtp_password, mailo_db_key_v1, mailo_fingerprint_key_v1]
+secrets:
+  mailo_smtp_password: { file: /etc/mailo/secrets/smtp_password }
+  mailo_db_key_v1: { file: /etc/mailo/secrets/db_key_v1 }
+  mailo_fingerprint_key_v1: { file: /etc/mailo/secrets/fingerprint_key_v1 }
+```
+
+  - `_FILE`이 있으면 같은 이름의 환경 변수보다 우선하지만, `.env`에 값이 남아 있으면 `docker inspect`에 보인다. `.env`에서 `MAILO_SMTP_PASSWORD`와 키 값(`MAILO_DB_ENCRYPTION_KEY_V1` 등)을 지운다.
+  - DB 비밀번호는 예시에 넣지 않았다. `docker-compose.yml`이 `POSTGRES_PASSWORD`를 `postgres`와 `mailo`(`MAILO_DB_PASSWORD`)에 함께 넣고 필수로 요구한다. 이것까지 파일로 바꾸려면 `postgres`는 `POSTGRES_PASSWORD_FILE`(공식 이미지 지원)로, `mailo`는 `MAILO_DB_PASSWORD_FILE`로 바꾸고 기본 파일의 필수 검사 줄을 덮어야 한다. 이 부분은 작성하지 않았고 확인하지 않았다.
+  - 마운트한 파일은 컨테이너의 `node`(UID 1000)가 읽을 수 있어야 한다. compose `secrets`의 `file:` 시크릿은 호스트 파일의 권한을 그대로 보이므로(`uid`·`mode` 지정은 Swarm 전용) 호스트 파일을 UID 1000 또는 그룹이 읽게 둔다(추정).
 - 마운트한 파일은 Mailo 실행 계정(UID 1000)이 읽을 수 있어야 한다. 다른 계정은 읽지 못하게 둔다.
 - 개인키 PEM은 환경 변수로 줄 때 줄바꿈을 `\n` 두 글자로 써도 된다(`key-file.ts`). 파일로 주면 일반 PEM이다.
 - 시크릿 파일 목록: DB 접속 URL, SMTP 비밀번호, DB 본문 키 전 버전, 지문 키 전 버전, JWE 개인키 전부, JWS 비밀키 전부. 발급·교체는 `key-management.md`다.
@@ -224,7 +278,25 @@ docker compose up -d --build
 
 - 경보 기준값(위 "2분" 등)은 추정이다. 운영 환경에서 정상 상태의 값을 본 뒤 정한다. 이 응답을 장시간 부하에서 측정하지 않았다.
 - 오케스트레이터의 liveness는 `/health/live`, readiness는 `/health/ready`(인증 없이)를 쓰는 구성을 권한다(추정, 실행해 확인하지 않았다).
-- 로그는 표준 출력이다. Worker·파일 폴러는 한 줄 JSON(`{"level","event",...}`)이고, HTTP 요청·DB·헬스는 Nest 로거의 텍스트 줄이다. 헬스 요청 로그는 debug라 기본 출력에 나오지 않는다(추정).
+- 로그 형식은 아래 "로그" 절이다. 헬스 요청 로그는 debug라 production에서는 나오지 않는다.
+
+## 로그
+
+모든 로그는 표준 출력의 한 줄 JSON이다. Worker·파일 폴러·HTTP 요청·DB·헬스·Nest 내부 로그가 같은 로거 하나(`createApp`이 만든다)를 쓴다. 이전에는 Worker·파일 폴러만 JSON이고 나머지는 Nest 텍스트 줄이었다.
+
+```json
+{"ts":"2026-11-23T01:02:03.456Z","instance":"3f9a1c2b4d5e","level":"info","event":"http_request","requestId":"6f1c…","method":"POST","route":"/jobs","status":202,"callerId":"billing","durationMs":12}
+{"ts":"2026-11-23T01:02:03.500Z","instance":"3f9a1c2b4d5e","level":"error","event":"claim_failed","error":"Error:57014","streak":1}
+{"ts":"2026-11-23T01:02:04.000Z","instance":"3f9a1c2b4d5e","level":"info","event":"nest_log","message":"Nest application successfully started","context":"NestApplication"}
+```
+
+- 앞의 네 필드는 모든 줄에 있다: `ts`(ISO 8601 UTC), `instance`(`MAILO_INSTANCE_ID`, 없으면 호스트 이름 = 컨테이너 ID), `level`(`debug`·`info`·`warn`·`error`), `event`. 나머지는 이벤트마다 다르다. 호출자 필드가 이 네 값을 덮어쓰지 않는다.
+- `event: "http_request"`: 응답이 끝날 때 한 줄. 필드는 `requestId`, `method`, `route`(라우트 패턴, 예 `/jobs/:jobId`), `status`, `callerId`(인증 전에는 `null`), `durationMs`뿐이다. 쿼리 문자열, 경로 값, `Idempotency-Key`, 헤더, 본문은 없다(RQ-027). `requestId`는 오류 응답 본문의 `instance`(`urn:uuid:…`)와 같다.
+- `event: "nest_log"`: Nest 프레임워크와 `Logger`로 쓴 문자열 로그. `message`, `context`(클래스·모듈 이름), 오류 수준이면 Nest가 넘긴 `stack`이 있다. `stack`의 첫 줄에는 예외 메시지가 들어 있을 수 있다(이전 텍스트 출력과 같은 정보다).
+- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`(앱 계층), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
+- 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패 메시지(`ConfigError` 등)는 앱이 로거를 만들기 전이라 JSON이 아니다.
+- 본문·제목·수신자 주소·SMTP 인증 정보·키는 어느 필드에도 넣지 않는다. 예외는 이름과 코드(`Error:57014`)만 쓴다(RQ-027). 이 규칙은 canary 문자열 테스트로 확인한다.
+- 로그 수집기가 인스턴스를 구분하려면 `instance`를 쓴다. 컨테이너를 다시 만들면 호스트 이름이 바뀌므로 고정 이름이 필요하면 `MAILO_INSTANCE_ID`를 준다.
 
 ## 종료와 stop_grace_period
 
@@ -254,9 +326,10 @@ docker compose up -d --build
 ## PostgreSQL 요건
 
 - 13 이상이 필요하다. 이벤트 피드 cursor가 `xid8`, `pg_current_xact_id()`, `pg_snapshot_xmin(pg_current_snapshot())`을 쓰기 때문이다(ADR-0006 결정 7). `0001` 마이그레이션이 13 미만에서 실패한다. `db/migrator.integration-spec.ts`가 서버 버전 13 이상을 확인한다.
-- 운영 DB 계정은 테이블·인덱스 생성 권한이 필요하다(마이그레이션이 같은 계정으로 돈다).
+- 운영 DB 계정은 기본 구성에서 테이블·인덱스 생성 권한이 필요하다(마이그레이션이 같은 계정으로 돈다). 마이그레이션 계정을 분리하면 앱 계정은 DML 권한만 필요하다("마이그레이션 일회성 실행").
+- DB 연결 암호화(`MAILO_DB_SSLMODE`)는 DB가 다른 호스트일 때 쓴다. compose의 `postgres`(같은 네트워크)는 필요하지 않다. 서버 쪽 TLS 설정(`ssl=on`)은 이 저장소 범위 밖이다. 실제 TLS를 켠 PostgreSQL에 접속해 확인하지는 않았고, 옵션 매핑과 핸드셰이크 동작은 로컬 TLS 서버로 단위 테스트했다(`test/config/database-ssl.spec.ts`).
 - 사용처용 DB 계정과 접속 경로를 만들지 않는다. compose는 PostgreSQL을 `127.0.0.1`에만 노출한다(RQ-003).
-- 이벤트 피드는 DB 어디서든 긴 트랜잭션이 있으면 지연된다. 긴 트랜잭션을 여는 작업(대용량 `pg_dump` 등)은 피드 지연을 만든다(`troubleshooting.md`).
+- 이벤트 피드는 쓰기 트랜잭션(트랜잭션 ID를 받은 트랜잭션)이 오래 열려 있으면 지연된다. 읽기 전용 트랜잭션(`pg_dump` 포함)은 트랜잭션 ID를 받지 않아 피드를 지연시키지 않았다(2026-11-23 PostgreSQL 17에서 `READ ONLY` 반복 읽기 트랜잭션을 연 채 확인. 실제 `pg_dump`를 실행하지는 않았다). 실제 위험은 열린 채 방치된 쓰기 트랜잭션, 끝나지 않은 prepared transaction이다(`troubleshooting.md`).
 - 시각은 DB `now()`를 쓴다. 앱 서버 시계와 DB 시계가 달라도 lease·만료·할당은 DB 기준이다. JWS `iat`와 임시 파일 정리는 Mailo 호스트 시계를 쓴다.
 
 ## 백업과 복구
@@ -294,5 +367,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 실제 SIGTERM을 받은 컨테이너의 종료 시간(`pause` 먼저 호출하는 새 종료 순서 포함).
 - 마이그레이션의 대용량 DB 적용 시간.
 - 백업·복구 절차.
-- compose `secrets:` 방식의 시크릿 마운트.
+- compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
+- `docker-compose.migrate-once.yml`, `docker-compose.nfs-example.yml`의 실제 기동(문법만 확인했다).
+- TLS를 켠 PostgreSQL 서버에 대한 `MAILO_DB_SSLMODE` 접속.
 - TLS 종단 프록시 구성, 다중 인스턴스 배포.

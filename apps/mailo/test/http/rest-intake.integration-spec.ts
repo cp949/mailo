@@ -19,6 +19,7 @@ import {
   BETA_KEY,
   CANARY,
   getJson,
+  TEST_INSTANCE,
   plainMail,
   postJob,
   startRestApp,
@@ -460,6 +461,80 @@ describe("REST 통합: 등록·조회·이벤트·헬스 (RQ-001, 011, 015, 017,
       expect(((await res.json()) as { errors: unknown[] }).errors).toEqual([
         { pointer: "/to", code: "TOO_MANY" },
       ]);
+    });
+  });
+
+  describe("발신 주소 허용 범위(RQ-028·030, ADR-0008 구현 중 확정 12)", () => {
+    const body = (from: string | undefined, extra: object = {}) => {
+      const mail = plainMail({ ...extra });
+      if (from === undefined) delete mail["from"];
+      else mail["from"] = from;
+      return mail;
+    };
+
+    it("기본 발신 주소와 같은 from은 대소문자와 무관하게 등록된다", async () => {
+      const res = await postJob(app, {
+        key: "from-default",
+        body: body("No-Reply@Example.COM"),
+      });
+
+      expect(res.status).toBe(202);
+    });
+
+    it("호출처의 allowedFrom에 있는 from은 대소문자와 무관하게 등록된다", async () => {
+      const res = await postJob(app, {
+        key: "from-allowed",
+        body: body("billing@example.com"),
+      });
+
+      expect(res.status).toBe(202);
+    });
+
+    it("허용 집합 밖의 from은 400 FROM_NOT_ALLOWED이고 작업이 생기지 않는다", async () => {
+      const res = await postJob(app, {
+        key: "from-denied",
+        body: body("ceo@example.com"),
+      });
+
+      expect(res.status).toBe(400);
+      const problem = (await res.json()) as { errors: unknown[] };
+      expect(problem.errors).toEqual([
+        { pointer: "/from", code: "FROM_NOT_ALLOWED" },
+      ]);
+      expect(JSON.stringify(problem)).not.toContain("ceo@example.com");
+      expect(await jobCount()).toBe(0);
+    });
+
+    it("다른 호출처의 allowedFrom은 쓸 수 없다", async () => {
+      const res = await postJob(app, {
+        key: "from-other-caller",
+        auth: BETA_KEY,
+        body: body("billing@example.com"),
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("replyTo는 허용 집합으로 제한하지 않는다", async () => {
+      const res = await postJob(app, {
+        key: "reply-to-free",
+        body: body(undefined, { replyTo: "visitor@elsewhere.example" }),
+      });
+
+      expect(res.status).toBe(202);
+    });
+
+    it("허용되지 않은 from으로 등록된 적이 없는 같은 Key를 다시 보내면 계속 400이다", async () => {
+      const first = await postJob(app, {
+        key: "retry-denied",
+        body: body("ceo@example.com"),
+      });
+      const second = await postJob(app, {
+        key: "retry-denied",
+        body: body("ceo@example.com"),
+      });
+
+      expect([first.status, second.status]).toEqual([400, 400]);
     });
   });
 
@@ -1007,6 +1082,49 @@ describe("REST 통합: 등록·조회·이벤트·헬스 (RQ-001, 011, 015, 017,
   });
 
   describe("오류·로그에 요청 값이 남지 않는다(RQ-027)", () => {
+    it("요청 로그는 ts·instance가 붙은 JSON 한 줄이고 정해진 필드만 담으며 쿼리 문자열·Key 값이 없다(M10)", async () => {
+      app.logs.lines.length = 0;
+
+      const res = await getJson(app, `/jobs?idempotencyKey=${CANARY.key}`);
+      await res.text();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const entries = app.logs.lines
+        .map((line) => {
+          try {
+            return JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            return {};
+          }
+        })
+        .filter((entry) => entry.event === "http_request");
+      expect(entries).toHaveLength(1);
+      expect(Object.keys(entries[0]!).sort()).toEqual([
+        "callerId",
+        "durationMs",
+        "event",
+        "instance",
+        "level",
+        "method",
+        "requestId",
+        "route",
+        "status",
+        "ts",
+      ]);
+      expect(entries[0]).toMatchObject({
+        instance: TEST_INSTANCE,
+        level: "info",
+        method: "GET",
+        route: "/jobs",
+        status: 404,
+        callerId: "alpha",
+      });
+      expect(new Date(entries[0]!.ts as string).toISOString()).toBe(
+        entries[0]!.ts,
+      );
+      expect(app.logs.lines.join("\n")).not.toContain(CANARY.key);
+    });
+
     it("canary를 제목·본문·수신자·Key·필드 이름에 넣은 요청의 응답과 로그에서 canary가 검색되지 않는다", async () => {
       app.logs.lines.length = 0;
       const responses: string[] = [];
@@ -1082,7 +1200,7 @@ describe("REST 통합: 등록·조회·이벤트·헬스 (RQ-001, 011, 015, 017,
       const missing = instances.filter(
         (instance) =>
           !app.logs.lines.some((l) =>
-            l.includes(`requestId=${instance.replace("urn:uuid:", "")}`),
+            l.includes(`"requestId":"${instance.replace("urn:uuid:", "")}"`),
           ),
       );
       expect(missing).toEqual([]);

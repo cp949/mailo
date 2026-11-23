@@ -1,4 +1,10 @@
 import { describe, expect, it } from "@jest/globals";
+import { loadConfig } from "../../src/config/index.js";
+import {
+  defaultBreakerConfig,
+  defaultRetryPolicy,
+} from "../../src/queue/index.js";
+import { testEnv } from "../support/rest-app.js";
 import {
   createBodyCipher,
   createKeyRing,
@@ -10,6 +16,7 @@ import {
   defaultWorkerOptions,
   encodeBodyContent,
   toOutcome,
+  toWorkerOptions,
   validateWorkerOptions,
 } from "../../src/worker/index.js";
 
@@ -18,6 +25,33 @@ describe("Worker 옵션 검증", () => {
     expect(() =>
       validateWorkerOptions(defaultWorkerOptions(120)),
     ).not.toThrow();
+  });
+
+  it("기본 옵션은 loadConfig의 기본값과 같다: 점검 주기 60초, 재시도·차단기 정책 포함(ADR-0002 구현 중 확정 3, L8)", () => {
+    const fromConfig = toWorkerOptions(
+      loadConfig(testEnv({ MAILO_CALLERS_FILE: "/unused/callers.json" })),
+    );
+    const { retry, breaker, ...rest } = defaultWorkerOptions(120);
+    const {
+      retry: configRetry,
+      breaker: configBreaker,
+      ...configRest
+    } = fromConfig;
+
+    expect(rest).toEqual(configRest);
+    expect(rest.sweepIntervalMs).toBe(60_000);
+    expect(rest.cleanupIntervalMs).toBe(60_000);
+    expect({ ...retry, random: undefined }).toEqual({
+      ...configRetry,
+      random: undefined,
+    });
+    expect(breaker).toEqual(configBreaker);
+    // 큐 모듈의 테스트용 기본값도 어긋나지 않는다.
+    expect({ ...defaultRetryPolicy(), random: undefined }).toEqual({
+      ...configRetry,
+      random: undefined,
+    });
+    expect(defaultBreakerConfig()).toEqual(configBreaker);
   });
 
   it("drain 상한은 lease보다 짧아야 한다 (ADR-0002 결정 12)", () => {

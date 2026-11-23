@@ -13,15 +13,19 @@ import {
   closeSync,
   existsSync,
   linkSync,
+  mkdirSync,
+  mkdtempSync,
   openSync,
   readdirSync,
   renameSync,
+  rmSync,
   symlinkSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type pg from "pg";
 import { listEvents } from "../../src/events/index.js";
@@ -1012,6 +1016,49 @@ describe("파일 채널 폴러 (RQ-002, ADR-0004)", () => {
       expect(missing.status().running).toBe(false);
     });
 
+    it("root는 있어도 inbox 폴더가 없으면 FileChannelStartError로 기동을 거부한다(mount 전 빈 디렉터리 방지, 폴더를 만들지 않는다)", async () => {
+      const poller = h.makePoller();
+
+      await expect(poller.start()).rejects.toBeInstanceOf(
+        FileChannelStartError,
+      );
+      await expect(poller.start()).rejects.toThrow("inbox");
+      expect(poller.status().running).toBe(false);
+      expect(existsSync(path.join(h.root, "inbox"))).toBe(false);
+    });
+
+    it("inbox가 통과만 가능한 0311(읽기 불가, 운영 권한 모델의 0711과 같다)이어도 기동한다", async () => {
+      h.cleanup();
+      h = createFileHarness(pool, { config: { pollIntervalMs: 50 } });
+      const inbox = path.join(h.root, "inbox");
+      mkdirSync(inbox, { recursive: true });
+      chmodSync(inbox, 0o311);
+      const poller = h.makePoller();
+
+      try {
+        await poller.start();
+        expect(poller.status().running).toBe(true);
+      } finally {
+        await poller.stop();
+        chmodSync(inbox, 0o755);
+      }
+    });
+
+    it("inbox는 있고 호출처 폴더만 없으면 기동하고 경고만 남긴다", async () => {
+      h.cleanup();
+      h = createFileHarness(pool, { config: { pollIntervalMs: 50 } });
+      mkdirSync(path.join(h.root, "inbox"), { recursive: true });
+      const poller = h.makePoller();
+
+      await poller.start();
+      await waitFor(async () =>
+        h.logs.some((l) => l.includes("file_inbox_missing")),
+      );
+      await poller.stop();
+
+      expect(h.logs.some((l) => l.includes("file_inbox_missing"))).toBe(true);
+    });
+
     it("코드는 폴더를 만들지 않는다(없는 inbox를 만들지 않는다)", async () => {
       await h.makePoller().pollOnce();
 
@@ -1201,6 +1248,222 @@ describe("파일 채널 폴러 (RQ-002, ADR-0004)", () => {
       );
       expect(h.logs.some((l) => l.includes("file_rejected"))).toBe(true);
     });
+
+    it("file_rejected 로그에 호출처가 정한 파일 이름을 남기지 않는다(L6)", async () => {
+      h.drop("alpha", "CANARY-FILENAME-3f9a.json", "{ not json");
+
+      await h.makePoller().pollOnce();
+
+      const rejected = h.logs.filter((l) => l.includes("file_rejected"));
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]).toContain("rejectionId");
+      expect(h.logs.join("\n")).not.toContain("CANARY-FILENAME-3f9a");
+      // 파일 이름은 거부 기록과 이벤트에는 남는다.
+      expect((await rejections())[0]!.file_name).toBe(
+        "CANARY-FILENAME-3f9a.json",
+      );
+    });
+  });
+});
+
+describe("발신 주소 허용 범위(RQ-028·030, ADR-0008 구현 중 확정 12)", () => {
+  let db: TestDatabase;
+  let pool: pg.Pool;
+  let h: FileHarness;
+
+  beforeAll(async () => {
+    db = await createTestDatabase();
+    pool = db.pool;
+    await migrate(pool);
+  });
+  afterAll(async () => {
+    await db.close();
+  });
+  beforeEach(async () => {
+    await pool.query("DELETE FROM mail_events");
+    await pool.query("DELETE FROM mail_intake_rejections");
+    await pool.query("DELETE FROM mail_jobs");
+    h = createFileHarness(pool);
+  });
+  afterEach(() => {
+    h.cleanup();
+  });
+
+  const rejectionReasons = async (): Promise<string[]> =>
+    (
+      await pool.query("SELECT reason_code FROM mail_intake_rejections")
+    ).rows.map((r) => r.reason_code as string);
+
+  it("허용 집합 밖의 from은 VALIDATION_FAILED로 거부하고 원본을 지운다", async () => {
+    h.drop(
+      "alpha",
+      "denied.json",
+      JSON.stringify(fileRequest({ from: "ceo@example.com" })),
+    );
+
+    await h.makePoller().pollOnce();
+
+    expect(await rejectionReasons()).toEqual(["VALIDATION_FAILED"]);
+    expect(
+      Number(
+        (await pool.query("SELECT count(*)::int AS n FROM mail_jobs")).rows[0]
+          .n,
+      ),
+    ).toBe(0);
+    expect(readdirSync(h.inbox("alpha"))).toEqual([]);
+  });
+
+  it("기본 발신 주소와 같은 from, 생략한 from은 등록된다(대소문자 무시)", async () => {
+    h.drop(
+      "alpha",
+      "a.json",
+      JSON.stringify(
+        fileRequest({ idempotencyKey: "k-a", from: "NO-REPLY@example.com" }),
+      ),
+    );
+    const noFrom = fileRequest({ idempotencyKey: "k-b" });
+    delete noFrom["from"];
+    h.drop("alpha", "b.json", JSON.stringify(noFrom));
+
+    await h.makePoller().pollOnce();
+
+    expect(await rejectionReasons()).toEqual([]);
+    expect(
+      Number(
+        (await pool.query("SELECT count(*)::int AS n FROM mail_jobs")).rows[0]
+          .n,
+      ),
+    ).toBe(2);
+  });
+});
+
+describe("디렉터리 경로 검사(L3, RQ-024)", () => {
+  let db: TestDatabase;
+  let pool: pg.Pool;
+  let h: FileHarness;
+  const extraDirs: string[] = [];
+
+  beforeAll(async () => {
+    db = await createTestDatabase();
+    pool = db.pool;
+    await migrate(pool);
+  });
+  afterAll(async () => {
+    await db.close();
+  });
+  beforeEach(async () => {
+    await pool.query("DELETE FROM mail_events");
+    await pool.query("DELETE FROM mail_intake_rejections");
+    await pool.query("DELETE FROM mail_jobs");
+    h = createFileHarness(pool);
+  });
+  afterEach(() => {
+    h.cleanup();
+    for (const dir of extraDirs.splice(0)) rmSync(dir, { recursive: true });
+  });
+
+  const jobCount = async (): Promise<number> =>
+    Number(
+      (await pool.query("SELECT count(*)::int AS n FROM mail_jobs")).rows[0].n,
+    );
+
+  /** 폴더를 지우고 같은 이름의 심볼릭 링크로 바꾼다. 링크 대상에는 정상 요청 파일이 있다. */
+  function replaceWithSymlink(linkPath: string): string {
+    const target = mkdtempSync(path.join(tmpdir(), "mailo-link-target-"));
+    extraDirs.push(target);
+    writeFileSync(
+      path.join(target, "victim.json"),
+      JSON.stringify(fileRequest({ idempotencyKey: "via-link" })),
+    );
+    rmSync(linkPath, { recursive: true });
+    symlinkSync(target, linkPath);
+    return target;
+  }
+
+  it("호출처 폴더가 심볼릭 링크로 바뀌면 읽지 않고 한 번만 경고한다", async () => {
+    h.inbox("alpha");
+    const target = replaceWithSymlink(path.join(h.root, "inbox", "alpha"));
+
+    const first = await h.makePoller().pollOnce();
+    const poller = h.makePoller();
+    await poller.pollOnce();
+    await poller.pollOnce();
+
+    expect(first.callers.find((c) => c.callerId === "alpha")?.errors).toBe(1);
+    expect(await jobCount()).toBe(0);
+    expect(existsSync(path.join(target, "victim.json"))).toBe(true);
+    const unsafe = h.logs.filter((l) => l.includes("file_dir_unsafe"));
+    expect(unsafe.length).toBeGreaterThanOrEqual(2); // 폴러 인스턴스마다 한 번
+    expect(unsafe[0]).toContain("callerInbox");
+    expect(unsafe[0]).toContain("SYMLINK");
+  });
+
+  it("inbox 폴더가 심볼릭 링크이면 모든 호출처를 읽지 않는다", async () => {
+    h.drop("alpha", "a.json", JSON.stringify(fileRequest()));
+    const target = replaceWithSymlink(path.join(h.root, "inbox"));
+    mkdirSync(path.join(target, "alpha"));
+    writeFileSync(
+      path.join(target, "alpha", "x.json"),
+      JSON.stringify(fileRequest({ idempotencyKey: "via-inbox-link" })),
+    );
+
+    const summary = await h.makePoller().pollOnce();
+
+    expect(summary.callers).toEqual([]);
+    expect(await jobCount()).toBe(0);
+    expect(h.logs.some((l) => l.includes("file_dir_unsafe"))).toBe(true);
+  });
+
+  it("링크가 풀리면 다시 읽는다", async () => {
+    h.inbox("alpha");
+    const dir = path.join(h.root, "inbox", "alpha");
+    replaceWithSymlink(dir);
+    const poller = h.makePoller();
+    await poller.pollOnce();
+    unlinkSync(dir);
+    mkdirSync(dir);
+    h.drop(
+      "alpha",
+      "ok.json",
+      JSON.stringify(fileRequest({ idempotencyKey: "ok-1" })),
+    );
+
+    await poller.pollOnce();
+
+    expect(await jobCount()).toBe(1);
+    expect(h.logs.some((l) => l.includes("file_dir_safe"))).toBe(true);
+  });
+
+  it("other 쓰기 권한이 있는 폴더는 경고만 하고 계속 수집한다", async () => {
+    const dir = h.inbox("alpha");
+    chmodSync(dir, 0o777);
+    h.drop(
+      "alpha",
+      "ok.json",
+      JSON.stringify(fileRequest({ idempotencyKey: "ok-2" })),
+    );
+
+    const poller = h.makePoller();
+    await poller.pollOnce();
+    await poller.pollOnce();
+
+    expect(await jobCount()).toBe(1);
+    const warned = h.logs.filter((l) =>
+      l.includes("file_channel_dir_permissive"),
+    );
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain("callerInbox");
+  });
+
+  it("호출처 폴더의 그룹 쓰기 비트는 경고하지 않는다(default ACL 마스크)", async () => {
+    const dir = h.inbox("alpha");
+    chmodSync(dir, 0o770);
+
+    await h.makePoller().pollOnce();
+
+    expect(h.logs.some((l) => l.includes("file_channel_dir_permissive"))).toBe(
+      false,
+    );
   });
 });
 

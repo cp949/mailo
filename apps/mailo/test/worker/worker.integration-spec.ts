@@ -24,13 +24,13 @@ import {
   type SmtpSenderConfig,
 } from "../../src/smtp/index.js";
 import {
-  createJsonLogger,
   createWorker,
   defaultWorkerOptions,
   encodeBodyContent,
   type WorkerHandle,
   type WorkerOptions,
 } from "../../src/worker/index.js";
+import { createJsonLogger } from "../../src/logging/index.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
 import { startFakeSmtp, type FakeSmtp } from "../support/fake-smtp.js";
 import {
@@ -174,6 +174,20 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
   }
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /**
+   * 점유 루프가 지금부터 한 바퀴 이상 온전히 돌 때까지 기다린다("점유하지 않았다"를 고정 sleep 없이 단언하려는 용도).
+   * `lastPollAt`은 바퀴가 시작되는 시각이다. 서로 다른 값이 세 번 관찰되면(처음 값은 이미 진행 중인 바퀴일 수 있다)
+   * 이 호출 뒤에 시작한 바퀴가 끝까지 돌아 점유를 시도했다는 뜻이다.
+   */
+  async function afterFullPollRounds(worker: WorkerHandle): Promise<void> {
+    const seen = new Set<number>();
+    await waitFor(async () => {
+      const at = worker.status().lastPollAt;
+      if (at) seen.add(at.getTime());
+      return seen.size >= 3;
+    });
+  }
 
   async function job(id: string) {
     const { rows } = await pool.query(
@@ -423,7 +437,7 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
          wait_seconds = 60, consecutive_failures = 3, last_reason = 'AUTH'`,
     );
     const poison = await mailJob({ body: Buffer.from("not-json") });
-    startWorker();
+    const worker = startWorker();
 
     await waitStatus(poison, "RETRY_WAIT");
 
@@ -436,7 +450,7 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     });
     // 대표 lease가 끝나기 전에는 다른 작업을 점유하지 않는다.
     const other = await mailJob();
-    await sleep(300);
+    await afterFullPollRounds(worker);
     expect((await job(other))!.status).toBe("PENDING");
     expect(fake.counts.mailFroms).toBe(0);
   });
@@ -460,7 +474,7 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
       text: "5.4.5 Daily user sending limit exceeded.",
     });
     const first = await mailJob();
-    startWorker();
+    const worker = startWorker();
     const retry = await waitStatus(first, "RETRY_WAIT");
     expect(retry.attempts).toBe(0);
     // 한도 사유는 작업의 account_trips에 넣지 않는다(ADR-0007 구현 중 확정 8).
@@ -480,7 +494,7 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     );
 
     const second = await mailJob();
-    await sleep(400);
+    await afterFullPollRounds(worker);
     expect((await job(second))!.status).toBe("PENDING");
     expect(fake.counts.mailFroms).toBe(1);
   });
@@ -491,7 +505,7 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
       text: "5.7.8 Username and Password not accepted",
     });
     const ids = [await mailJob(), await mailJob(), await mailJob()];
-    startWorker();
+    const worker = startWorker();
     await waitFor(
       async () =>
         (await getBreakerState(pool, { breakerKey: "default" })).state ===
@@ -507,7 +521,7 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     expect(jobs.map((j) => j!.attempts).sort()).toEqual([0, 1, 1]);
 
     const extra = await mailJob();
-    await sleep(400);
+    await afterFullPollRounds(worker);
     expect((await job(extra))!.status).toBe("PENDING");
     expect(fake.counts.auths).toBe(3);
   });

@@ -57,11 +57,12 @@ export class ProblemExceptionFilter implements ExceptionFilter {
       if (status >= 400 && status < 500) return problems.malformedRequest();
     }
     const code = (exception as { code?: unknown } | null)?.code;
-    logger.error(
-      `unhandled error requestId=${req.requestId} name=${
-        exception instanceof Error ? exception.name : typeof exception
-      }${typeof code === "string" ? ` code=${code}` : ""}`,
-    );
+    logger.error({
+      event: "unhandled_error",
+      requestId: req.requestId,
+      name: exception instanceof Error ? exception.name : typeof exception,
+      code: typeof code === "string" ? code : null,
+    });
     return problems.serviceUnavailable();
   }
 }

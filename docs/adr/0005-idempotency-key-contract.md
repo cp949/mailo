@@ -111,3 +111,9 @@ ADR-0001은 Mailo의 보장 범위를 멱등한 요청 등록과 at-least-once �
   - `from`·`replyTo`는 생략과 `null`이 같다. `from`을 생략한 요청과 명시한 요청은 다른 내용이다.
   - 제목·text·html은 변환하지 않는다.
 - 결정됨: 응답 본문의 필드 구성은 `docs/api/openapi.yaml`이 정했다.
+
+## 구현 중 확정 (2026-11-23, 코드 리뷰 반영)
+
+결정 문구는 바꾸지 않는다.
+
+1. **결정 5의 응답 표에 415가 없다.** `Content-Type`이 `application/json`이 아닌 `POST /jobs`는 415(`urn:mailo:problem:unsupported-media-type`)다(`src/http/problem.ts`, `docs/api/openapi.yaml`). 표의 "Key 누락, 형식·검증 오류 400"과 같이 재시도하지 않는 응답이고 `Idempotency-Key`를 읽기 전에 거부하므로 등록·멱등성에 영향이 없다. 검증: `test/http/rest-intake.integration-spec.ts`의 415 케이스.

@@ -64,10 +64,13 @@ describe("e2e: POST /jobs -> PostgreSQL -> Worker -> SMTP -> 조회·이벤트",
     MAILO_MAINTENANCE_INTERVAL_SECONDS: "1",
   });
 
-  async function startApp(sender?: MailSender): Promise<RestApp> {
+  async function startApp(
+    sender?: MailSender,
+    extraEnv: NodeJS.ProcessEnv = {},
+  ): Promise<RestApp> {
     app = await startRestApp({
       pool,
-      env: smtpEnv(),
+      env: { ...smtpEnv(), ...extraEnv },
       worker: { trustedCa: fake.ca, ...(sender && { sender }) },
     });
     return app;
@@ -185,7 +188,8 @@ describe("e2e: POST /jobs -> PostgreSQL -> Worker -> SMTP -> 조회·이벤트",
   });
 
   it("from을 생략한 요청은 기본 발신 주소(MAILO_SMTP_FROM 없으면 MAILO_SMTP_USER)로 나간다", async () => {
-    await startApp();
+    // 테스트 기본값 MAILO_SMTP_FROM을 비워 MAILO_SMTP_USER가 기본 발신 주소가 되게 한다.
+    await startApp(undefined, { MAILO_SMTP_FROM: "" });
     const { from: _omitted, ...withoutFrom } = plainMail();
 
     const { json } = await submit("e2e-default-from", withoutFrom);
@@ -213,6 +217,37 @@ describe("e2e: POST /jobs -> PostgreSQL -> Worker -> SMTP -> 조회·이벤트",
     expect((await events()).filter((e) => e.type === "JOB_SENT")).toHaveLength(
       1,
     );
+  });
+
+  it("PENDING 작업이 있는 채 앱을 닫고 새 앱을 띄우면 작업이 남아 있고, 같은 Key 재요청은 중복 등록되지 않으며, 새 Worker가 이어서 한 통만 보낸다 (RQ-012·018)", async () => {
+    // Worker 없이 기동한 앱: 등록만 하고 발송하지 않는다.
+    app = await startRestApp({ pool, env: smtpEnv() });
+    const first = await submit("e2e-restart");
+    expect(first.res.status).toBe(202);
+    expect(first.json.status).toBe("PENDING");
+    await app.close();
+    app = undefined;
+    // 앱 인스턴스를 닫아도 작업은 DB에 남아 있고 발송은 일어나지 않았다.
+    const kept = await pool.query(
+      "SELECT status FROM mail_jobs WHERE id = $1",
+      [first.json.jobId],
+    );
+    expect(kept.rows.map((r) => r.status)).toEqual(["PENDING"]);
+    expect(fake.messages).toHaveLength(0);
+
+    // 메모리 상태가 없는 새 앱(Worker 켜짐). 같은 Key로 다시 요청한다.
+    await startApp();
+    const again = await submit("e2e-restart");
+    await waitStatus(first.json.jobId, "SENT");
+
+    expect(again.res.status).toBe(200);
+    expect(again.json.jobId).toBe(first.json.jobId);
+    const count = await pool.query(
+      "SELECT count(*)::int AS n FROM mail_jobs WHERE idempotency_key = $1",
+      ["e2e-restart"],
+    );
+    expect(count.rows[0].n).toBe(1);
+    expect(fake.messages).toHaveLength(1);
   });
 
   it("일시 오류(451)는 RETRY_WAIT가 되고 재시도 시각이 되면 다시 보내 SENT가 된다 (RQ-007·009)", async () => {

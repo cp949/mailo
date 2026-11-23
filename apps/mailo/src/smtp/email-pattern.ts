@@ -7,3 +7,23 @@
  * 도메인에서는 작은따옴표를 허용하지 않아 닫는 따옴표가 주소에 들어가지 않는다.
  */
 export const EMAIL_LIKE = /[^\s<>"',;()[\]][^\s<>",;()[\]]*@[^\s<>"',;()[\]]+/g;
+
+/**
+ * 정규식에 넣기 전에 자르는 길이(문자). 이 정규식은 `@` 없이 길게 이어지는 입력에서 O(n²)로 백트래킹한다.
+ * 최종 결과는 500자로 자르므로 앞 4 KiB만 봐도 결과는 같다. 잘라서 생긴 끝의 주소 조각이 남지 않게 끝부분의 마지막 공백까지만 쓴다.
+ */
+export const EMAIL_SCAN_LIMIT = 4096;
+
+/** 이메일 주소 형태를 `replacement`로 바꾼다. 입력이 `EMAIL_SCAN_LIMIT`보다 길면 앞부분만 처리한다. */
+export function maskEmailLike(text: string, replacement: string): string {
+  let head = text;
+  if (text.length > EMAIL_SCAN_LIMIT) {
+    head = text.slice(0, EMAIL_SCAN_LIMIT);
+    // 끝의 주소 조각을 버린다. 주소는 254자 이하이므로 끝 300자 안에서 마지막 공백을 찾는다. 없으면 그대로 둔다.
+    const floor = head.length - 300;
+    let cut = head.length - 1;
+    while (cut > floor && !/\s/.test(head.charAt(cut))) cut--;
+    if (cut > floor) head = head.slice(0, cut);
+  }
+  return head.replace(EMAIL_LIKE, replacement);
+}

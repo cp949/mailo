@@ -8,19 +8,21 @@
 import { isAbsolute } from "node:path";
 import type { KeyRingInput } from "../crypto/index.js";
 import type { IatPolicy } from "../envelope/index.js";
+import type { AccountErrorReason } from "../queue/index.js";
 import {
   DEFAULT_MAIL_REQUEST_LIMITS,
   checkAddress,
   type MailRequestLimits,
 } from "../validation/index.js";
+import { loadDatabaseSsl, type DatabaseSsl } from "./database-ssl.js";
 import { EnvReader } from "./env-reader.js";
+import { loadInstanceId } from "./instance-id.js";
 import { assertDisjointKeyRings, loadKeyRing } from "./key-loader.js";
 import { Secret } from "./secret.js";
 import {
   SHUTDOWN_MARGIN_MS,
   workerDrainTimeoutMs,
-  type WorkerAccountReason,
-  type WorkerOptions,
+  type WorkerConfig,
 } from "./worker-options.js";
 
 export interface SmtpConfig {
@@ -80,6 +82,8 @@ export interface AppConfig {
   port: number;
   database: {
     url: Secret<string>;
+    /** 연결 암호화(`MAILO_DB_SSLMODE`, L7). `MAILO_DATABASE_URL` 경로이거나 `disable`·미지정이면 null이다. */
+    ssl: DatabaseSsl | null;
     poolMax: number;
     connectTimeoutMs: number;
     /**
@@ -98,7 +102,7 @@ export interface AppConfig {
     /** 새 작업의 만료 TTL 초(RQ-008, 기본 24시간). */
     jobExpirySeconds: number;
   };
-  worker: WorkerOptions;
+  worker: WorkerConfig;
   /**
    * 컨테이너 `stop_grace_period`(compose `MAILO_STOP_GRACE_PERIOD`). 변수가 없으면 null이고 앱은 관계를 검사하지 않는다.
    * 앱이 오케스트레이터 설정을 알 수 없는 환경이 있기 때문이다.
@@ -118,6 +122,8 @@ export interface AppConfig {
   ops: { token: Secret<string> | null };
   /** 호출처 레지스트리 JSON 파일 경로(RQ-028). 내용은 callers 모듈이 읽는다. */
   callersFile: string;
+  /** 로그 줄의 `instance` 값(`MAILO_INSTANCE_ID`, 없으면 호스트 이름). */
+  instanceId: string;
   fileChannel: FileChannelConfig;
   envelope: {
     /** Mailo JWE 개인키 목록 파일 경로(ADR-0008 결정 5). 없으면 null이고 모든 JWE `content`가 `KID_UNKNOWN`이다. 내용은 envelope 모듈이 읽는다. */
@@ -129,7 +135,7 @@ export interface AppConfig {
 
 const MIB = 1024 * 1024;
 const REASON_WAIT: Record<
-  WorkerAccountReason,
+  AccountErrorReason,
   { variable: string; fallback: number }
 > = {
   DAILY_LIMIT: {
@@ -242,7 +248,7 @@ function databasePassword(url: string): string | undefined {
   }
 }
 
-/** DB 접속 URL만 읽는다. 마이그레이션 CLI가 SMTP·키 설정 없이 쓴다. */
+/** DB 접속 URL만 읽는다(연결 암호화 설정은 읽지 않는다). */
 export function loadDatabaseUrlOnly(
   env: NodeJS.ProcessEnv = process.env,
 ): Secret<string> {
@@ -250,6 +256,18 @@ export function loadDatabaseUrlOnly(
   const url = loadDatabaseUrl(reader);
   reader.finish();
   return new Secret(url as string);
+}
+
+/** DB 접속 URL과 연결 암호화 설정만 읽는다. 마이그레이션 CLI가 SMTP·키 설정 없이 쓴다. */
+export function loadDatabaseOnly(env: NodeJS.ProcessEnv = process.env): {
+  url: Secret<string>;
+  ssl: DatabaseSsl | null;
+} {
+  const reader = new EnvReader(env);
+  const url = loadDatabaseUrl(reader);
+  const ssl = loadDatabaseSsl(reader, url);
+  reader.finish();
+  return { url: new Secret(url as string), ssl };
 }
 
 function loadSmtp(
@@ -321,10 +339,10 @@ function loadSmtp(
   };
 }
 
-function loadWorkerOptions(
+function loadWorkerConfig(
   reader: EnvReader,
   jobExpirySeconds: number,
-): WorkerOptions {
+): WorkerConfig {
   const baseSeconds = reader.int("MAILO_RETRY_BASE_SECONDS", 60, {
     min: 1,
     max: 86_400,
@@ -338,9 +356,9 @@ function loadWorkerOptions(
       "MAILO_RETRY_CAP_SECONDS는 MAILO_RETRY_BASE_SECONDS 이상이어야 한다",
     );
 
-  const initialWaitSeconds = {} as Record<WorkerAccountReason, number>;
+  const initialWaitSeconds = {} as Record<AccountErrorReason, number>;
   for (const [reason, def] of Object.entries(REASON_WAIT) as Array<
-    [WorkerAccountReason, (typeof REASON_WAIT)[WorkerAccountReason]]
+    [AccountErrorReason, (typeof REASON_WAIT)[AccountErrorReason]]
   >) {
     initialWaitSeconds[reason] = reader.int(def.variable, def.fallback, {
       min: 1,
@@ -583,15 +601,31 @@ function loadFileChannel(
   };
 }
 
+/**
+ * 환경 변수 없이(`leaseSeconds`만 덮어써) 읽은 Worker 설정. 기본값의 단일 출처는 `loadWorkerConfig`다.
+ * Worker 옵션의 기본값(`defaultWorkerOptions`)이 이 함수로 만들어져 `loadConfig`와 어긋나지 않는다.
+ */
+export function defaultWorkerConfig(leaseSeconds?: number): WorkerConfig {
+  const reader = new EnvReader(
+    leaseSeconds === undefined
+      ? {}
+      : { MAILO_LEASE_SECONDS: String(leaseSeconds) },
+  );
+  const worker = loadWorkerConfig(reader, 86_400);
+  reader.finish();
+  return worker;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const reader = new EnvReader(env);
 
   const databaseUrl = loadDatabaseUrl(reader);
+  const databaseSsl = loadDatabaseSsl(reader, databaseUrl);
   const jobExpirySeconds = reader.int("MAILO_JOB_EXPIRY_SECONDS", 86_400, {
     min: 1,
     max: 31_536_000,
   });
-  const worker = loadWorkerOptions(reader, jobExpirySeconds);
+  const worker = loadWorkerConfig(reader, jobExpirySeconds);
   const smtp = loadSmtp(reader, worker.lease.seconds);
 
   const maxRequestBytes = reader.int("MAILO_MAX_REQUEST_BYTES", 2 * MIB, {
@@ -661,6 +695,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: reader.int("MAILO_PORT", 3000, { min: 1, max: 65535 }),
     database: {
       url: new Secret(databaseUrl ?? ""),
+      ssl: databaseSsl,
       poolMax,
       connectTimeoutMs: reader.int("MAILO_DB_CONNECT_TIMEOUT_MS", 5000, {
         min: 100,
@@ -680,6 +715,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     ops: { token: opsToken === undefined ? null : new Secret(opsToken) },
     callersFile: callersFile ?? "",
+    instanceId: loadInstanceId(reader),
     fileChannel,
     envelope,
   } satisfies AppConfig;

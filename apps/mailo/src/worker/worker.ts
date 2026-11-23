@@ -20,6 +20,7 @@ import type pg from "pg";
 import {
   claim,
   completeAttempt,
+  MAINTENANCE_BATCH_SIZE,
   deleteExpiredBodies,
   deleteExpiredRecords,
   recoverExpiredLeases,
@@ -39,7 +40,11 @@ import {
 } from "../smtp/index.js";
 import { decodeBodyContent } from "./body-content.js";
 import { systemClock, type Clock } from "./clock.js";
-import { describeError, silentLogger, type WorkerLogger } from "./logger.js";
+import {
+  describeError,
+  silentLogger,
+  type AppLogger,
+} from "../logging/index.js";
 import { validateWorkerOptions, type WorkerOptions } from "./options.js";
 
 export interface WorkerDeps {
@@ -52,7 +57,7 @@ export interface WorkerDeps {
   clock?: Clock;
   /** [0, 1) 난수. 재시도 jitter와 폴링 간격에 쓴다. 생략하면 Math.random이다. */
   random?: () => number;
-  logger?: WorkerLogger;
+  logger?: AppLogger;
   /**
    * 점유 루프가 예상 못한 예외로 끝났을 때 한 번 부른다. 루프는 되살리지 않는다.
    * 호출자가 정상 종료 경로(`pause`·`stop`)를 거쳐 프로세스를 끝내 재시작을 유도한다.
@@ -90,7 +95,7 @@ export interface WorkerHandle {
   status(): WorkerStatus;
 }
 
-const SWEEP_BATCH = 500;
+const SWEEP_BATCH = MAINTENANCE_BATCH_SIZE;
 // 배치가 계속 가득 차는 경우에도 한 주기에서 이 횟수까지만 돈다. 다음 주기가 이어받는다.
 const MAX_BATCHES_PER_CYCLE = 20;
 const MAX_POLL_ERROR_BACKOFF_MS = 30_000;
@@ -433,7 +438,9 @@ export function createWorker(
       );
       // claim도 점유 전에 복구하지만, 점유가 멈춘 상태(차단기 open, 대기 작업 없음)에서도 회수가 돌게 한다.
       await drainBatches("lease_recovered", () =>
-        recoverExpiredLeases(pool, completeDeps, SWEEP_BATCH),
+        recoverExpiredLeases(pool, completeDeps, SWEEP_BATCH, {
+          exclusive: true,
+        }),
       );
       if (clock.now() >= nextCleanupAt) {
         nextCleanupAt = clock.now() + options.cleanupIntervalMs;

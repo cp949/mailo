@@ -16,7 +16,20 @@ import { CALLER_REGISTRY } from "./tokens.js";
       provide: CALLER_REGISTRY,
       inject: [APP_CONFIG, APP_ENV],
       useFactory: (config: AppConfig, env: NodeJS.ProcessEnv) =>
-        loadCallerRegistryFile(config.callersFile, { env }),
+        loadCallerRegistryFile(config.callersFile, {
+          env,
+          // JWS 서명 키는 DB 본문 키·지문 키와 달라야 한다(한 키가 여러 용도로 쓰이면 한 곳의 유출이 모두에 번진다).
+          otherKeys: [
+            {
+              label: "DB 본문 키링",
+              keys: config.keys.dbEncryption.reveal().keys.values(),
+            },
+            {
+              label: "지문 키링",
+              keys: config.keys.fingerprint.reveal().keys.values(),
+            },
+          ],
+        }),
     },
     BearerAuthGuard,
     OptionalBearerAuthGuard,

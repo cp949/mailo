@@ -1,6 +1,9 @@
+import type { ConnectionOptions } from "node:tls";
 import pg from "pg";
 
 export interface PoolOptions {
+  /** TLS 옵션(`toPgSsl`의 결과). 생략하면 pg 기본이다(URL의 `sslmode` 매개변수를 pg가 해석한다). */
+  ssl?: ConnectionOptions;
   max?: number;
   /** 연결을 얻는 최대 대기(ms). DB가 내려갔을 때 요청이 오래 매달리지 않게 한다. */
   connectionTimeoutMillis?: number;
@@ -33,6 +36,7 @@ export function createPool(
 ): pg.Pool {
   const pool = new pg.Pool({
     connectionString: databaseUrl,
+    ...(options.ssl !== undefined ? { ssl: options.ssl } : {}),
     ...(options.max !== undefined ? { max: options.max } : {}),
     ...(options.connectionTimeoutMillis !== undefined
       ? { connectionTimeoutMillis: options.connectionTimeoutMillis }

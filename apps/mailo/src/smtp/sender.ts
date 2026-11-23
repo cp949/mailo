@@ -40,7 +40,7 @@ import {
   adaptNodemailerRejectedError,
   adaptNodemailerSendInfo,
 } from "./nodemailer-adapter.js";
-import { EMAIL_LIKE } from "./email-pattern.js";
+import { maskEmailLike } from "./email-pattern.js";
 import { buildMessageId } from "./message-id.js";
 
 export type TlsMode = "STARTTLS" | "IMPLICIT";
@@ -268,12 +268,12 @@ function stageOfClientLine(line: string): SmtpStage {
 
 const MAX_RESPONSE_TEXT = 500;
 
-/** 이메일 주소 형태를 가리고 500자로 자른다. */
+/** 이메일 주소 형태를 가리고 500자로 자른다. 정규식은 앞 4 KiB에만 적용한다(`maskEmailLike`). */
 export function sanitizeResponseText(
   text: string | undefined,
 ): string | undefined {
   if (text === undefined) return undefined;
-  const masked = text.replace(EMAIL_LIKE, "[address]");
+  const masked = maskEmailLike(text, "[address]");
   return masked.length > MAX_RESPONSE_TEXT
     ? `${masked.slice(0, MAX_RESPONSE_TEXT)}...`
     : masked;

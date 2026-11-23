@@ -29,6 +29,8 @@ function sameDigest(a: Uint8Array, b: Uint8Array): boolean {
  * 2. 충돌했으면 별도 문장으로 기존 행을 조회한다. READ COMMITTED에서는 충돌 상대가 커밋된 뒤의 행이 보인다.
  * 3. 저장된 `fingerprint_key_version`의 키로 지문을 다시 계산해 비교한다. 같으면 duplicate, 다르면 mismatch다.
  *
+ * `denyNew`이면 1을 건너뛰고 기존 행이 있을 때만 2~3을 한다. 없으면 `denied`다.
+ *
  * 본문 암호화는 INSERT 전에 한다. `jobId`가 AAD라서 먼저 만들어야 하기 때문이다(ADR-0008 결정 6).
  * 그래서 중복 요청도 암호화 비용을 한 번 쓴다.
  */
@@ -42,55 +44,55 @@ export async function register(
   const current = deps.fingerprinter.fingerprint(input.canonicalRequest);
 
   for (let round = 0; round < MAX_ATTEMPTS; round += 1) {
-    const result = await withTransaction(pool, async (client) => {
-      const inserted = await client.query<{ id: string }>(
-        `INSERT INTO mail_jobs
-           (id, caller_id, idempotency_key, fingerprint, fingerprint_key_version,
-            recipients, envelope, body_ciphertext, body_nonce, body_key_version, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10,
-                 now() + make_interval(secs => $11::double precision))
-         ON CONFLICT (caller_id, idempotency_key) DO NOTHING
-         RETURNING id`,
-        [
-          jobId,
-          input.callerId,
-          input.idempotencyKey,
-          Buffer.from(current.digest),
-          current.keyVersion,
-          JSON.stringify(input.recipients),
-          JSON.stringify(input.envelope ?? {}),
-          Buffer.from(body.ciphertext),
-          Buffer.from(body.nonce),
-          body.keyVersion,
-          input.expiresInSeconds,
-        ],
-      );
-      if (inserted.rowCount === 1) {
-        return { kind: "created", jobId } satisfies RegisterResult;
-      }
+    const result = await withTransaction(
+      pool,
+      async (client): Promise<RegisterResult | null> => {
+        // `denyNew`이면 INSERT 없이 기존 행만 본다.
+        if (!input.denyNew) {
+          const inserted = await client.query<{ id: string }>(
+            `INSERT INTO mail_jobs
+               (id, caller_id, idempotency_key, fingerprint, fingerprint_key_version,
+                recipients, envelope, body_ciphertext, body_nonce, body_key_version, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10,
+                     now() + make_interval(secs => $11::double precision))
+             ON CONFLICT (caller_id, idempotency_key) DO NOTHING
+             RETURNING id`,
+            [
+              jobId,
+              input.callerId,
+              input.idempotencyKey,
+              Buffer.from(current.digest),
+              current.keyVersion,
+              JSON.stringify(input.recipients),
+              JSON.stringify(input.envelope ?? {}),
+              Buffer.from(body.ciphertext),
+              Buffer.from(body.nonce),
+              body.keyVersion,
+              input.expiresInSeconds,
+            ],
+          );
+          if (inserted.rowCount === 1) return { kind: "created", jobId };
+        }
 
-      // 충돌했다. 별도 문장으로 기존 행을 조회한다.
-      const existing = await client.query<ExistingRow>(
-        `SELECT id, status, fingerprint, fingerprint_key_version
-           FROM mail_jobs WHERE caller_id = $1 AND idempotency_key = $2`,
-        [input.callerId, input.idempotencyKey],
-      );
-      const row = existing.rows[0];
-      if (!row) return null;
+        // 충돌했다(또는 `denyNew`다). 별도 문장으로 기존 행을 조회한다.
+        const existing = await client.query<ExistingRow>(
+          `SELECT id, status, fingerprint, fingerprint_key_version
+             FROM mail_jobs WHERE caller_id = $1 AND idempotency_key = $2`,
+          [input.callerId, input.idempotencyKey],
+        );
+        const row = existing.rows[0];
+        if (!row) return input.denyNew ? { kind: "denied" } : null;
 
-      const stored = deps.fingerprinter.fingerprint(
-        input.canonicalRequest,
-        row.fingerprint_key_version,
-      );
-      if (sameDigest(stored.digest, row.fingerprint)) {
-        return {
-          kind: "duplicate",
-          jobId: row.id,
-          status: row.status,
-        } satisfies RegisterResult;
-      }
-      return { kind: "fingerprint_mismatch" } satisfies RegisterResult;
-    });
+        const stored = deps.fingerprinter.fingerprint(
+          input.canonicalRequest,
+          row.fingerprint_key_version,
+        );
+        if (sameDigest(stored.digest, row.fingerprint)) {
+          return { kind: "duplicate", jobId: row.id, status: row.status };
+        }
+        return { kind: "fingerprint_mismatch" };
+      },
+    );
     if (result) return result;
   }
   throw new Error("등록 충돌 뒤 기존 작업을 찾지 못했다");

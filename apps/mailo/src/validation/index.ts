@@ -1,3 +1,5 @@
+export type { ValidationErrorCode, ValidationErrorItem } from "./error-item.js";
+export { isSenderAllowed } from "./sender-policy.js";
 export {
   DEFAULT_MAIL_REQUEST_LIMITS,
   MailValidationError,

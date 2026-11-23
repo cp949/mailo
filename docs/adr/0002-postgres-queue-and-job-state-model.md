@@ -138,7 +138,7 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
    - `stop_grace_period`는 drain 상한 + 10초 이상이어야 한다. 기본값은 lease 120초, drain 상한 110초, `stop_grace_period` 150초이므로 충족한다(여유 40초).
    - drain 상한은 SMTP 시간제한(연결·greeting·소켓, 기본 10·10·30초)의 최장값과 HTTP `requestTimeout` 30초 중 긴 쪽보다 길어야 한다. 한 건 전체 마감(`totalMs`, 기본 90초)은 기동 검증이 `totalMs + 10초 ≤ lease`로 강제하므로 `totalMs ≤ lease − 10초`, 곧 drain 상한 이하다. 연결·greeting·소켓은 `totalMs` 안에 있다. HTTP 30초는 lease가 40초 이상이면 drain 상한 안에 들어간다. 그보다 짧은 lease에서는 HTTP 닫기가 drain 상한을 넘을 수 있지만 둘은 병행하므로 `stop_grace_period`를 넘기는 쪽은 더 긴 하나뿐이다. 이 관계는 기재만 하고, `stop_grace_period`를 검사하는 코드는 없다(`docs/operations/deployment.md`). [정정됨: 구현 중 확정 9. 이제 `MAILO_STOP_GRACE_PERIOD`가 설정된 경우 앱이 검사한다.]
    - 종료 중 SIGKILL(`stop_grace_period` 초과 포함)은 중복 발송 1회를 만들 수 있다. at-least-once 범위다(구현 중 확정 5).
-   - 검증: `test/worker/worker.integration-spec.ts`, `test/http/lifecycle.integration-spec.ts`. 시간제한은 테스트에서 줄여 확인했고 컨테이너 SIGTERM은 이 변경 뒤 다시 실행하지 않았다.
+   - 검증: `test/worker/worker.integration-spec.ts`, `test/http/lifecycle.integration-spec.ts`. 시간제한은 테스트에서 줄여 확인했고 컨테이너 SIGTERM은 이 변경 뒤 다시 실행하지 않았다. [정정됨: 같은 날 이 순서로 `scripts/container/verify-sigterm-file.sh`를 다시 실행해 종료 코드 0, 22건 등록 = 22건 처리, 재기동 뒤 1000건 `SENT`를 확인했다(`mail-sending.md` RQ-025 판정 근거).]
 7. **lease 회수 경로 정정(구현 중 확정 5, 2026-11-23 코드 리뷰).** 구현 중 확정 5의 "회수는 주기 sweep(기본 60초)에서 한다"는 부정확하다. 회수는 두 곳에서 일어난다.
    - `claim()` 앞단의 `recoverExpiredLeases`(`src/queue/claim.ts`). 점유 폴링마다 실행하므로 폴링 간격(기본 1초)으로 돈다.
    - 유지보수 루프(`MAILO_MAINTENANCE_INTERVAL_SECONDS`, 기본 60초). 점유가 멈춘 상태(차단기 `open` 등)에서도 회수가 돌게 한다.
@@ -147,7 +147,7 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
    - **문제.** 연결이 RST 없이 끊기면 `claim`·`completeAttempt`가 응답을 기다리며 멈춘다. `pause()`가 이 호출을 기다리므로 SIGTERM 뒤 종료가 `stop_grace_period`를 넘겨 SIGKILL이 되고 진행 중 전송이 재발송된다. 멈춘 트랜잭션은 차단기 행 잠금과 xmin을 잡아 이벤트 피드도 멈춘다. 이전에는 시간제한이 없었다. 결과 기록 재시도는 3회(200ms, 800ms)였고 풀 크기와 동시 전송 수의 관계를 검사하지 않았다.
    - **시간제한(추정 기본값, 환경 변수로 변경).** 앱 풀 연결에 `statement_timeout` 30초, `lock_timeout` 10초, `idle_in_transaction_session_timeout` 60초를 시작 매개변수로, pg `query_timeout` 35초와 keepAlive(첫 탐침 10초)를 건다. `query_timeout`은 `statement_timeout`보다 길어야 한다. 서버가 먼저 취소해 연결이 살아남게 하기 위해서다. 서버가 응답하지 않는 단절은 `query_timeout`이 끊는다. keepalive만으로는 감지에 수 분이 걸릴 수 있어(Linux 기본 75초 × 9회, 미측정) 실제 상한은 `query_timeout`이다.
    - pg는 `query_timeout`이 지나도 연결을 닫지 않는다. `withTransaction`은 이 오류나 ROLLBACK 실패 때 연결을 풀에 돌려주지 않고 버린다(`pool.query`는 pg-pool이 버린다). 응답 없는 연결에 ROLLBACK을 보내면 같은 시간만큼 더 기다리기 때문이다.
-   - 마이그레이션 CLI는 `statement_timeout` 없이 `lock_timeout` 10초만 건다. 인스턴스 사이의 advisory lock 대기는 `lock_timeout = 0`으로 예외를 둔다. 정리 쿼리는 500건 배치라 30초 안에 끝난다고 가정했다(미측정).
+   - 마이그레이션 CLI는 `statement_timeout` 없이 `lock_timeout` 10초만 건다. 인스턴스 사이의 advisory lock 대기는 `lock_timeout = 0`으로 예외를 둔다. 정리 쿼리는 500건 배치라 30초 안에 끝난다고 가정했다(미측정). [정정됨: 구현 중 확정 10. 배치는 1,000건이다.]
    - **`pause()` 상한.** 진행 중인 점유 호출을 drain 상한과 `Promise.race`로 묶는다. 상한이 지나면 `pause_timeout` 경고를 남기고 넘어간다. 그 뒤 늦게 돌아온 점유는 처리하지 않는다(`claim_after_drain_timeout`). 점유 호출이 끝나지 않았으면 `stop()`도 미완료(`drained: false`)로 보고 전송 취소 신호를 올린다. DB 풀 닫기는 5초까지만 기다린다.
    - **결과 기록 재시도.** lease 마감(점유 호출 전 단조 시각 + lease − 10초, lease가 20초 이하이면 여유를 lease의 절반으로)까지 200ms에서 시작해 2배씩 늘리는 backoff(간격 5초 상한, ±20%)로 재시도한다. 첫 시도는 항상 한다. 마감이 지났거나 종료로 전송을 끊었으면 포기하고 lease 회수에 맡긴다. 시각은 단조 시계이고 작업 시각은 계속 DB `now()`다(결정 10).
    - **풀 크기.** 기동 때 `MAILO_DB_POOL_MAX` ≥ `MAILO_WORKER_CONCURRENCY` + 4를 검사한다. 4는 점유, 주기 작업, HTTP·헬스·파일 폴러 몫의 추정이다. 기본값(풀 10, 동시 4)은 통과한다.
@@ -155,6 +155,13 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
 9. **`stop_grace_period` 검사와 compose 변수(결정 12 보완, 구현 중 확정 6 정정, 2026-11-23 코드 리뷰, `src/config/load-config.ts`·`docker-compose.yml`).** 결정 문구는 바꾸지 않는다.
    - compose의 `stop_grace_period`는 `${MAILO_STOP_GRACE_PERIOD:-150s}`이고 같은 값이 앱의 환경 변수 `MAILO_STOP_GRACE_PERIOD`로 전달된다. 앱은 이 변수가 있을 때만 `max(1초, lease − 10초) + 10초` 이상인지 검사하고 어긋나면 기동을 거부한다. 앱이 오케스트레이터 설정을 알 수 없는 환경이 있어 변수가 없으면 검사하지 않는다. 표기는 compose와 같은 기간(`150s`, `2m30s`, `1h`)이다.
    - 검증: `test/config/load-config.spec.ts`(경계값, 형식 오류, lease 변경), `test/config/compose-consistency.spec.ts`(compose 기본값과 `.env.example` lease의 관계). compose는 텍스트 패턴으로 검사한다. `docker compose config`로 기본값 `2m30s`와 `MAILO_STOP_GRACE_PERIOD=3m` 재정의가 `stop_grace_period`에 반영됨을 수동 확인했고, 실행 중 컨테이너의 `StopTimeout`은 확인하지 않았다.
+
+10. **정리 작업 배타 실행과 기본값 단일 출처(결정 7, 구현 중 확정 3·8 보완, 2026-11-23 코드 리뷰, `src/queue/maintenance.ts`, `src/worker/options.ts`).** 결정 문구는 바꾸지 않는다.
+    - **정리 잠금.** 만료 sweep, lease 회수(유지보수 루프 호출), 본문 삭제, 보존 삭제는 배치마다 짧은 트랜잭션을 열고 첫 문장으로 `pg_try_advisory_xact_lock(7364223, 단계)`를 시도한다(sweep 1, lease 2, bodies 3, records 4). 못 잡으면 다른 인스턴스가 그 단계를 도는 중이므로 기다리지 않고 0건으로 건너뛴다. 트랜잭션 수준 잠금이라 커밋·롤백·연결 폐기 때 풀린다. 정리 전체를 한 트랜잭션에 묶지 않는다. 삭제로 xid를 받은 트랜잭션이 길어지면 `xmin`이 붙들려 이벤트 피드 cursor가 멈추고 `statement_timeout`(30초)·`idle_in_transaction`(60초)에도 걸리기 쉽기 때문이다.
+    - **효과와 한계.** 같은 단계를 인스턴스 둘이 동시에 도는 일은 없어진다. 배치 사이에는 다른 인스턴스가 끼어들 수 있고 정합성은 기존 `FOR UPDATE SKIP LOCKED`가 지킨다. 한 인스턴스가 한 주기를 끝낸 직후 다른 인스턴스가 같은 단계를 한 번 더 도는 것은 막지 않는다(비어 있으면 인덱스 조회 한 번이다). 배치 상한은 한 트랜잭션이 1초 안팎에 끝나도록 1,000건(`MAINTENANCE_BATCH_SIZE`, 추정, 이전 500)으로 했다. 위 구현 중 확정 8의 "정리 쿼리는 500건 배치라 30초 안에 끝난다"는 이 값으로 바뀌었고 소요 시간은 측정하지 않았다.
+    - **점유 앞단의 lease 복구는 잠금 없이 유지한다.** `claim` 안의 `recoverExpiredLeases`는 그대로다(결정 5: 점유가 먼저 회수한다). 복구가 다른 인스턴스의 정리 잠금에 막혀 지연되면 정체와 중복 발송으로 이어질 수 있어서다. 유지보수 루프의 호출만 `exclusive: true`로 잠금을 쓴다.
+    - **기본값 단일 출처.** `defaultWorkerOptions`가 만든 기본값(점검 30초, 정리 10분)과 `loadConfig`의 기본값(60초)이 달랐다. 문서(구현 중 확정 3, `deployment.md`)는 60초다. 이제 기본값은 `loadConfig`가 읽는 값(`defaultWorkerConfig`)이 정하고 `defaultWorkerOptions`는 그것을 `workerOptionsFromConfig`로 바꾼 값이다. 점검·정리 주기 기본값이 테스트 기본값에서 60초로 바뀌었다(운영 값은 변하지 않았다). 설정의 타입은 `WorkerConfig`, Worker가 쓰는 옵션은 `WorkerOptions`로 이름을 나눴다. 계정 오류 사유 타입은 큐의 `AccountErrorReason` 하나다. 큐 모듈의 `defaultRetryPolicy`·`defaultBreakerConfig`는 큐 테스트용으로 남기고 `loadConfig` 기본값과 같다는 것을 단위 테스트로 고정했다(`test/worker/worker.spec.ts`).
+    - 검증: `test/queue/maintenance.integration-spec.ts`(다른 연결이 잠금을 쥐면 0건, 풀리면 처리, 단계별 독립, 점유 앞단 복구는 영향 없음).
 
 ## 검토한 대안
 

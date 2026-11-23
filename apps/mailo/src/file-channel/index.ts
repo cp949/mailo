@@ -1,6 +1,5 @@
 export {
   createFilePoller,
-  createStdoutLogger,
   type CallerPollSummary,
   type FilePoller,
   type FilePollerDeps,

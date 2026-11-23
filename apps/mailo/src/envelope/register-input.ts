@@ -16,6 +16,8 @@ export function toRegisterInput(
     callerId: string;
     idempotencyKey: string;
     expiresInSeconds: number;
+    /** 새 작업을 만들 수 없는 요청(`RegisterInput.denyNew`). 기본 false다. */
+    denyNew?: boolean;
   },
 ): RegisterInput {
   const mail = opened.request;
@@ -35,5 +37,6 @@ export function toRegisterInput(
     ),
     canonicalRequest: opened.fingerprint.canonicalRequest,
     expiresInSeconds: args.expiresInSeconds,
+    ...(args.denyNew === true && { denyNew: true }),
   };
 }

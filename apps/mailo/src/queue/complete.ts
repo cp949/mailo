@@ -7,6 +7,7 @@ import {
   recordAccountFailure,
   recordAccountOk,
 } from "./circuit-breaker.js";
+import { tryMaintenanceLock } from "./maintenance.js";
 import { breakerInitialWait, retryDelaySeconds } from "./retry-policy.js";
 import type {
   AccountErrorReason,
@@ -322,14 +323,19 @@ function retryOrFinish(
  * lease가 지난 SENDING 작업을 복구한다(ADR-0002 결정 5). 점유 쿼리 앞단에서 부른다.
  * 작업마다 `LEASE_EXPIRED` 시도를 기록하고(최대 시도 횟수에 포함) 판정 순서대로 전이한다.
  * SMTP 수락 직후 장애라면 재시도가 중복 발송이 된다(RQ-013).
+ * `exclusive`가 true이면 정리 잠금(`tryMaintenanceLock`)을 먼저 시도해 못 잡으면 0을 돌려준다(유지보수 루프용).
+ * 점유 앞단의 호출은 잠금 없이 복구한다. 복구 지연이 정체와 중복 발송으로 이어질 수 있어서다(ADR-0002 결정 5).
  * @returns 복구한 작업 수
  */
 export async function recoverExpiredLeases(
   pool: pg.Pool,
   deps: CompleteDeps,
   limit = 100,
+  options: { exclusive?: boolean } = {},
 ): Promise<number> {
   return withTransaction(pool, async (client) => {
+    if (options.exclusive && !(await tryMaintenanceLock(client, "lease")))
+      return 0;
     const { rows } = await client.query<LockedJob & { lease_token: string }>(
       `SELECT ${JOB_COLUMNS}, lease_token FROM mail_jobs
         WHERE status = 'SENDING' AND lease_until < now()

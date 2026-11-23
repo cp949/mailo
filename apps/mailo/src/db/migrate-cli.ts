@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { ConfigError, loadDatabaseUrlOnly } from "../config/index.js";
+import { ConfigError, loadDatabaseOnly, toPgSsl } from "../config/index.js";
 import { runMigrations } from "./migrator.js";
 import { createPool } from "./pool.js";
 
@@ -11,8 +11,11 @@ const MIGRATIONS_DIR = fileURLToPath(
 try {
   // statement_timeout은 두지 않는다(DDL이 오래 걸릴 수 있다). 잠금 대기만 제한해, ALTER가 실행 중인 앱 쿼리를 기다리며
   // 뒤따르는 쿼리를 모두 막는 상태를 오래 두지 않는다. 인스턴스 사이 advisory lock 대기는 migrator가 예외로 둔다.
-  const pool = createPool(loadDatabaseUrlOnly().reveal(), {
+  const database = loadDatabaseOnly();
+  const ssl = toPgSsl(database.ssl);
+  const pool = createPool(database.url.reveal(), {
     lockTimeoutMillis: 10_000,
+    ...(ssl !== undefined && { ssl }),
   });
   try {
     const applied = await runMigrations(pool, MIGRATIONS_DIR);

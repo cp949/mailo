@@ -53,6 +53,8 @@ services:
       - ./callers.json:/run/mailo/callers.json:ro
       # 파일 채널을 켤 때: .env에 MAILO_FILE_CHANNEL_ROOT=/var/mailo/files를 주고 아래 마운트를 연다.
       # 호출처 폴더(inbox/<caller_id>/)와 권한은 호스트에서 만든다. Mailo는 non-root(node)이고 폴더를 만들지 않는다(ADR-0004 결정 8).
+      # 앱은 시작할 때 /var/mailo/files/inbox가 없으면 기동을 거부한다(호스트 mount 전의 빈 디렉터리를 bind하는 경우를 막는다).
+      # NAS/NFS는 docker-compose.nfs-example.yml의 named volume(driver local, type nfs) 예시를 쓴다(미검증, nfs.md). 호스트 mount를 bind하는 방식도 검증하지 않았다.
       # - /srv/mailo-files:/var/mailo/files
     ports:
       # 기본은 127.0.0.1만 연다. TLS 프록시나 다른 호스트가 접근해야 하면 MAILO_PUBLISH_HOST로 바꾼다(deployment.md).
@@ -80,6 +82,15 @@ services:
       retries: 3
       start_period: 30s
     restart: unless-stopped
+    # 런타임 강화(M9). 이미지는 root 소유 읽기 전용이고 앱이 쓰는 경로는 없다. 쓰기는 마운트(파일 채널 볼륨)와 /tmp뿐이다.
+    # 파일 채널 볼륨은 별도 마운트라 read_only 영향을 받지 않는다. 앱은 1024 이상 포트만 열고 특권이 필요 없어 capability를 모두 뺀다.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   postgres-data:

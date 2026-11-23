@@ -157,6 +157,20 @@ ADR-0001은 호출처 선택 봉투 암호화와 DB 본문 상시 암호화를 �
    - 거부 확인: 다른 비밀키로 서명한 JWS는 `SIGNATURE_INVALID`(`INTAKE_REJECTED`), 알 수 없는 `kid`의 JWE는 400 `KID_UNKNOWN`.
    - 확인하지 않은 것: 다른 nimbus 버전, 다른 알고리즘, 키 교체 중 이전 `kid`, 2 MiB 근처의 큰 본문, `jose` 외 다른 구현.
 
+12. **발신 주소(From) 허용 범위와 replyTo(결정 3 뒤 단계, 2026-11-23, RQ-028·RQ-030, `src/validation/sender-policy.ts`).** 결정 문구는 바꾸지 않는다. `docs/requirements/mail-sending.md`의 미결정 "발신자 필드 정책"을 이 항목이 정한다.
+    - **이전 동작.** 요청의 `from`·`replyTo`는 주소 형식만 검사하고 아무 주소나 허용했다. Mailo는 `from`을 그대로 SMTP `MAIL FROM`·`From` 헤더로 보낸다. IP 허용 relay(인증 없는 Workspace SMTP Relay)에서는 호출처 A가 임의 주소로 발신할 수 있었다. Gmail SMTP(인증)는 인증 계정과 다른 From을 계정 주소로 바꾸는 것으로 알려져 있다(미검증, 추정). 그래서 Gmail 인증 모드에서는 이 정책이 없어도 사칭이 성립하지 않을 수 있지만, Mailo가 이 동작에 기대면 안 된다.
+    - **정책.** 호출처의 허용 발신 주소 = `config.smtp.defaultFrom`(`MAILO_SMTP_FROM`, 없으면 `MAILO_SMTP_USER`) ∪ `callers.json`의 선택 필드 `allowedFrom`(주소 배열, 최대 20개, 기본 빈 목록). 요청의 `from`이 있고 이 집합에 없으면 거부한다. 비교는 addr-spec 전체를 대소문자 무시로 한다(표시 이름은 지원하지 않으므로 형식 검증만). `from`을 생략하면 항상 허용하고 Worker가 `defaultFrom`으로 채운다. 거부: REST는 400 `validation-failed`의 `errors: [{pointer: "/from", code: "FROM_NOT_ALLOWED"}]`, 파일 채널은 거부 사유 `VALIDATION_FAILED`(새 사유 코드 없음)다. 오류에 주소를 싣지 않는다.
+    - **`from`은 항상 평문 필드다.** JWE 본문(`content`)에는 `subject`·`text`·`html`만 들어가고 `from`·`replyTo`·수신자는 바깥 필드다(`envelope/open-request.ts`의 `DECRYPTED_FIELDS`). 그래서 `from` 값은 복호화 전에도 확정돼 있다. 검사는 등록 직전(`register`의 `denyNew`)에 한다.
+    - **이미 등록된 Key는 다시 검사하지 않는다.** `register`가 `denyNew`로 호출되면 새 행을 만들지 않고 기존 Key만 본다. 기존 Key가 있으면 지문이 같으면 `duplicate`(REST 200), 다르면 `fingerprint_mismatch`(409)이고 없으면 `denied`(위 거부)다. 정책이 생기거나 `allowedFrom`이 줄어든 뒤에도, 앞서 등록된 요청을 relay가 재전송하면 기존 작업을 그대로 돌려받는다. 이 순서는 RQ-012·ADR-0005 결정 4(같은 Key·같은 내용은 기존 작업, 다른 내용은 불일치)와 충돌하지 않는다. 신규 Key에만 정책이 더해진다. 파일 채널의 재수집도 같은 `register` 경로를 쓰므로 같다.
+    - **replyTo.** 제한하지 않는다(형식 검증만). SPF·DMARC 정렬 대상은 `From`이라 `Reply-To`가 발신 사칭을 늘리지 않는다. 위험은 회신을 다른 주소로 유도하는 피싱이다. 문의 폼 relay가 방문자 주소를 `replyTo`로 쓰는 용도가 있어 제한하지 않았다. 호출처 신뢰가 낮으면 이 위험을 운영에서 감안한다(`caller-onboarding.md`). 요구사항의 "같은 규칙" 문구는 이 항목에 맞춰 고쳤다.
+    - **호환성.** 운영 배포 이력이 없어 즉시 강제한다(코드 변경과 같은 릴리스). 호출처가 `defaultFrom`이 아닌 `from`을 보내고 있으면 `allowedFrom`에 넣어야 한다. 이미 큐에 있는 작업의 `from`은 검사하지 않고 그대로 발송한다(Worker는 `envelope.from`을 그대로 쓴다). 샘플 relay(`samples/spring-boot-relay`)는 `from: no-reply@example.com`을 보내고 `verify/run-e2e.sh`가 `MAILO_SMTP_FROM=no-reply@example.com`을 준다. 볼륨 예시(`docker-compose.volume-example.yml`)와 `scripts/volume/verify-e2e.sh`도 같은 값으로 맞췄다.
+    - **Gmail 인증 모드의 별칭.** `allowedFrom`의 주소를 실제로 From으로 보내려면 Gmail "다른 주소에서 메일 보내기"(send-as) 별칭으로 등록해야 한다. 등록하지 않으면 From이 계정 주소로 바뀐다(미검증, 추정). `caller-onboarding.md`에 미검증으로 적었다.
+    - 검증: `test/callers/allowed-from.spec.ts`, `test/queue/register.integration-spec.ts`(`denyNew`), `test/http/rest-intake.integration-spec.ts`, `test/file-channel/poller.integration-spec.ts`. 실제 Gmail·Workspace relay에서의 From 처리는 확인하지 않았다.
+13. **호출처 JWS 비밀키 품질 검사(결정 2·5, 2026-11-23 코드 리뷰, `src/callers/registry.ts`).** 결정 문구는 바꾸지 않는다. 기동 때 `callers.json`의 서명 키를 다음과 같이 검사한다.
+    - **중복(항상 거부).** 같은 키 바이트가 다른 `kid`나 다른 호출처에 있으면 거부한다(base64·hex 표기가 달라도 바이트로 비교). DB 본문 키링·지문 키링과 같은 바이트여도 거부한다. 한 키가 여러 용도·호출처에 쓰이면 서명으로 호출처를 구분하는 의미가 없어진다. 오류에는 위치(`callers[i].signature.keys[j]`)와 라벨만 담고 값은 담지 않는다.
+    - **약한 키(production만 거부).** 저장소에 공개된 샘플 키나 같은 바이트가 반복된 키(`key-loader.ts`의 `isPublicOrWeakKey`)는 `NODE_ENV`가 `development`·`test`가 아닐 때 거부한다. DB 본문 키·지문 키와 같은 규칙이다. 그 밖의 엔트로피는 검사하지 않는다(생성 방법은 `openssl rand -base64 32`).
+    - 검증: `test/callers/signature-keys.spec.ts`. 기존 테스트 키는 반복 바이트라 이 파일의 테스트는 `NODE_ENV=test`를 준다.
+
 ## 미확정
 
 - 결정됨(구현 중 확정): JWS 직렬화 세부 형식(flattened JWS의 필드 구성). 위의 "구현 중 확정" 절이 정했다.

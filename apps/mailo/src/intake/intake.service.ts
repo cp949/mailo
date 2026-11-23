@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import type pg from "pg";
+import { CALLER_REGISTRY, type CallerRegistry } from "../callers/index.js";
 import { APP_CONFIG, type AppConfig } from "../config/index.js";
 import {
   QUEUE_BODY_CIPHER,
@@ -24,6 +25,7 @@ import {
   type JobView,
 } from "../queue/index.js";
 import { toRegisterInput, type OpenRequestSuccess } from "../envelope/index.js";
+import { isSenderAllowed } from "../validation/index.js";
 import { presentEvent } from "./presenters.js";
 
 export type CreateJobResult = { status: 202 | 200; job: JobView };
@@ -36,11 +38,15 @@ export class IntakeService {
     @Inject(QUEUE_BODY_CIPHER) private readonly cipher: QueueBodyCipher,
     @Inject(QUEUE_FINGERPRINTER)
     private readonly fingerprinter: QueueFingerprinter,
+    @Inject(CALLER_REGISTRY) private readonly registry: CallerRegistry,
   ) {}
 
   /**
    * `openRequest`(복호화·검증·지문 계산)를 마친 요청을 멱등하게 등록한다(RQ-001, RQ-011, ADR-0005 결정 4·5).
    * - 신규: 202. 같은 Key와 같은 내용: 200과 기존 작업. 같은 Key에 다른 내용: 409.
+   * - 요청의 `from`이 호출처의 허용 발신 주소에 없으면 새 작업을 만들지 않고 400 validation-failed(`FROM_NOT_ALLOWED`)다.
+   *   이미 등록된 Key의 재전송은 허용 여부와 무관하게 기존 작업(200)이나 409를 그대로 돌려준다. 정책을 바꾼 뒤에도
+   *   relay의 멱등 재시도가 영구 실패로 바뀌지 않게 하려는 것이다.
    * - DB·암호화 오류는 예외로 올라가 503이 된다. 등록은 한 트랜잭션이라 반쯤 등록된 작업이 남지 않는다.
    *
    * 큐 입력으로의 변환은 파일 채널과 같은 `toRegisterInput`이다(envelope 모듈).
@@ -57,8 +63,19 @@ export class IntakeService {
         callerId,
         idempotencyKey,
         expiresInSeconds: this.config.queue.jobExpirySeconds,
+        denyNew: !isSenderAllowed(
+          opened.request.from,
+          this.config.smtp.defaultFrom,
+          this.registry.callers.find((c) => c.id === callerId)?.allowedFrom ??
+            [],
+        ),
       }),
     );
+    if (result.kind === "denied") {
+      throw problems.validationFailed([
+        { pointer: "/from", code: "FROM_NOT_ALLOWED" },
+      ]);
+    }
 
     if (result.kind === "fingerprint_mismatch") {
       throw problems.idempotencyConflict(

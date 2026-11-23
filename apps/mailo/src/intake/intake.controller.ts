@@ -23,8 +23,8 @@ import {
   sendJson,
   type HttpRequest,
   type HttpResponse,
-  type ValidationErrorItem,
 } from "../http/index.js";
+import type { ValidationErrorItem } from "../validation/index.js";
 import { IntakeService } from "./intake.service.js";
 import { presentJob } from "./presenters.js";
 import {

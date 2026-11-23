@@ -1,6 +1,6 @@
 import { Global, Logger, Module, type DynamicModule } from "@nestjs/common";
 import type pg from "pg";
-import { APP_CONFIG, type AppConfig } from "../config/index.js";
+import { APP_CONFIG, toPgSsl, type AppConfig } from "../config/index.js";
 import { createPool } from "./pool.js";
 import { PG_POOL, POOL_OWNED } from "./tokens.js";
 
@@ -22,7 +22,9 @@ export class DbModule {
           inject: [APP_CONFIG],
           useFactory: (config: AppConfig): pg.Pool => {
             if (options.pool) return options.pool;
+            const ssl = toPgSsl(config.database.ssl);
             const pool = createPool(config.database.url.reveal(), {
+              ...(ssl !== undefined && { ssl }),
               max: config.database.poolMax,
               connectionTimeoutMillis: config.database.connectTimeoutMs,
               statementTimeoutMillis: config.database.timeouts.statementMs,
@@ -35,9 +37,11 @@ export class DbModule {
             });
             // 유휴 연결 오류를 처리하지 않으면 프로세스가 종료된다. 메시지에는 접속 정보가 섞일 수 있어 이름과 코드만 남긴다.
             pool.on("error", (error: Error & { code?: string }) => {
-              logger.error(
-                `idle client error name=${error.name}${error.code ? ` code=${error.code}` : ""}`,
-              );
+              logger.error({
+                event: "db_idle_client_error",
+                name: error.name,
+                code: error.code ?? null,
+              });
             });
             return pool;
           },

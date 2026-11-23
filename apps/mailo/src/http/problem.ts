@@ -3,6 +3,7 @@
  * 규칙: `title`은 type마다 고정 문구, `detail`은 고정 문구이고, `errors`는 위치(`pointer`·`parameter`)와 고정 `code`만 담는다.
  * 요청에서 받은 값(제목, text, html, 주소, Key, 암호문)은 어디에도 넣지 않는다(RQ-027, AGENTS.md).
  */
+import type { ValidationErrorItem } from "../validation/index.js";
 
 export type ProblemType =
   | "malformed-request"
@@ -13,28 +14,6 @@ export type ProblemType =
   | "payload-too-large"
   | "unsupported-media-type"
   | "service-unavailable";
-
-export type ValidationErrorCode =
-  | "REQUIRED"
-  | "INVALID_FORMAT"
-  | "TOO_LONG"
-  | "TOO_MANY"
-  | "TOO_LARGE"
-  | "CONTROL_CHARACTER"
-  | "UNKNOWN_FIELD"
-  | "ATTACHMENTS_NOT_SUPPORTED"
-  | "CONFLICTING_FIELDS"
-  | "DECRYPTION_FAILED"
-  | "KID_UNKNOWN"
-  | "CALLER_MISMATCH";
-
-export interface ValidationErrorItem {
-  /** 본문 필드의 JSON Pointer(RFC 6901). 본문 전체는 빈 문자열이다. */
-  pointer?: string;
-  /** 헤더나 쿼리 파라미터 이름. */
-  parameter?: string;
-  code: ValidationErrorCode;
-}
 
 const CATALOG: Record<
   ProblemType,
