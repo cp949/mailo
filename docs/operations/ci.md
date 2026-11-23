@@ -66,7 +66,7 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 
 ## 릴리스 워크플로
 
-`.github/workflows/release.yml`. `vX.Y.Z` 태그 push 때 이미지를 `ghcr.io/cp949/mailo`에 발행하고 GitHub Release를 만든다. GitHub에서 실행한 적이 없다("확인하지 않은 것").
+`.github/workflows/release.yml`. `vX.Y.Z` 태그 push 때 이미지를 `ghcr.io/cp949/mailo`에 발행하고 GitHub Release를 만든다. `v0.1.0` 태그(run 45189361321, 커밋 `771f083`, 2026-11-23)로 1회 실행해 성공했다("확인하지 않은 것").
 
 | 항목 | 내용 |
 | ---- | ---- |
@@ -142,7 +142,7 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 ### GHCR 공개 범위
 
 - 첫 발행 뒤 `https://github.com/users/cp949/packages/container/package/mailo`의 Package settings에서 공개 범위와 저장소 연결을 확인한다.
-- 추정: 새 container 패키지의 기본 공개 범위는 private다. private이면 `docker pull`에 `read:packages` 권한 토큰으로 `docker login ghcr.io`가 필요하다. 익명 pull이 필요하면 Public으로 바꾼다. 확인하지 않았다.
+- 첫 발행(v0.1.0) 뒤 로그인 정보 없는 클라이언트(빈 `DOCKER_CONFIG`)로 manifest 조회가 성공했다. 익명 pull이 가능한 것으로 본다. 실제 pull은 하지 않았고 패키지 설정 화면도 보지 않았다. private이면 `docker pull`에 `read:packages` 권한 토큰으로 `docker login ghcr.io`가 필요하다.
 - 추정: `org.opencontainers.image.source` 라벨로 패키지가 `cp949/mailo` 저장소에 연결된다. 확인하지 않았다.
 
 ### 릴리스 절차
@@ -175,7 +175,7 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 ## 확인하지 않은 것
 
 - `ci.yml`: `static`·`integration`·`container` 잡은 러너에서 성공했다(위 실행 기록). 러너의 Docker·compose 버전, 이미지 pull·빌드 시간, `timeout-minutes` 여유는 기록하지 않았다.
-- `release.yml`: GitHub에서 실행한 적이 없다. 태그 push, GHCR 로그인·push, 러너에서의 스모크, 릴리스 노트 생성 API, Release 생성, GHCR 패키지 공개 범위를 확인하지 않았다. 로컬에서 확인한 것은 위 "로컬에서 확인한 범위"의 `release.yml` 행이다.
-- 러너(ubuntu-24.04, Docker 28.0.4, 2026-11-23 `container` 잡 로그)의 이미지 저장소 종류는 확인하지 않았다. classic 저장소의 `docker push` 결과(Docker schema2 manifest)에 대한 config 비교는 로컬에서 실행하지 않았다.
+- `release.yml`: `v0.1.0` 태그로 1회 성공했다(run 45189361321, 2분). `verify` 34초, `release` 약 1분 20초. 러너에서 스모크, GHCR push(config digest 일치), `latest` 부착, Release 생성이 통과했다. `vX.Y.Z`와 `latest`의 manifest digest는 같았다(`sha256:d5c5657f…`). 로그인 정보 없이 `docker buildx imagetools inspect`로 manifest를 조회할 수 있었다. 실패 경로(재실행 표)는 GitHub에서 실행하지 않았다. 실제 `docker pull` 후 기동과 패키지 설정 화면의 공개 범위·저장소 연결은 확인하지 않았다.
+- 러너(ubuntu-24.04)의 Docker 저장소는 `overlay2`(classic)였고 이 환경에서 config digest 비교가 통과했다. containerd 저장소 러너에서의 결과는 확인하지 않았다.
 - `actions/*` 세 액션의 이 워크플로 입력(`cache: pnpm`, `persist-credentials`, `if-no-files-found`, `retention-days`)은 `actionlint`가 문법을 통과시켰을 뿐 실행하지 않았다.
 - `schedule`은 기본 브랜치에서만 돈다. 저장소가 비활성이면 GitHub가 schedule을 멈출 수 있다.
