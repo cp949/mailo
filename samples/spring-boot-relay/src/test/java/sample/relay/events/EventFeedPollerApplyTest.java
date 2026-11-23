@@ -118,6 +118,24 @@ class EventFeedPollerApplyTest {
     }
 
     @Test
+    void 모르는_응답_필드_outcomeUncertain은_무시하고_실패_종결은_종전처럼_반영한다() throws Exception {
+        // RQ-048: 서버가 JOB_FAILED·JOB_EXPIRED에 더한 필드다. 샘플은 상태 해석에 쓰지 않는다.
+        client.eventResponses.add(response(200, page(
+                event("JOB_FAILED", "e1", ID.toString())
+                        .replace("}", ",\"failureReason\":\"MAX_ATTEMPTS_EXCEEDED\",\"outcomeUncertain\":true}"),
+                "c1", false)));
+
+        poller.pollOnce();
+
+        assertEquals(List.of("applyFeedResult"), outbox.methods());
+        assertEquals(OutboxStatus.FAILED, outbox.calls.get(0).status());
+        assertEquals("MAX_ATTEMPTS_EXCEEDED", outbox.calls.get(0).reason());
+        // 모르는 이벤트 종류가 아니므로 확인 필요로 바꾸지 않는다.
+        assertEquals("JOB_FAILED", events.logged.get(0).type());
+        assertEquals("c1", events.cursor);
+    }
+
+    @Test
     void 알려진_종결_이벤트는_종전처럼_반영한다() throws Exception {
         client.eventResponses.add(response(200, page(event("JOB_SENT", "e1", ID.toString()), "c1", false)));
 
