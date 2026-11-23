@@ -355,7 +355,7 @@
 
 ## 구현 중 확정 (2026-11-24)
 
-결정 문구는 바꾸지 않는다. 1~8은 구현 묶음 A(작업 취소), 9~18은 구현 묶음 B(토큰 분리·발송 정지·감사·`/ops`)에서 정한 세부다.
+결정 문구는 바꾸지 않는다. 1~8은 구현 묶음 A(작업 취소), 9~20은 구현 묶음 B(토큰 분리·발송 정지·감사·`/ops`)에서 정한 세부다.
 
 1. **409 응답의 현재 상태 필드 이름(결정 4, `src/http/problem.ts`).** 결정 4는 "응답에 현재 `status`만 넣는다"고 적었다. RFC 9457의 `status`는 HTTP 상태 코드(409)이고 같은 이름으로 작업 상태를 넣으면 덮어쓴다. 작업의 현재 상태는 `jobStatus` 필드로 낸다. `type`은 `urn:mailo:problem:job-not-cancelable`이다. 오류 본문에 요청 값을 넣지 않는 규칙은 같다.
 2. **이벤트의 취소 주체 저장(결정 4, `queue/cancel.ts`).** `mail_events`에 새 컬럼을 두지 않는다. 이벤트의 `failure_reason`에 작업과 같은 값(`CANCELED_BY_CALLER`·`CANCELED_BY_OPERATOR`)을 쓰고, 응답의 `canceledBy`는 이 값에서 만든다(`intake/presenters.ts`의 `canceledByOf`). 모르는 값은 `null`이다. 이 저장 값이 구버전 인스턴스에서는 실패형 이벤트의 `failureReason`으로 그대로 나간다(결정 4의 구버전 동작과 같다).
@@ -375,6 +375,8 @@
 16. **관리 취소의 입력(결정 4, `queue/cancel.ts`).** `cancelJobAsOperator(client, { jobId })`가 호출처 범위를 푼 입력이다. 호출처 경로의 `cancelJob(pool, CancelTarget)`은 `callerId`가 필수라 호출처 키 경로에서 범위가 풀릴 수 없다. 두 함수가 같은 SQL 본문(`cancelWithin`)을 쓴다. 관리 경로는 호출자가 연 트랜잭션의 연결을 받아 감사를 같은 트랜잭션에 쓴다. 새로 취소했을 때만 감사와 `ops_job_canceled`를 쓴다.
 17. **`ReadyResponse`의 필드(결정 2).** 영향 범위 표대로 운영자 응답에 `sendControls`, 호출처 키 응답에 `sendPaused`를 더했다. 기존 통합 테스트(`rest-intake.integration-spec.ts`의 호출처 키 `ready` 응답 동등 비교)에 `sendPaused: { paused: false, scope: null }`을 더했다. 필드가 계약에 새로 생겼기 때문이고 다른 값은 바꾸지 않았다.
 18. **점유 쿼리 비용 측정(결정 2의 "비용").** 결정 2는 정지 조회 비용을 측정하지 않았다고 적었다. 로컬 PostgreSQL 17의 임시 schema에서 대기 10만 건으로 `EXPLAIN (ANALYZE, BUFFERS)`를 한 번씩 실행했다. 정지 조회는 `Seq Scan` 1행, 실행 0.009ms다. 정지가 없으면 점유 쿼리 계획이 바뀌지 않는다(인덱스 스캔, 실행 0.03ms). 정지 호출처 4개를 `caller_id <> ALL`로 빼도 같은 계획이다(실행 0.07ms). 정지한 호출처가 대기 작업 전부를 가지면 `mail_jobs` 전체를 읽는다(순서 인덱스를 못 쓰고 `Seq Scan`과 `Sort`, 실행 7.4ms와 13.8ms 두 사례). ADR-0007 구현 중 확정 10의 할당 초과와 같은 동작이다. 다중 인스턴스와 운영 크기는 측정하지 않았다.
+19. **운영자 작업 응답의 거부 수신자(결정 7).** `GET /ops/jobs/{jobId}`와 관리 취소 응답은 `rejectedRecipients`를 내지 않는다. 이 필드의 `address`는 거부된 수신자 평문이라 "수신자 없음"(결정 7)과 맞지 않는다. 호출처 자신의 `Job` 응답은 기존대로 준다. 건수 같은 비식별 값은 만들지 않았다.
+20. **`/ops` 인증 순서(결정 7, `callers/ops-auth-middleware.ts`).** Express는 라우트의 경로 파라미터를 가드 전에 디코딩하므로 `/ops/jobs/%` 같은 경로는 가드 전에 400이 될 수 있다. `app.use("/ops", ...)` 미들웨어가 라우트 매칭 전에 인증해 자격 없음·호출처 키·모르는 값은 401, 읽기 토큰의 변경 메서드(`GET`·`HEAD` 외)는 403으로 먼저 거절한다. 컨트롤러 가드가 같은 판정을 한 번 더 한다. 인증 없는 호출에는 없는 `/ops` 경로도 404가 아니라 401이다. 업무 endpoint의 `/jobs/%`는 인증 없이 400이다(기존 동작, 이번에 바꾸지 않았다).
 
 ## 검토한 대안
 

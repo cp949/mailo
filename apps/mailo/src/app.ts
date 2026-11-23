@@ -7,6 +7,7 @@ import {
   DEFAULT_HTTP_TIMEOUTS,
   type AppModuleOptions,
 } from "./app.module.js";
+import { CALLER_REGISTRY, createOpsAuthMiddleware } from "./callers/index.js";
 import {
   requestContext,
   type HttpRequest,
@@ -55,6 +56,10 @@ export async function createApp(
     use(
       handler: (req: HttpRequest, res: HttpResponse, next: () => void) => void,
     ): void;
+    use(
+      path: string,
+      handler: (req: HttpRequest, res: HttpResponse, next: () => void) => void,
+    ): void;
   };
   // `connectionsCheckingInterval`은 Node 런타임에는 있으나 타입 정의에 없다.
   const httpServer = app.getHttpServer() as Server & {
@@ -66,5 +71,10 @@ export async function createApp(
     httpServer.connectionsCheckingInterval = httpTimeouts.checkIntervalMs;
   server.disable("x-powered-by");
   server.use(requestContext);
+  // `/ops` 인증은 라우트 매칭 전에 한다. 경로 파라미터 디코딩 오류가 인증보다 먼저 나가지 않게 한다(ADR-0011 결정 7).
+  server.use(
+    "/ops",
+    createOpsAuthMiddleware(app.get(CALLER_REGISTRY), options.config.ops),
+  );
   return app;
 }

@@ -388,6 +388,48 @@ describe("REST 통합: 운영 REST /ops (RQ-042~044, ADR-0011)", () => {
     });
   });
 
+  describe("경로 파라미터 디코딩 오류와 인증 순서 (결정 7)", () => {
+    // 가드 앞에서 Express가 `%`를 디코딩하다 실패해도 인증 실패(401·403)가 먼저 나가야 한다.
+    const routes: Array<[string, string, "read" | "admin"]> = [
+      ["GET", "/ops/jobs/%", "read"],
+      ["POST", "/ops/jobs/%/cancel", "admin"],
+      ["PUT", "/ops/pauses/callers/%", "admin"],
+      ["DELETE", "/ops/pauses/callers/%", "admin"],
+    ];
+
+    it.each(routes)(
+      "%s %s: 자격 없음·호출처 키는 401이고 파라미터 오류를 알리지 않는다",
+      async (method, route) => {
+        for (const auth of [null, ALPHA_KEY, "unknown-token"]) {
+          const res = await call(method, route, auth);
+          expect(res.status).toBe(401);
+          expect((await json(res))["type"]).toBe(
+            "urn:mailo:problem:unauthorized",
+          );
+        }
+      },
+    );
+
+    it.each(routes)(
+      "%s %s: 읽기 토큰은 읽기 endpoint에서 400, 변경 endpoint에서 403이고 관리 토큰은 400이다",
+      async (method, route, role) => {
+        const read = await call(method, route, READ);
+        expect(read.status).toBe(role === "read" ? 400 : 403);
+        expect((await call(method, route, ONCALL)).status).toBe(400);
+        expect(await pauseRows()).toEqual([]);
+        expect(await audit()).toEqual([]);
+      },
+    );
+
+    it("기존 /jobs/% 동작은 그대로 400이다(인증된 호출처)", async () => {
+      const res = await getJson(app, "/jobs/%", ALPHA_KEY);
+      expect(res.status).toBe(400);
+      expect((await json(res))["type"]).toBe(
+        "urn:mailo:problem:validation-failed",
+      );
+    });
+  });
+
   describe("정지 목록 (결정 2·7)", () => {
     it("GET /ops/pauses는 읽기·관리 토큰에 all과 caller 정지를 정지 순서로 준다", async () => {
       await call("PUT", "/ops/pauses/callers/beta", ONCALL);

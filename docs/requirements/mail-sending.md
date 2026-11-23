@@ -64,7 +64,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
-- 검증 수치(2026-11-24 6단계 묶음 B 운영 토큰·발송 정지·감사·`/ops` 반영 뒤): `pnpm test` 단위 622건(33개 파일), `pnpm test:integration` 통합 502건(32개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. 호출처 키 `/health/ready`의 응답 동등 비교에 새 필드 `sendPaused`가 없었기 때문이고(ADR-0011 구현 중 확정 17) 기대값에 필드를 더한 뒤 그 파일(58건)이 통과했다. 이 뒤 전체 통합을 다시 실행해 위 수치를 얻었다. Dockerfile·종료 순서·파일 채널 I/O는 바꾸지 않았고 `docker-compose.yml`은 주석만 더했다. `scripts/container/verify-sigterm-file.sh`를 1회 실행했다(컨테이너 안에서 `0001`~`0008`을 적용하고 기동한 뒤 SIGTERM 종료 코드 0, 재기동 뒤 1000통 중복·유실 없음, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `verify-sigkill-duplicate.sh`는 실행하지 않았다. `scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-042~044 판정 근거).
+- 검증 수치(2026-11-24 6단계 묶음 B 운영 토큰·발송 정지·감사·`/ops` 반영 뒤): `pnpm test` 단위 622건(33개 파일), `pnpm test:integration` 통합 513건(32개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. 호출처 키 `/health/ready`의 응답 동등 비교에 새 필드 `sendPaused`가 없었기 때문이고(ADR-0011 구현 중 확정 17) 기대값에 필드를 더한 뒤 그 파일(58건)이 통과했다. 이 뒤 독립 리뷰 지적 2건(운영자 작업 응답의 거부 수신자 노출, `/ops` 경로 파라미터 디코딩 오류가 인증보다 먼저 나가는 문제, ADR-0011 구현 중 확정 19·20)을 고치고 전체 검증을 다시 실행해 위 수치를 얻었다. Dockerfile·종료 순서·파일 채널 I/O는 바꾸지 않았고 `docker-compose.yml`은 주석만 더했다. `scripts/container/verify-sigterm-file.sh`를 1회 실행했다(컨테이너 안에서 `0001`~`0008`을 적용하고 기동한 뒤 SIGTERM 종료 코드 0, 재기동 뒤 1000통 중복·유실 없음, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `verify-sigkill-duplicate.sh`는 실행하지 않았다. `scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-042~044 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 A 작업 취소 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 405건(27개 파일, 실제 PostgreSQL 17), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 이 묶음은 단위 테스트를 더하지 않았다(취소는 PostgreSQL 통합 테스트가 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 102·실패 0(S15·S15b 신규, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). Dockerfile·compose·파일 채널 I/O를 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(RQ-040·041 판정 근거).
 - 검증 수치(2026-11-23 5단계 요청별 만료 시간 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 363건(25개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. Dockerfile·compose·파일 채널 I/O·봉투 형식·샘플을 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e를 실행하지 않았다(RQ-039 판정 근거).
 - 검증 수치(2026-11-23 개발용 Mailpit profile 반영 뒤): `pnpm test` 단위 568건(31개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck` 통과, `pnpm lint` 경고·오류 0건. 소스 변경이 없어 통합 테스트는 다시 실행하지 않았다. compose 변경이라 `scripts/container/verify-sigterm-file.sh`(1000건, 종료 코드 0, 재기동 뒤 중복·유실 없음)·`verify-sigkill-duplicate.sh`(같은 Message-ID 2통, 기대대로)를 실행했다. `--profile mailpit`으로 띄운 별도 compose 프로젝트에서 Mailo→Mailpit 1건 발송을 수동 확인했다(RQ-029 판정 근거).
@@ -1452,7 +1452,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 토큰 값은 공백 없는 32자 이상이다. 비교는 상수 시간이다(해시끼리 `timingSafeEqual`, 일치 뒤에도 끝까지 비교한다).
 - 기동을 거부하는 경우: 이름 형식 위반·중복·9개 이상, 이름의 토큰 없음·규칙 위반, 토큰 값끼리 같음(읽기 포함), 호출처 API 키와 같음(레지스트리의 `authenticate`로 비교). 사유에는 변수 이름만 담고 값은 담지 않는다(RQ-027).
 - `MAILO_OPS_ADMIN_NAMES`가 없으면 관리 기능이 꺼진다. 관리 endpoint는 읽기 토큰에 403, 그 밖에 401이다.
-- 판정: 읽기 endpoint는 읽기·관리 토큰, 변경 endpoint는 관리 토큰만 받는다. 읽기 토큰으로 변경 endpoint를 부르면 403 `forbidden`, 호출처 키와 모르는 값과 자격 없음은 401이다. 모든 `/ops/*`는 호출처 키로 401이다. 업무 endpoint(`/jobs`, `/events`)에서는 두 토큰 모두 401이다.
+- 판정: 인증은 라우트 매칭 전 미들웨어가 먼저 한다(경로 파라미터 디코딩 오류가 인증보다 먼저 나가지 않는다, ADR-0011 구현 중 확정 20). 읽기 endpoint는 읽기·관리 토큰, 변경 endpoint는 관리 토큰만 받는다. 읽기 토큰으로 변경 endpoint를 부르면 403 `forbidden`, 호출처 키와 모르는 값과 자격 없음은 401이다. 모든 `/ops/*`는 호출처 키로 401이다. 업무 endpoint(`/jobs`, `/events`)에서는 두 토큰 모두 401이다.
 - `GET /ops/jobs/{jobId}`는 모든 호출처의 작업을 `Job`에서 `idempotencyKey`와 `rejectedRecipients`(거부된 수신자 주소)를 빼고 `callerId`를 더해 준다. 수신자·본문은 없다.
 - 토큰 값은 로그·감사·오류·응답에 쓰지 않는다. `/ops` 응답은 `Cache-Control: no-store`다.
 
@@ -1462,6 +1462,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - [x] 호출처 API 키와 같은 운영 토큰(읽기·관리)은 기동을 거부하고 값을 오류에 쓰지 않는다.
 - [x] Bearer 판정이 읽기(`role: read`)·관리(`role: admin`, 이름)·호출처·모르는 값·없음을 구분한다. 판정기를 넘기지 않는 업무 endpoint는 운영 토큰을 `invalid`로 본다.
 - [x] 읽기·관리·변경 endpoint마다 자격 없음·호출처 키·모르는 값 401, 읽기 토큰의 변경 403(상태·감사 불변)을 확인한다. 관리 토큰이 없는 앱과 운영 토큰이 없는 앱의 동작이 맞다.
+- [x] `/ops/jobs/%`·`/ops/jobs/%/cancel`·`/ops/pauses/callers/%`는 자격 없음·호출처 키에 401, 읽기 토큰의 변경에 403이고 인증된 호출에만 400이다.
 - [x] 두 토큰은 업무 endpoint에서 401이다.
 - [x] 응답·로그·감사 행·이벤트에 토큰 값이 없다(canary).
 - [x] `/ops` 응답(작업 조회·취소, 정지 목록, 감사, 헬스)에 수신자 주소가 없다. 거부된 수신자가 있는 `SENT` 작업의 `GET /ops/jobs/{jobId}`에도 없다(호출처 응답은 기존대로 준다).

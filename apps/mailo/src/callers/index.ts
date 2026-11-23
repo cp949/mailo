@@ -8,6 +8,7 @@ export {
   checkBearer,
   createOpsTokenMatcher,
 } from "./bearer-auth.js";
+export { createOpsAuthMiddleware } from "./ops-auth-middleware.js";
 export type {
   BearerResult,
   OperatorRole,
