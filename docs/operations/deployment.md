@@ -7,6 +7,7 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 ## 결론
 
 - 상시 서비스는 `mailo`와 `postgres` 둘뿐이다(RQ-029). 저장소 루트의 `docker-compose.yml`이 둘을 정의한다.
+- 예외로 개발용 `mailpit`이 같은 파일에 있다. profile `mailpit`을 줄 때만 켜지고 운영용이 아니다("개발용 Mailpit").
 - 설정 오류는 기동 시점에 변수 이름과 사유를 출력하고 종료 코드 1로 끝난다. 값은 출력하지 않는다.
 - `stop_grace_period`는 drain 상한(`MAILO_LEASE_SECONDS` − 10초) + 10초 이상이어야 한다. compose는 `MAILO_STOP_GRACE_PERIOD`(기본 150s)로 이 값을 정하고 앱에도 같은 값을 전달한다. 앱은 변수가 있으면 관계를 검사해 어긋나면 기동을 거부한다.
 - PostgreSQL 13 이상이 필요하다. compose는 `postgres:17-alpine`이다.
@@ -20,6 +21,7 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 | 서비스 | 이미지 | 노출 | 비고 |
 | ------ | ------ | ---- | ---- |
 | `postgres` | `postgres:17-alpine` | `127.0.0.1:${MAILO_DB_PUBLISH_PORT:-5432}` | 볼륨 `postgres-data`, `pg_isready` healthcheck, `restart: unless-stopped` |
+| `mailpit`(profile `mailpit`, 개발용) | `axllent/mailpit:v1.34.0@sha256:23a2ef85…`(digest 고정) | 웹 UI·API만 `127.0.0.1:${MAILO_MAILPIT_UI_PORT:-8025}:8025`. SMTP 1025는 compose 네트워크 안에서만 | 기본 `docker compose up`에 들어가지 않는다. `user: "65534:65534"`, `read_only: true` + `tmpfs: /tmp`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`. 받은 메일은 `/tmp`에만 있어 재시작하면 사라진다 |
 | `mailo` | 저장소 `Dockerfile` 빌드(`node:24.20.0-alpine@sha256:e67514e5…`, digest 고정) | `${MAILO_PUBLISH_HOST:-127.0.0.1}:${MAILO_PUBLISH_PORT:-3000}:3000` (기본 같은 호스트만) | non-root(`node`, UID 1000), `restart: unless-stopped`, `stop_grace_period: ${MAILO_STOP_GRACE_PERIOD:-150s}`, healthcheck(`/health/live`), `read_only: true` + `tmpfs: /tmp`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]` |
 
 - `mailo`는 `.env`를 `env_file`로 읽는다. `.env`가 없으면 compose가 실패한다. `.env.example`을 복사해 만든다(`docker compose up -d postgres`만 실행할 때도 같다).
@@ -45,6 +47,35 @@ cp .env.example .env              # 값을 실제 값으로 바꾼다(DB 본문 
 cp callers.example.json callers.json   # 해시를 실제 호출처 키의 SHA-256으로 바꾼다
 docker compose up -d --build
 ```
+
+### 개발용 Mailpit
+
+로컬 개발에서 실제 메일 서버 없이 Mailo의 발송 결과를 보는 구성이다. 운영용이 아니다. 운영에서 profile `mailpit`을 켜지 않는다.
+
+```txt
+위험도: 낮음(개발 호스트 한정, 웹 UI는 127.0.0.1에만 열린다)
+롤백: docker compose --profile mailpit stop mailpit 후 .env의 SMTP 설정을 되돌린다
+```
+
+1. `.env`에서 SMTP 설정을 Mailpit으로 바꾼다. `.env.example`의 "개발용 Mailpit" 주석 세 줄(`MAILO_SMTP_SECURITY=none`, `MAILO_SMTP_HOST=mailpit`, `MAILO_SMTP_PORT=1025`)을 풀고 기존 `MAILO_SMTP_HOST`·`MAILO_SMTP_PORT` 줄을 지운다.
+2. 인증 정보는 바꾸지 않아도 된다. Mailpit은 `MP_SMTP_AUTH_ACCEPT_ANY`·`MP_SMTP_AUTH_ALLOW_INSECURE`로 평문 세션의 아무 사용자·비밀번호나 받는다. `MAILO_SMTP_USER`·`MAILO_SMTP_PASSWORD`를 둘 다 비우면 인증 없이 보내고, 그때는 `MAILO_SMTP_FROM`이 필요하다.
+3. 띄운다: `docker compose --profile mailpit up -d --build`.
+4. 발송을 확인한다.
+   - 웹 UI: `http://127.0.0.1:8025`(`MAILO_MAILPIT_UI_PORT`로 바꾼다).
+   - API: `curl -s http://127.0.0.1:8025/api/v1/messages`의 `total`과 `messages[].Subject`.
+   - Mailo 로그에 `smtp_plaintext_enabled`(warn)가 한 줄 남는다("평문 SMTP 모드").
+5. 끈다: `docker compose --profile mailpit down`. compose v5.5.1에서는 profile 없이 `docker compose down`을 해도 `mailpit` 컨테이너가 지워졌다.
+
+- `docker compose config --services`는 profile 없이 `postgres`·`mailo`만 낸다. `--profile mailpit`을 주면 `mailpit`이 더해진다.
+- `mailo`는 `mailpit`에 `depends_on`을 두지 않는다. profile 없이도 `mailo`가 뜨게 하기 위해서다. `mailpit`이 떠 있지 않으면 호스트 이름 조회·연결이 실패해 계정 상태 오류(`CONNECTION`)가 되고, 연속 실패가 임계값에 닿으면 차단기가 열린다(`troubleshooting.md` "전역 차단기가 open일 때").
+- 확인 기록(2026-11-23, Docker 29.8.0, compose v5.5.1, 별도 compose 프로젝트): `--profile mailpit up -d --build --wait`로 세 서비스가 healthy가 됐다. `NODE_ENV=production`(compose 기본값)인 `mailo`에 `POST /jobs` 1건을 보내 `SENT`가 됐고, Mailpit `/api/v1/messages`의 `total`이 1이었다. 수동 확인이고 자동 테스트가 아니다. compose 파일의 profile·이미지 고정·포트·보안 옵션은 `config/compose-consistency.spec.ts`가 글자로 검사한다.
+
+### 호스트 DB 포트 충돌
+
+- `postgres`는 호스트 `127.0.0.1:${MAILO_DB_PUBLISH_PORT:-5432}`에 열린다. 기본값 5432는 바꾸지 않는다.
+- 개발 호스트에 다른 PostgreSQL이 5432를 쓰면 `port is already allocated`로 `postgres`가 뜨지 않는다. `.env`의 `MAILO_DB_PUBLISH_PORT`를 비어 있는 포트(예: 15432)로 바꾼다.
+- 바꾼 포트는 호스트에서 접속하는 URL(`MAILO_DATABASE_URL`, `MAILO_TEST_DATABASE_URL`)에도 같이 쓴다. 컨테이너 안 `mailo`는 `postgres:5432`로 접속하므로 바꿀 필요가 없다.
+- 비어 있는지 확인: `ss -ltn | grep ':15432 '`의 출력이 없어야 한다.
 
 ## 기동 순서와 마이그레이션
 

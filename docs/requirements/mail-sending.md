@@ -62,6 +62,7 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-23 개발용 Mailpit profile 반영 뒤): `pnpm test` 단위 568건(31개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck` 통과, `pnpm lint` 경고·오류 0건. 소스 변경이 없어 통합 테스트는 다시 실행하지 않았다. compose 변경이라 `scripts/container/verify-sigterm-file.sh`(1000건, 종료 코드 0, 재기동 뒤 중복·유실 없음)·`verify-sigkill-duplicate.sh`(같은 Message-ID 2통, 기대대로)를 실행했다. `--profile mailpit`으로 띄운 별도 compose 프로젝트에서 Mailo→Mailpit 1건 발송을 수동 확인했다(RQ-029 판정 근거).
 - 검증 수치(2026-11-23 평문 SMTP 모드 반영 뒤): `pnpm test` 단위 563건(31개 파일), 실패 0건. 관련 통합 `e2e/smtp-plaintext.integration-spec.ts`·`e2e/mail-flow.integration-spec.ts` 9건(2개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck` 통과, `pnpm lint` 경고·오류 0건. 전체 통합·컨테이너·볼륨·NFS·샘플 e2e는 실행하지 않았다(RQ-005 판정 근거).
 - 검증 수치(2026-11-23 발송 우선순위 구현 리뷰 뒤, 다음 줄의 실행보다 나중): 다음 줄(4단계 반영 뒤) 실행과 코드 동작이 같고 문서·주석만 바뀐 상태에서 다시 실행한 결과다. 같은 코드의 앞선 전체 통합 실행은 실패 0건이었으므로 아래 1건은 간헐 실패로 본다(원인 미확정). `turbo --force`로 단위 547건(31개 파일), 타입 검사·린트·빌드를 새로 실행해 통과했다. 단위 실패와 린트 경고·오류는 0건이다. 관련 통합 58건(5개 파일)은 실패 0건이다. 전체 통합은 333건 중 332건 통과·1건 실패했다. 실패는 `worker/worker-quota.integration-spec.ts`의 무제한 발송 대기에서 `waitFor 시간 초과`였다. 소스 변경 없이 실패 파일만 재실행해 3건 모두 통과했다. 최초 실패 원인은 미확정이며 전체 통합을 한 번에 통과한 결과로 기록하지 않는다. 포맷·diff 공백 검사도 통과했다. 롤백 전 미확인 Key 처리와 점유 지연 설명을 정적 검토로 보완했다. 성능 측정·실제 롤백·NFS·컨테이너·볼륨·샘플 e2e는 이번 리뷰에서 실행하지 않았다. 기존 성능 수치는 이전 수동 측정 기록이다.
 - 검증 수치(2026-11-23 4단계 발송 우선순위 반영 뒤): `pnpm test` 단위 547건(31개 파일), `pnpm test:integration` 통합 333건(22개 파일), 실패 0건. `pnpm lint` 경고·오류 0건, `pnpm typecheck` 통과. 이 묶음은 Dockerfile·compose·파일 채널 I/O·샘플을 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e를 실행하지 않았다(RQ-033~038 판정 근거).
@@ -968,14 +969,17 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - 구현과 운영 구조를 단순하게 유지한다.
 - 운영 의존성은 Mailo 앱과 PostgreSQL로 한정한다.
 - 별도 메시지 브로커와 외부 메일 서버(Postfix 등)를 두지 않는다.
+  - 예외: 개발용 SMTP 수신 서버 Mailpit은 compose profile `mailpit`으로만 켜지는 opt-in 서비스로 둔다. 기본 구성에 들어가지 않고 운영 의존성이 아니다.
 
 **수용 조건:**
 
 - [x] 기본 compose 구성에 Mailo와 PostgreSQL 외의 상시 서비스가 없다.
+- [x] 개발용 Mailpit은 profile `mailpit`을 줄 때만 켜지고, 이미지는 digest로 고정하며, 호스트에는 웹 UI만 127.0.0.1로 연다.
 
 **판정 근거:**
 
-- `docker-compose.yml` 읽기: 서비스는 `postgres`와 `mailo` 둘이다. 자동 검증은 없고 정적 확인이다.
+- `config/compose-consistency.spec.ts` "개발용 Mailpit profile": `profiles:`는 `mailpit` 서비스에만 있고(postgres·mailo에는 없음), 이미지 태그·digest 고정, 공개 포트는 UI 하나, non-root·`read_only`·`cap_drop`·`no-new-privileges`를 글자로 검사한다.
+- `docker compose config --services`(compose v5.5.1, 2026-11-23): profile 없이 `postgres`·`mailo`, `--profile mailpit`이면 `mailpit`이 더해진다. 수동 확인이다.
 - 2단계에서 npm 의존성 `jose` 6.2.18를 추가했다. JWE·JWS 암호 형식을 직접 만들지 않기 위해서다(ADR-0008 구현 중 확정 8). 운영 의존성(Mailo, PostgreSQL)은 늘지 않았다.
 
 ### RQ-030 요청 입력 검증
