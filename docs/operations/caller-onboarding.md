@@ -421,7 +421,7 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 점유 순서와 한계:
 
 - claim 호출마다 약 10%(`MAILO_CLAIM_FIFO_RATIO`, 추정 기본값)는 등급을 무시하고 가장 오래 기다린 작업을 고른다. 나머지는 `URGENT` → `HIGH` → `NORMAL` → `LOW`, 같은 등급은 오래 기다린 순서다.
-- `URGENT`는 즉시 전송을 뜻하지 않는다. 점유 시점은 빈 슬롯과 다음 점유 실행에 따라 달라진다. 슬롯이 비면 Worker가 polling 대기에서 일찍 깨어날 수 있다. 폴링 간격은 고정 지연 하한이 아니다. 진행 중 전송을 끊지 않는다.
+- `URGENT`는 즉시 전송을 뜻하지 않는다. 점유 시점은 빈 슬롯과 다음 점유 실행에 따라 달라진다. 슬롯이 비면 Worker가 polling 대기에서 일찍 깨어날 수 있다. 폴링 간격은 고정 지연 하한이 아니다. Worker가 빈 슬롯은 있으나 할 일이 없어 대기 중이면 새 `URGENT`는 다음 polling까지 기다린다. 이 대기는 `MAILO_WORKER_POLL_MS`(기본 1000ms)에 ±10% jitter를 더한 값이다(`worker/worker.ts` `pollDelay`). claim이 연속 실패하면 대기가 `pollMs × 2^n`(n 최대 10)으로 늘어난다. 진행 중 전송을 끊지 않는다.
 - 재시도 대기(`next_attempt_at`), 호출처 할당(모든 등급 합산), 차단기 `open`은 `URGENT`에도 같게 적용된다. 고정 점유 지연이나 수신함 도착, 정확히 한 번 발송은 보장하지 않는다.
 - 굶음의 한계: 오래된 작업에 주는 몫은 처리량의 일부다. 유입이 처리량보다 많은 상태가 이어지면 `LOW` 작업은 만료 시각(기본 24시간)을 넘겨 `EXPIRED`가 될 수 있다. `LOW`도 언젠가 보내야 하는 메일이면 만료 이벤트(`JOB_EXPIRED`)를 처리한다.
 - 배포 순서: Mailo의 모든 인스턴스가 이 기능을 지원하는 버전이 된 뒤에 `priority`를 보내기 시작한다. 이전 버전은 `priority`를 정의되지 않은 필드로 거부한다(REST 400, 파일 거부).

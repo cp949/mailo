@@ -207,7 +207,7 @@ SELECT gid, prepared FROM pg_prepared_xacts;   -- 끝나지 않은 prepared tran
    ```
 2. 차단기 `circuitBreaker.state`를 본다. `open`이면 `URGENT`도 점유하지 않는다. `half_open`이면 대표 작업 1건만 점유한다("전역 차단기가 open일 때").
 3. 쌓인 등급의 작업이 할당을 넘긴 호출처의 것인지 본다(`caller_quota_exceeded`, "호출처 할당 초과"). 할당은 모든 등급을 합산하므로 `URGENT`도 할당을 넘기면 점유하지 않는다.
-4. 슬롯 사용을 본다. `worker.inFlight`가 `MAILO_WORKER_CONCURRENCY`와 같은 상태가 이어지면 빈 슬롯이 없어 `URGENT`도 기다린다. 진행 중 전송은 끊지 않는다. 슬롯이 비면 Worker가 polling 대기에서 일찍 깨어날 수 있다. 점유 시점은 빈 슬롯과 다음 점유 실행에 따라 달라지며, 폴링 간격은 고정 지연 하한이 아니다.
+4. 슬롯 사용을 본다. `worker.inFlight`가 `MAILO_WORKER_CONCURRENCY`와 같은 상태가 이어지면 빈 슬롯이 없어 `URGENT`도 기다린다. 진행 중 전송은 끊지 않는다. 슬롯이 비면 Worker가 polling 대기에서 일찍 깨어날 수 있다. 점유 시점은 빈 슬롯과 다음 점유 실행에 따라 달라지며, 폴링 간격은 고정 지연 하한이 아니다. Worker가 빈 슬롯은 있으나 할 일이 없어 대기 중이면 새 `URGENT`는 다음 polling까지 기다린다. 이 대기는 `MAILO_WORKER_POLL_MS`(기본 1000ms)에 ±10% jitter를 더한 값이다(`worker/worker.ts` `pollDelay`). claim이 연속 실패하면 대기가 `pollMs × 2^n`(n 최대 10)으로 늘어난다.
 5. 재시도 대기를 본다. `next_attempt_at`이 미래인 작업은 등급과 무관하게 점유하지 않는다. 헬스 수치에도 세지 않는다.
 6. 인덱스가 유효한지 본다. `INVALID`이거나 없으면 우선순위 점유와 등급별 헬스 수치가 순차 읽기로 느려진다(정합성 문제는 없다). 검토 측정(2026-11-23, 대기 30만 건)에서 우선순위 claim이 0.08ms → 170ms(Seq Scan, 디스크 정렬), 등급별 헬스가 4.6 → 58ms였다. 적체가 더 크면 운영자 헬스의 적체 문장이 문 시간제한(2초)에 걸려 503이 될 수 있다(추정, 측정하지 않았다).
 
