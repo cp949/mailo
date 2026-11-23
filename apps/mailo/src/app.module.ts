@@ -80,6 +80,12 @@ export interface AppModuleOptions {
    * `worker`로 만든 실제 Worker에만 적용된다.
    */
   onWorkerFatal?: (reason: "poll_loop_crashed") => void;
+  /**
+   * `default`가 아닌 SMTP 계정이 구성에 있어도 기동을 허용한다. 테스트 전용이다(ADR-0013 구현 중 확정 2026-11-24 리뷰 반영).
+   * 묶음 B 전의 `claim`은 계정별 차단기·정지를 점유에 쓰지 않아 비default 계정을 운영에서 켤 수 없으므로 `createApp`이 기본으로 거부한다.
+   * `main.ts`는 이 옵션을 쓰지 않는다. 묶음 B에서 이 옵션과 거부를 함께 지운다.
+   */
+  allowNonDefaultAccounts?: boolean;
   /** HTTP 서버 시간제한. 생략하면 `DEFAULT_HTTP_TIMEOUTS`(30초)다. */
   http?: HttpServerTimeouts;
 }

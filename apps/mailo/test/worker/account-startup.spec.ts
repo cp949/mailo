@@ -130,29 +130,6 @@ describe("기동 때 계정 구성 점검(ADR-0013 결정 1·6)", () => {
     ).toEqual(["default", "mk"]);
   });
 
-  it("계정이 하나이면 accounts_not_isolated를 남기지 않고 둘 이상이면 warn으로 한 번 남긴다", () => {
-    const one = collect();
-    reportAccountConfig(
-      one.logger,
-      [account("default")],
-      [{ id: "a", accountId: "default", allowedFrom: [] }],
-    );
-    const two = collect();
-    reportAccountConfig(
-      two.logger,
-      [account("default"), account("mk")],
-      [
-        { id: "a", accountId: "default", allowedFrom: [] },
-        { id: "b", accountId: "mk", allowedFrom: [] },
-      ],
-    );
-
-    expect(one.lines.join("\n")).not.toContain("accounts_not_isolated");
-    expect(
-      two.events().filter((e) => e["event"] === "accounts_not_isolated"),
-    ).toEqual([expect.objectContaining({ level: "warn", accountCount: 2 })]);
-  });
-
   it("어떤 점검 로그에도 host·from 값이 없다(RQ-027)", () => {
     const { logger, lines } = collect();
 

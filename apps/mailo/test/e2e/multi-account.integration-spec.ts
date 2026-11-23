@@ -8,7 +8,8 @@ import {
   expect,
   it,
 } from "@jest/globals";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type pg from "pg";
@@ -124,6 +125,8 @@ describe("e2e: 다중 SMTP 계정 — 계정별 전송·고정·발신 주소 (R
         ...options.env,
       },
       callerFields: options.callers ?? { beta: { accountId: "marketing" } },
+      // 묶음 B 전의 비default 계정 기동 거부를 우회한다(테스트 전용 옵션, 거부 자체는 아래 테스트가 확인한다).
+      allowNonDefaultAccounts: true,
       ...(options.worker === false ? {} : { worker: { trustedCa: fakeA.ca } }),
     });
     return app;
@@ -393,6 +396,74 @@ describe("e2e: 다중 SMTP 계정 — 계정별 전송·고정·발신 주소 (R
       event: "account_orphan_jobs",
       accountId: "marketing",
       count: 1,
+    });
+  });
+
+  describe("묶음 B 전의 방어: 비default 계정 구성은 앱 기동을 거부한다(ADR-0013 구현 중 확정 2026-11-24 리뷰 반영)", () => {
+    function startRefused(env: NodeJS.ProcessEnv): Promise<Error | undefined> {
+      return startRestApp({
+        pool,
+        env: {
+          MAILO_SMTP_HOST: fakeA.host,
+          MAILO_SMTP_PORT: String(fakeA.port),
+          MAILO_SMTP_USER: DEFAULT_USER,
+          MAILO_SMTP_FROM: DEFAULT_FROM,
+          ...env,
+        },
+        callerFields: { beta: { accountId: "marketing" } },
+      }).then(
+        async (started) => {
+          await started.close();
+          return undefined;
+        },
+        (error: unknown) => error as Error,
+      );
+    }
+
+    it("계정 파일에 marketing이 있으면 거부하고 메시지에는 계정 ID만 있다", async () => {
+      const failure = await startRefused({
+        MAILO_SMTP_ACCOUNTS_FILE: accountsFile(),
+        MAILO_SMTP_SECRET_MARKETING: MARKETING_PASSWORD,
+        MAILO_SMTP_PASSWORD: CANARY.smtpPassword,
+      });
+
+      expect(failure).toBeDefined();
+      expect(failure!.message).toContain(
+        "SMTP 계정 marketing은 default가 아니라",
+      );
+      for (const canary of [
+        MARKETING_PASSWORD,
+        CANARY.smtpPassword,
+        MARKETING_USER,
+        DEFAULT_USER,
+      ])
+        expect(failure!.message).not.toContain(canary);
+    });
+
+    it("default만 파일로 정의하면(비default 없음) 기동한다", async () => {
+      const filePath = accountsFile([marketingAccount({ id: "default" })]);
+      app = await startRestApp({
+        pool,
+        env: {
+          MAILO_SMTP_ACCOUNTS_FILE: filePath,
+          MAILO_SMTP_SECRET_MARKETING: MARKETING_PASSWORD,
+          MAILO_SMTP_HOST: "",
+          MAILO_SMTP_PORT: "",
+          MAILO_SMTP_USER: "",
+          MAILO_SMTP_PASSWORD: "",
+          MAILO_SMTP_FROM: "",
+        },
+      });
+
+      expect(app.config.smtpAccounts.map((a) => a.id)).toEqual(["default"]);
+    });
+
+    it("main.ts는 거부를 우회하는 옵션을 쓰지 않는다", () => {
+      const main = readFileSync(
+        fileURLToPath(new URL("../../src/main.ts", import.meta.url)),
+        "utf8",
+      );
+      expect(main).not.toContain("allowNonDefaultAccounts");
     });
   });
 

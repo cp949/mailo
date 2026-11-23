@@ -440,6 +440,27 @@ describe("SMTP 계정 설정 로드(RQ-053, ADR-0013 결정 1)", () => {
       );
     });
 
+    it("공백만 다른 user(앞뒤 공백)도 같은 메일박스로 보고 거부한다", () => {
+      expectIssue(
+        withFile(
+          {
+            accounts: [
+              account(),
+              account({
+                id: "spaced",
+                auth: {
+                  user: `  ${USER_CANARY} `,
+                  secretVar: "MAILO_SMTP_SECRET_SPACED",
+                },
+              }),
+            ],
+          },
+          { MAILO_SMTP_SECRET_SPACED: PASSWORD_A },
+        ),
+        "accounts[1]가 다른 계정과 같은 host·port·user다",
+      );
+    });
+
     it("환경 변수 default와 같은 host·port·user인 파일 계정도 거부한다", () => {
       expectIssue(
         {

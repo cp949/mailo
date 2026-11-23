@@ -60,7 +60,7 @@ const TLS_MODE: Record<SmtpAccount["security"], TlsMode> = {
 
 /** 평문 모드 경고의 고정 문구. 설정 값과 인증 정보는 넣지 않는다(RQ-027). */
 const PLAINTEXT_WARNING =
-  "평문 SMTP 모드(security=none, default 계정은 MAILO_SMTP_SECURITY=none)다. SMTP 인증 정보와 본문이 암호화 없이 전송된다. 사용 판단은 운영자 책임이다";
+  "평문 SMTP 모드(MAILO_SMTP_SECURITY=none)다. SMTP 인증 정보와 본문이 암호화 없이 전송된다. 사용 판단은 운영자 책임이다";
 
 /** 설정 값을 Worker 옵션으로 바꾼다(`workerOptionsFromConfig`). */
 export function toWorkerOptions(

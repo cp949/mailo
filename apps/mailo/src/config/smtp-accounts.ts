@@ -252,10 +252,10 @@ function loadEnvAccount(
   };
 }
 
-/** 같은 메일박스 판별 키. 인증이 없는 릴레이는 사용자가 없어 키가 없다(주소만 다른 릴레이 계정은 정당할 수 있다). */
+/** 같은 메일박스 판별 키. host·user는 공백을 지우고 대소문자를 무시한다. 인증이 없는 릴레이는 사용자가 없어 키가 없다(주소만 다른 릴레이 계정은 정당할 수 있다). */
 function connectionKey(account: SmtpAccount): string | undefined {
   if (account.auth === null) return undefined;
-  return `${account.host.toLowerCase()}\n${account.port}\n${account.auth.user.toLowerCase()}`;
+  return `${account.host.trim().toLowerCase()}\n${account.port}\n${account.auth.user.trim().toLowerCase()}`;
 }
 
 /** 계정 파일을 읽어 검증한다. 파일 읽기·JSON 오류 사유에는 errno 코드만 적는다. */
