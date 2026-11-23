@@ -26,7 +26,7 @@ servers:
     description: 개발 (포트는 추정)
 tags:
   - name: Jobs
-    description: 발송 등록과 작업 조회
+    description: 발송 등록, 작업 조회, 작업 취소
   - name: Events
     description: 종결 이벤트 피드 (pull)
   - name: Health
@@ -209,6 +209,76 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /jobs/cancel:
+    post:
+      tags: [Jobs]
+      operationId: cancelJobByIdempotencyKey
+      summary: Idempotency-Key로 작업 취소
+      description: |
+        호출처 자신의 대기 작업을 취소한다(RQ-040, ADR-0011 결정 4). 작업 ID를 받지 못하는 파일 채널 호출처가 쓴다(ADR-0006 결정 1과 같은 이유).
+        요청 본문은 없다. 보내도 읽지 않는다. 동작은 `POST /jobs/{jobId}/cancel`과 같다.
+
+        - 등록되지 않은 Key, 보존 기간이 지나 삭제된 Key, 다른 호출처의 Key는 모두 404다.
+        - 취소된 작업의 Key로 같은 내용을 다시 `POST /jobs`로 보내면 200과 `CANCELED` 작업이 온다. 다른 내용이면 409다(RQ-034). 다시 보내려면 새 Key를 쓴다.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyQuery'
+      responses:
+        '200':
+          description: 취소했거나 이미 `CANCELED`였다. 현재 작업을 반환한다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+              examples:
+                canceled:
+                  $ref: '#/components/examples/JobCanceled'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/JobNotCancelable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /jobs/{jobId}/cancel:
+    post:
+      tags: [Jobs]
+      operationId: cancelJob
+      summary: 작업 ID로 작업 취소
+      description: |
+        호출처 자신의 대기 작업을 취소한다(RQ-040, ADR-0011 결정 4). 요청 본문은 없다. 보내도 읽지 않는다.
+
+        - `PENDING`과 `RETRY_WAIT`만 `CANCELED`로 바꾼다. `SENDING`은 취소하지 않는다. 진행 중인 전송을 중단하지 않는다.
+        - 취소하면 200과 `CANCELED` 작업을 반환한다. 이미 `CANCELED`이면 이벤트를 새로 쓰지 않고 같은 200을 반환한다(멱등).
+        - `SENDING`, `SENT`, `FAILED`, `EXPIRED`이면 409(`job-not-cancelable`)이고 작업은 바뀌지 않는다. 응답의 `jobStatus`가 현재 상태다.
+        - `claim`과 겹치면 한쪽만 이긴다. 취소가 늦으면 작업이 이미 `SENDING`이어서 409이고 메일이 나갈 수 있다.
+        - 취소 즉시 DB의 본문을 지운다. 행, Key, 지문은 보존 기간(종결 후 30일)까지 남는다.
+        - 취소는 호출처의 `JOB_CANCELED` 이벤트를 남긴다. 호출처가 직접 취소해도 쓴다.
+        - 다른 호출처의 작업과 없는 작업은 구분하지 않고 404다.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: 취소했거나 이미 `CANCELED`였다. 현재 작업을 반환한다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+              examples:
+                canceled:
+                  $ref: '#/components/examples/JobCanceled'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/JobNotCancelable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /events:
     get:
       tags: [Events]
@@ -293,6 +363,17 @@ paths:
                           enhancedCode: 5.4.5
                           occurredAt: '2026-11-24T07:00:01Z'
                       - eventId: '1051'
+                        type: JOB_CANCELED
+                        occurredAt: '2026-11-24T08:01:10Z'
+                        jobId: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e91
+                        idempotencyKey: outbox-8850
+                        attempts: 0
+                        recipients:
+                          to: [kim@example.com]
+                          cc: []
+                          bcc: []
+                        canceledBy: CALLER
+                      - eventId: '1052'
                         type: INTAKE_REJECTED
                         occurredAt: '2026-11-24T08:02:30Z'
                         rejectionId: '88'
@@ -301,7 +382,7 @@ paths:
                         fileSize: 412
                         sha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
                         reasonCode: MALFORMED
-                    nextCursor: MTc2MzkwMDAwMDoxMDUx
+                    nextCursor: MTc2MzkwMDAwMDoxMDUy
                     hasMore: false
                 empty:
                   summary: 새 이벤트가 없다. nextCursor는 요청의 after 값이다.
@@ -663,7 +744,7 @@ components:
               - required: [html]
     JobStatus:
       type: string
-      enum: [PENDING, SENDING, RETRY_WAIT, SENT, FAILED, EXPIRED]
+      enum: [PENDING, SENDING, RETRY_WAIT, SENT, FAILED, EXPIRED, CANCELED]
       description: |
         | 값 | 의미 |
         | -- | ---- |
@@ -673,8 +754,9 @@ components:
         | `SENT` | SMTP 서버가 메일을 수락함. 받은편지함 도착을 뜻하지 않고, 일부 수신자만 거부됐을 수 있다. |
         | `FAILED` | 영구 오류, 시도 횟수 소진, 계정 상태 오류 반복으로 중단함 |
         | `EXPIRED` | 만료 시각 도달로 중단함 |
+        | `CANCELED` | 호출처가 나가기 전에 취소함. 실패가 아니다(RQ-040) |
 
-        종결 상태는 `SENT`, `FAILED`, `EXPIRED`다. 종결 상태에서는 전이하지 않는다.
+        종결 상태는 `SENT`, `FAILED`, `EXPIRED`, `CANCELED`다. 종결 상태에서는 전이하지 않는다.
     FailureReason:
       type: string
       enum: [PERMANENT_ERROR, MAX_ATTEMPTS_EXCEEDED, ACCOUNT_ERROR_REPEATED, EXPIRED]
@@ -739,6 +821,8 @@ components:
         - sentAt
         - failedAt
         - failureReason
+        - canceledAt
+        - canceledBy
         - lastError
         - rejectedRecipients
       additionalProperties: false
@@ -773,12 +857,21 @@ components:
         failedAt:
           type: [string, 'null']
           format: date-time
-          description: 실패 종결 시각. `FAILED`와 `EXPIRED`일 때만 값이 있다.
+          description: 실패 종결 시각. `FAILED`와 `EXPIRED`일 때만 값이 있다. `CANCELED`에서는 `null`이다.
         failureReason:
           oneOf:
             - $ref: '#/components/schemas/FailureReason'
             - type: 'null'
-          description: '`FAILED`와 `EXPIRED`일 때만 값이 있다.'
+          description: '`FAILED`와 `EXPIRED`일 때만 값이 있다. `CANCELED`에서는 `null`이다.'
+        canceledAt:
+          type: [string, 'null']
+          format: date-time
+          description: 취소 시각. `CANCELED`일 때만 값이 있다.
+        canceledBy:
+          type: [string, 'null']
+          enum: [CALLER, OPERATOR, null]
+          description: |
+            취소한 주체. `CANCELED`일 때만 값이 있다. `CALLER`는 호출처 API로, `OPERATOR`는 운영자가 취소한 경우다. 운영자 이름은 노출하지 않는다.
         lastError:
           oneOf:
             - $ref: '#/components/schemas/LastError'
@@ -791,7 +884,7 @@ components:
           description: '`SENT`이고 일부 수신자가 거부됐을 때만 값이 있다. 그 밖에는 빈 배열이다.'
     EventType:
       type: string
-      enum: [JOB_SENT, JOB_FAILED, JOB_EXPIRED, INTAKE_REJECTED]
+      enum: [JOB_SENT, JOB_FAILED, JOB_EXPIRED, JOB_CANCELED, INTAKE_REJECTED]
     Recipients:
       type: object
       required: [to, cc, bcc]
@@ -825,8 +918,8 @@ components:
     JobEvent:
       title: 작업 종결 이벤트
       description: |
-        `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`. 작업의 종결 전이와 같은 트랜잭션에서 기록한다.
-        주기 sweep의 `EXPIRED` 전이도 같다.
+        `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `JOB_CANCELED`. 작업의 종결 전이와 같은 트랜잭션에서 기록한다.
+        주기 sweep의 `EXPIRED` 전이도 같다. `JOB_CANCELED`는 호출처가 직접 취소해도 쓴다. outbox를 이벤트로 닫는 호출처가 취소를 알아야 하기 때문이다.
       allOf:
         - $ref: '#/components/schemas/EventBase'
         - type: object
@@ -838,7 +931,7 @@ components:
             - recipients
           properties:
             type:
-              enum: [JOB_SENT, JOB_FAILED, JOB_EXPIRED]
+              enum: [JOB_SENT, JOB_FAILED, JOB_EXPIRED, JOB_CANCELED]
             jobId:
               type: string
               format: uuid
@@ -863,6 +956,10 @@ components:
               items:
                 $ref: '#/components/schemas/RejectedRecipient'
               description: '`JOB_SENT`에만 있다. 거부된 수신자가 없으면 생략하거나 빈 배열이다.'
+            canceledBy:
+              type: string
+              enum: [CALLER, OPERATOR]
+              description: '`JOB_CANCELED`에만 있다. `Job.canceledBy`와 같다. `JOB_CANCELED`에는 `failureReason`, `lastError`, `rejectedRecipients`가 없다.'
     IntakeRejectedEvent:
       title: 수집 거부 이벤트
       description: |
@@ -945,6 +1042,7 @@ components:
           JOB_SENT: '#/components/schemas/JobEvent'
           JOB_FAILED: '#/components/schemas/JobEvent'
           JOB_EXPIRED: '#/components/schemas/JobEvent'
+          JOB_CANCELED: '#/components/schemas/JobEvent'
           INTAKE_REJECTED: '#/components/schemas/IntakeRejectedEvent'
     EventPage:
       type: object
@@ -1198,6 +1296,7 @@ components:
             - urn:mailo:problem:unauthorized
             - urn:mailo:problem:not-found
             - urn:mailo:problem:idempotency-conflict
+            - urn:mailo:problem:job-not-cancelable
             - urn:mailo:problem:payload-too-large
             - urn:mailo:problem:unsupported-media-type
             - urn:mailo:problem:service-unavailable
@@ -1211,6 +1310,7 @@ components:
             | `unauthorized` | 401 |
             | `not-found` | 404 |
             | `idempotency-conflict` | 409 |
+            | `job-not-cancelable` | 409, `SENDING`이거나 종결된 작업의 취소 |
             | `payload-too-large` | 413 |
             | `unsupported-media-type` | 415 |
             | `service-unavailable` | 503 |
@@ -1231,6 +1331,18 @@ components:
           items:
             $ref: '#/components/schemas/ValidationErrorItem'
           description: '`validation-failed`일 때만 있다.'
+    JobNotCancelableProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [jobStatus]
+          properties:
+            jobStatus:
+              allOf:
+                - $ref: '#/components/schemas/JobStatus'
+              description: |
+                작업의 현재 상태. `SENDING`, `SENT`, `FAILED`, `EXPIRED` 중 하나다. 취소 요청이 만든 값이 아니다.
+                RFC 9457의 `status`(HTTP 상태 코드)와 이름을 구분했다.
     IdempotencyConflictProblem:
       allOf:
         - $ref: '#/components/schemas/Problem'
@@ -1254,6 +1366,8 @@ components:
         sentAt: null
         failedAt: null
         failureReason: null
+        canceledAt: null
+        canceledBy: null
         lastError: null
         rejectedRecipients: []
     JobRetryWait:
@@ -1269,6 +1383,8 @@ components:
         sentAt: null
         failedAt: null
         failureReason: null
+        canceledAt: null
+        canceledBy: null
         lastError:
           category: TRANSIENT
           smtpCode: 421
@@ -1288,6 +1404,8 @@ components:
         sentAt: '2026-11-23T09:31:12Z'
         failedAt: null
         failureReason: null
+        canceledAt: null
+        canceledBy: null
         lastError:
           category: TRANSIENT
           smtpCode: 421
@@ -1297,6 +1415,23 @@ components:
           - address: park@example.com
             smtpCode: 550
             enhancedCode: 5.1.1
+    JobCanceled:
+      summary: 호출처가 취소한 작업
+      value:
+        jobId: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e90
+        idempotencyKey: outbox-8841
+        status: CANCELED
+        priority: NORMAL
+        attempts: 0
+        createdAt: '2026-11-23T09:30:00Z'
+        expiresAt: '2026-11-24T09:30:00Z'
+        sentAt: null
+        failedAt: null
+        failureReason: null
+        canceledAt: '2026-11-23T09:30:20Z'
+        canceledBy: CALLER
+        lastError: null
+        rejectedRecipients: []
     JobFailed:
       summary: 영구 오류로 실패
       value:
@@ -1310,6 +1445,8 @@ components:
         sentAt: null
         failedAt: '2026-11-23T09:31:40Z'
         failureReason: PERMANENT_ERROR
+        canceledAt: null
+        canceledBy: null
         lastError:
           category: PERMANENT
           smtpCode: 550
@@ -1425,6 +1562,24 @@ components:
                 status: 404
                 detail: 해당 작업을 찾을 수 없다.
                 instance: urn:uuid:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
+    JobNotCancelable:
+      description: |
+        작업이 `SENDING`이거나 종결 상태(`SENT`, `FAILED`, `EXPIRED`)라서 취소할 수 없다. 작업은 바뀌지 않는다.
+        `jobStatus`가 현재 상태다. 이미 `CANCELED`인 작업은 이 응답이 아니라 200이다.
+        relay는 재시도하지 않는다. `SENDING`이면 잠시 뒤 `GET /jobs/{jobId}`로 결과를 확인한다.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/JobNotCancelableProblem'
+          examples:
+            sending:
+              value:
+                type: urn:mailo:problem:job-not-cancelable
+                title: Job not cancelable
+                status: 409
+                detail: 발송 중이거나 이미 종결된 작업은 취소할 수 없다.
+                instance: urn:uuid:4d3c2b1a-0f9e-4d8c-b7a6-5e4f3a2b1c0d
+                jobStatus: SENDING
     PayloadTooLarge:
       description: 원시 요청이 2 MiB(추정 기본값)를 넘었다. relay는 재시도하지 않는다.
       content:

@@ -48,7 +48,8 @@
 | 네트워크 오류, 타임아웃, 5xx(503 포함) | 같은 Key로 재시도한다. 서버가 등록했는지 알 수 없으므로 Key가 중복을 막는다 |
 | 400, 413, 415 | 재시도하지 않는다. 요청을 고쳐야 한다. 실패로 기록하고 알린다 |
 | 401 | 재시도하지 않는다. 자격 문제이므로 알린다. 고친 뒤 재전송하는 절차는 사용처가 정한다 |
-| 409 | 재시도하지 않는다. 영구 실패로 기록하고 운영 알림을 낸다. Key를 재사용하는 호출처 버그를 의심한다 |
+| 409(`idempotency-conflict`) | 재시도하지 않는다. 영구 실패로 기록하고 운영 알림을 낸다. Key를 재사용하는 호출처 버그를 의심한다 |
+| 409(`job-not-cancelable`) | 취소 요청에만 나온다. 재시도하지 않는다. 응답의 `jobStatus`로 현재 상태를 확인한다 |
 | 429 | 쓰지 않는다. 등록 단계에는 쿼터가 없다 |
 
 - 재시도 간격은 exponential backoff에 jitter를 더하고 상한을 둔다. 수치는 사용처가 정한다.
@@ -57,7 +58,30 @@
 - 발송은 at-least-once다. SMTP 수락 직후 장애가 나면 같은 메일이 두 번 갈 수 있다(RQ-013).
 - `SENT`는 SMTP 서버의 수락이다. 받은편지함 도착이 아니고, 일부 수신자가 거부됐을 수 있다. `rejectedRecipients`를 확인한다.
 - 이벤트는 `GET /events`를 약 30초(추정) 간격으로 폴링해 받는다. cursor를 저장하고 `eventId`로 멱등하게 처리한다.
+- 호출처가 취소한 작업은 `CANCELED`이고 `JOB_CANCELED` 이벤트가 온다. 실패가 아니므로 재시도하지 않는다. 같은 Key로 다시 보내면 취소된 작업이 돌아오므로 다시 보내려면 새 Key를 쓴다(아래 "작업 취소").
 - 파일 채널 호출처는 `GET /jobs?idempotencyKey=`가 404이면 이벤트 피드에서 같은 Key의 `INTAKE_REJECTED`를 찾는다.
+
+## 작업 취소
+
+호출처는 자기 작업 중 `PENDING`·`RETRY_WAIT`만 취소할 수 있다(RQ-040, ADR-0011 결정 4).
+
+| 요청 | 용도 |
+| ---- | ---- |
+| `POST /jobs/{jobId}/cancel` | 작업 ID를 아는 호출처 |
+| `POST /jobs/cancel?idempotencyKey=<Key>` | 작업 ID를 모르는 파일 채널 호출처. 본문은 없다 |
+
+| 결과 | 응답 |
+| ---- | ---- |
+| 취소했다 | 200과 `Job`(`status: CANCELED`, `canceledAt`, `canceledBy: CALLER`) |
+| 이미 `CANCELED`다 | 200과 같은 `Job`. 이벤트를 새로 쓰지 않는다(멱등) |
+| `SENDING`, `SENT`, `FAILED`, `EXPIRED`다 | 409 `job-not-cancelable`. `jobStatus`가 현재 상태다. 작업은 바뀌지 않는다 |
+| 없거나 다른 호출처의 작업이다 | 404. 두 경우를 구분하지 않는다 |
+
+- `SENDING`은 취소하지 않는다. 전송 중에 취소가 늦으면 메일이 나갈 수 있다. 호출처는 409의 `jobStatus`와 이후의 `SENT`·`FAILED` 이벤트로 결과를 확인한다.
+- 취소 즉시 DB의 본문을 지운다. 취소는 되돌릴 수 없다.
+- 취소된 작업의 Key로 같은 내용을 `POST /jobs`로 보내면 200과 `CANCELED` 작업이 온다. 다른 내용이면 409다(RQ-034). 새 메일은 새 Key로 보낸다.
+- outbox를 이벤트로 닫는 호출처는 `JOB_CANCELED`(`canceledBy`: `CALLER`·`OPERATOR`)를 종결로 처리한다. 호출처가 직접 취소해도 이 이벤트가 온다.
+- 롤링 배포 중 구버전 인스턴스는 `CANCELED`를 모르는 값 그대로 내보내고 `GET /events?type=JOB_CANCELED`를 400으로 거부한다. 호출처는 아래 "모르는 값" 규칙을 지킨 뒤에 취소 API를 쓴다(`docs/operations/caller-onboarding.md`).
 
 ## 호출처가 모르는 값을 만났을 때
 
@@ -97,12 +121,12 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 응답.
 
 - 등록(202, 200)과 조회는 같은 `Job` 스키마를 쓰고 `Location: /jobs/{jobId}`를 반환한다. 본문과 수신자는 포함하지 않는다.
-- `Job` 필드: `jobId`, `idempotencyKey`, `status`, `priority`, `attempts`, `createdAt`, `expiresAt`, `sentAt`, `failedAt`, `failureReason`, `lastError`, `rejectedRecipients`.
+- `Job` 필드: `jobId`, `idempotencyKey`, `status`, `priority`, `attempts`, `createdAt`, `expiresAt`, `sentAt`, `failedAt`, `failureReason`, `canceledAt`, `canceledBy`, `lastError`, `rejectedRecipients`. `CANCELED`에서 `sentAt`·`failedAt`·`failureReason`은 `null`이고 `canceledAt`·`canceledBy`가 값을 가진다. 다른 상태에서 `canceledAt`·`canceledBy`는 `null`이다.
 - `attempts`는 차단기를 연 계정 상태 오류 시도를 뺀 횟수다. 차단기가 `closed`로 남은 계정 상태 오류는 포함한다(ADR-0007 구현 중 확정 8).
 - `failureReason`은 `PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`, `EXPIRED`다.
 - `lastError`는 `category`(`TRANSIENT`, `PERMANENT`, `ACCOUNT`, `LEASE_EXPIRED`), `smtpCode`, `enhancedCode`, `occurredAt`이다. SMTP 응답 텍스트는 API에 노출하지 않는다.
 - `rejectedRecipients`는 `address`, `smtpCode`, `enhancedCode`다. 응답 텍스트는 없다.
-- 오류 `type`은 `urn:mailo:problem:<이름>` 8종이다. 401은 `WWW-Authenticate: Bearer`를 반환한다.
+- 오류 `type`은 `urn:mailo:problem:<이름>` 9종이다. `job-not-cancelable`(409)은 `jobStatus`(작업의 현재 상태)를 더한다. RFC 9457의 `status`(HTTP 상태 코드)와 이름이 겹치지 않게 했다. 401은 `WWW-Authenticate: Bearer`를 반환한다.
 - 예상하지 못한 서버 오류(DB 장애 포함)는 모두 503(`service-unavailable`)이다. 500은 쓰지 않는다. 호출처는 같은 Key로 재시도한다(ADR-0005 결정 5).
 - `priority`(선택, `LOW`·`NORMAL`·`HIGH`·`URGENT`, 대소문자 구분, 생략은 `NORMAL`)가 그 밖의 값이면 `/priority` `INVALID_FORMAT`이다. 암호화 평문 안의 `priority`는 `/content` `UNKNOWN_FIELD`다(RQ-033).
 - `ttlSeconds`(선택, 정수 60 이상 서버 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS` 이하, 생략은 서버 기본 TTL)가 정수가 아니면 `/ttlSeconds` `INVALID_FORMAT`, 범위 밖 정수면 `/ttlSeconds` `OUT_OF_RANGE`다. 만료 시각은 응답의 `expiresAt`이다. 암호화 평문 안의 `ttlSeconds`는 `/content` `UNKNOWN_FIELD`다(RQ-039).
@@ -116,6 +140,7 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 이벤트 피드.
 
 - 응답은 `{events, nextCursor, hasMore}`다. 이벤트가 없으면 `nextCursor`는 요청의 `after`이고, `after`도 없었으면 `null`이다. `hasMore`를 추가했다.
+- 이벤트 종류는 `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `JOB_CANCELED`, `INTAKE_REJECTED`다. `JOB_CANCELED`는 `canceledBy`(`CALLER`·`OPERATOR`)를 더하고 `failureReason`·`lastError`·`rejectedRecipients`는 없다.
 - `type` 필터는 반복해서 여러 종류를 받는다. cursor는 필터와 무관하므로 필터 조합마다 따로 저장한다.
 - `limit`은 기본 100, 최대 500이다. cursor는 최대 256자다.
 - `eventId`는 문자열이고 순서 의미가 없다. 이벤트의 `recipients`는 `to`, `cc`, `bcc`를 모두 담는다.
