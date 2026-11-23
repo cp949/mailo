@@ -38,7 +38,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0010](../adr/0010-per-request-job-ttl.md): 요청별 만료 시간 `ttlSeconds`, 허용 범위와 상한 설정, 지문의 `policy.ttlSeconds`, 만료 의미, 보존 기간 기동 검사, 배포 순서. ADR-0002 결정 7의 요청별 지정 미결정을 정한다.
 - [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 결과 불명 표시(`outcomeUncertain`), 배포·롤백 순서. 구현 묶음 A(작업 취소, RQ-040·041), 묶음 B(토큰 분리, 발송 정지, 감사, `/ops` REST, 관리 취소, RQ-042~044), 묶음 C(피드 공백, 수신 도메인 허용 목록, CLI, RQ-045~047), 묶음 D(`outcomeUncertain`, RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다.
 - [ADR-0012](../adr/0012-metrics-endpoint.md): `GET /metrics`(읽기 토큰만, 관리 토큰 403), 전역 gauge와 인스턴스 counter 구분, 라벨 규칙과 시리즈 상한, TTL 캐시·단일 비행, 수동 텍스트 직렬화, 감사 행 수 지표. 구현했다(RQ-049~052).
-- [ADR-0013](../adr/0013-multiple-smtp-accounts.md): 다중 SMTP 계정(`MAILO_SMTP_ACCOUNTS_FILE`, `default` 출처 규칙), 호출처의 `accountId`와 작업의 등록 때 계정 고정, 계정 단위 점유·차단기·정지·24시간 할당, 마이그레이션 `0010`~`0016`, 관측과 운영 표면, 발신 주소 허용 집합. 구현 전이다. RQ-053 이후를 구현 때 추가한다.
+- [ADR-0013](../adr/0013-multiple-smtp-accounts.md): 다중 SMTP 계정(`MAILO_SMTP_ACCOUNTS_FILE`, `default` 출처 규칙), 호출처의 `accountId`와 작업의 등록 때 계정 고정, 계정 단위 점유·차단기·정지·24시간 할당, 마이그레이션 `0010`~`0016`, 관측과 운영 표면, 발신 주소 허용 집합. 구현 묶음 A(RQ-053~056)를 구현했고 B~D는 구현 전이다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 
@@ -66,6 +66,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 7단계 묶음 A 다중 SMTP 계정 모델 반영 뒤): `pnpm test` 단위 858건(47개 파일), `pnpm test:integration` 통합 708건(48개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 기존 테스트의 변경은 네 가지다. (1) `config.smtp`가 `config.smtpAccounts`로 바뀌어 `config/load-config.spec.ts`·`http/rest-intake.integration-spec.ts`·`support/file-channel.ts`의 접근 경로와 필드 이름(`defaultFrom`→`from`)을 고쳤다. (2) `RegisterInput.accountId`가 필수가 되어 `support/queue-fixtures.ts`의 입력과 `envelope/open-request.spec.ts`의 인자에 `accountId`를 더했다. (3) `db/ops-controls.integration-spec.ts`·`db/event-purges.integration-spec.ts`는 0001~0007·0001~0008만 적용한 schema에 작업 행을 넣는데 `register`가 `account_id`를 쓰므로 컬럼 없는 옛 형태의 `INSERT`(`createLegacyJob`)로 바꿨다(단언은 그대로). (4) `db/event-purges.integration-spec.ts`의 "전체 적용 시 0009가 마지막"은 0010·0011이 이어지므로 "0008 바로 뒤에 0009"로 고쳤다. 나머지 기존 단언은 바꾸지 않았다. 컨테이너 스크립트 `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`를 실행했다(`docker-compose.yml`에 주석만 더했고 코드 경로가 Worker 조립을 지나므로, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다): `verify-sigterm-file.sh`는 SIGTERM 뒤 재기동에서 작업 1000건이 모두 `SENT`이고 SMTP 수신 1000통(유일 `Message-ID` 1000), 남은 파일 0이었다. `verify-sigkill-duplicate.sh`는 관찰 스크립트이며 같은 `Message-ID`로 2통이 SMTP에 도착했다(`attempts=2`, 중복 발송 재현, RQ-013의 기존 한계와 같다). 두 스크립트 모두 단일 계정(`default`) 구성이다. `verify-metrics.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음. 샘플은 호출처 API 계약이 바뀌지 않았다). 읽기 전용 컨테이너의 계정 파일 마운트와 `_FILE` 비밀 읽기, 실제 Gmail 계정 둘은 실행하지 않았다(RQ-053~056 판정 근거).
 - 검증 수치(2026-11-24 8단계 관측성 `/metrics` 반영 뒤): `pnpm test` 단위 776건(43개 파일), `pnpm test:integration` 통합 663건(44개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합은 한 번의 묶음으로 실행했고 실패한 파일이 없었다. 기존 테스트의 단언은 한 곳만 바꿨다(취소 결과 `canceled`에 `callerId` 필드가 더해져 `queue/cancel.integration-spec.ts`의 기대값 두 곳이 새 필드를 포함한다, ADR-0012 구현 중 확정 1). Dockerfile·종료 순서·파일 채널 I/O·`docker-compose.yml`은 바꾸지 않았다(`.env.example`은 주석만 더했다). `scripts/container/verify-metrics.sh`를 실행했다(read_only 컨테이너에서 `/metrics` 응답·토큰 행렬·`promtool check metrics`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 실제 Prometheus 스크레이프와 `promtool check rules`는 일회성 확인이다(ADR-0012 구현 중 확정 11). `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-049~052 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 D `outcomeUncertain` 반영 뒤): `pnpm test` 단위 709건(38개 파일, 이 묶음은 단위 테스트를 더하지 않았다), `pnpm test:integration` 통합 590건(40개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. `Job`의 키 목록을 고정한 단언에 새 필드 `outcomeUncertain`이 없었기 때문이고(RQ-048이 정한 계약 필드) 기대 키 목록에 필드를 더한 뒤 그 파일(58건)이 통과했다. 샘플은 Gradle 단위 34건 통과(`EventFeedPollerApplyTest`에 1건 더함), `samples/spring-boot-relay/verify/run-e2e.sh` 통과 123·실패 0(S3에 새 필드 검사 3항목을 더했다, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 샘플의 main 코드는 바꾸지 않았다. 마이그레이션·Dockerfile·compose·종료 순서·파일 채널 I/O는 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(RQ-048 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI 반영 뒤): `pnpm test` 단위 709건(38개 파일), `pnpm test:integration` 통합 564건(38개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 한 번의 검증 묶음이고 같은 소스에서 다시 실행하지 않았다. Dockerfile·compose·종료 순서·파일 채널 I/O는 바꾸지 않았고 `.env.example`은 주석만 더했다(`config/compose-consistency.spec.ts`가 새 변수 이름을 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 120·실패 0(S16 신규 18항목, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 읽기 전용 루트 컨테이너(`--read-only --cap-drop ALL --security-opt no-new-privileges`) 안의 CLI 실행을 1회 확인했다(`docker run`·`docker exec`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(해당 영역 변경 없음, RQ-045~047 판정 근거).
@@ -94,7 +95,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 | 5단계 | 요청별 만료 시간(RQ-039, ADR-0010) |
 | 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041), 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044), 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI(RQ-045~047), 묶음 D 결과 불명 표시(RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다 |
 | 8단계 | 관측성(ADR-0012). `GET /metrics`(RQ-049), 이름·라벨 규칙(RQ-050), 전역 gauge(RQ-051), 인스턴스 counter·gauge(RQ-052). 마이그레이션 없음 |
-| 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델, B 계정 단위 점유, C 운영 표면, D 호출처 동시 상한(선택). RQ-053 이후를 구현 때 추가한다. 구현 전 |
+| 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`)을 구현했다. B 계정 단위 점유(`0012`~`0016`), C 운영 표면, D 호출처 동시 상한(선택)은 구현 전이다. RQ-057 이후를 해당 묶음에서 추가한다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -954,7 +955,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
   - 파일 폴더 사용 여부.
   - 서명 사용 여부(`required` 또는 `none`)와 서명 키 참조.
   - 선택: 호출처별 24시간 발송 할당 `sendQuota24h`(RQ-032). 양의 정수이고 생략하면 무제한이다.
-  - 선택: 호출처가 요청의 `from`으로 쓸 수 있는 발신 주소 목록 `allowedFrom`(주소 최대 20개, 생략하면 빈 목록). 허용 집합은 기본 발신 주소(`MAILO_SMTP_FROM`, 없으면 `MAILO_SMTP_USER`)에 이 목록을 더한 것이다(ADR-0008 구현 중 확정 12).
+  - 선택: 호출처가 요청의 `from`으로 쓸 수 있는 발신 주소 목록 `allowedFrom`(주소 최대 20개, 생략하면 빈 목록). 허용 집합은 호출처 계정의 기본 발신 주소(`default`는 `MAILO_SMTP_FROM`, 없으면 `MAILO_SMTP_USER`)에 이 목록을 더한 것이다(ADR-0008 구현 중 확정 12, ADR-0013 결정 6, RQ-055). 호출처의 계정은 선택 필드 `accountId`가 정한다(RQ-054).
   - 서명 키(JWS)는 호출처 사이·키 사이·DB 본문 키링·지문 키링과 같은 바이트이면 기동 시 거부한다. 같은 바이트가 반복되거나 공개된 샘플 키는 production에서 거부한다(ADR-0008 구현 중 확정 13).
 - REST의 `caller_id`와 파일 폴더 이름은 같은 값이다. 채널 간 `Idempotency-Key` 중복 방지의 전제다.
 - REST 인증은 호출처별 API 키다. `Authorization: Bearer <키>`로 보낸다.
@@ -1021,7 +1022,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
   - `Idempotency-Key` 1~128자(RQ-011).
 - 첨부파일은 1·2단계에서 지원하지 않는다. `attachments` 필드가 오면 REST는 400, 파일은 수집 거부로 처리한다. 필요해지면 별도 ADR로 정한다.
 - 제목과 본문이 암호화돼 있으면 복호화한 뒤 입력 검증을 한다(ADR-0008 결정 3). 원시 크기 상한은 복호화 전에 적용한다.
-- 요청의 `from`은 호출처의 허용 발신 주소(기본 발신 주소 + `allowedFrom`, RQ-028)에 있어야 한다. 비교는 대소문자를 무시한다. `from`을 생략하면 기본 발신 주소를 쓴다. 집합 밖이면 REST는 400 `FROM_NOT_ALLOWED`, 파일은 `VALIDATION_FAILED` 거부다. 이미 등록된 Key의 재전송은 이 검사를 받지 않고 기존 작업(같은 내용) 또는 409(다른 내용)를 돌려받는다.
+- 요청의 `from`은 호출처의 허용 발신 주소(호출처 계정의 기본 발신 주소 + `allowedFrom`, RQ-028·055)에 있어야 한다. 비교는 대소문자를 무시한다. `from`을 생략하면 작업 계정의 기본 발신 주소를 쓴다. 집합 밖이면 REST는 400 `FROM_NOT_ALLOWED`, 파일은 `VALIDATION_FAILED` 거부다. 이미 등록된 Key의 재전송은 이 검사를 받지 않고 기존 작업(같은 내용) 또는 409(다른 내용)를 돌려받는다.
 - `replyTo`는 주소 형식만 검증하고 허용 범위를 두지 않는다(위험은 회신 유도 피싱이다, ADR-0008 구현 중 확정 12).
 
 **수용 조건:**
@@ -1841,6 +1842,136 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 - 구현: `worker/metrics.ts`, `worker/worker.ts`, `file-channel/poller.ts`, `intake/intake.service.ts`, `ops/ops.service.ts`, `queue/transitions.ts`.
 - 남은 미검증: 실제 Gmail 응답에서의 `stage`·`reason` 분포, 장시간 부하에서의 counter 정확도, 커밋과 증가 사이의 종료로 놓치는 한 건.
 
+## 16. 다중 SMTP 계정
+
+결정은 [ADR-0013](../adr/0013-multiple-smtp-accounts.md)이고 구현은 묶음 A(계정 모델)·B(계정 단위 점유)·C(운영 표면)·D(호출처 동시 상한, 선택)로 나눈다. 아래 RQ-053~056은 묶음 A의 범위다. 계정 단위 점유·차단기 격리·정지·24시간 할당(묶음 B), `/metrics`·`/health/ready`·`/ops` 계정 표면(묶음 C)은 이 RQ에 없고 해당 묶음을 구현할 때 RQ-057 이후로 추가한다. 묶음 A는 계정이 `default` 하나일 때 현행과 같은 동작이다.
+
+### RQ-053 SMTP 계정 정의와 설정 로드
+
+- [ ] **진행 상태:** 진행 중 (7단계 묶음 A)
+
+**요구사항:**
+
+- 계정은 `MAILO_SMTP_ACCOUNTS_FILE`의 JSON과 기존 `MAILO_SMTP_*`로 정의한다. `default` 계정의 출처는 정확히 하나다(ADR-0013 결정 1).
+  - 파일 없음: `MAILO_SMTP_*`가 `default`를 정의한다(`MAILO_SMTP_HOST` 필수). 단일 계정 배포는 설정을 바꾸지 않는다.
+  - 파일 있음, `MAILO_SMTP_HOST` 있음: `default`는 환경 변수 정의이고 파일에 `id: "default"`가 있으면 거부한다.
+  - 파일 있음, `MAILO_SMTP_HOST` 없음: `default`는 파일에 있으면 그것이고 없으면 `default` 계정이 없다. 이때 `MAILO_SMTP_USER`·`PASSWORD`·`FROM`·`PORT`·`SECURITY`가 있으면 거부한다.
+- 파일 형식은 호출처 레지스트리와 같은 방식이다. 값은 JSON에 두지 않고 변수 이름(`auth.secretVar`)만 둔다. 값은 `<변수>_FILE`(우선) 또는 `<변수>`로 받는다.
+- 계정 ID는 `^[a-z0-9][a-z0-9_-]{0,31}$`이고 `unregistered`는 예약어다. SMTP 사용자 주소는 ID가 될 수 없다(RQ-027).
+- 기동 검증: 구조·모르는 필드·ID 형식·중복, host·port·security·timeout(lease 미만), 비밀 변수 존재·형식(`MAILO_SMTP_SECRET_*`, `_FILE` 금지)·중복, `from` 형식, 같은 `(host, port, user)` 중복(인증 계정만), 계정 수 20개 이하·`MAILO_WORKER_CONCURRENCY` 이하. 오류에는 위치와 고정 사유만 담는다. host·user·from·비밀번호는 담지 않는다.
+- `sendQuota24h`·`concurrency`는 형식만 검증하고 묶음 A는 점유에 쓰지 않는다. 설정하면 기동 때 `account_limits_not_enforced`(warn)를 남긴다. 계정이 둘 이상이면 `accounts_not_isolated`(warn)를 남긴다(ADR-0013 구현 중 확정 1).
+- 어느 호출처도 쓰지 않는 계정은 허용하고 `account_unused`(info)를 남긴다. `security: "none"` 계정은 `smtp_plaintext_enabled`(warn)에 `accountId`를 싣는다(RQ-005).
+
+**수용 조건:**
+
+- [x] `default` 출처 4상태와 잔여 `MAILO_SMTP_*` 거부, 환경 변수 `default`와 파일 `default`의 중복 거부.
+- [x] 계정 ID 형식(대문자·기호·길이·예약어·주소 형태 거부), 필드 규칙(포트·보안·대기 시간·`from`·`auth`), 모르는 필드, 파일 읽기·JSON 오류.
+- [x] 비밀 변수: 없음, `_FILE` 우선, `_FILE` 읽기 실패는 환경 변수로 돌아가지 않음, 두 계정의 같은 변수, 접두사·`_FILE` 형식 오류.
+- [x] 같은 `(host, port, user)`(대소문자 무시, 환경 변수 `default`와도) 거부. 계정 수 상한 20과 `MAILO_WORKER_CONCURRENCY`.
+- [x] 오류 메시지에 host·user·비밀번호가 없다. 비밀번호는 `Secret`이라 설정 객체의 `inspect`·`JSON.stringify`에 나오지 않는다.
+- [x] 기존 단일 계정 설정(`MAILO_SMTP_*`만)은 `default` 하나로 기존과 같은 값을 만든다.
+- [ ] 읽기 전용 루트 컨테이너에서 계정 파일 마운트와 `_FILE` 비밀 읽기를 실행하지 않았다.
+- [ ] 실제 Gmail·Workspace 계정 둘 이상으로 인증·전송을 확인하지 않았다.
+
+**판정 근거:**
+
+- `config/smtp-accounts.spec.ts`(단위, 임시 파일), `config/load-config.spec.ts`(기존 단일 계정 값), `worker/account-startup.spec.ts`(기동 점검 로그와 값 비노출).
+- RED 확인(2026-11-24): 로더는 구현 뒤에 테스트를 썼으므로 구현 전 실패 기록이 없다. 대신 `default` 중복 검사와 예약어 검사를 일시적으로 끈 변이에서 3건이 실패했다(테스트가 규칙을 고정한다는 확인, 변이는 되돌렸다).
+- 구현: `config/smtp-accounts.ts`, `config/load-config.ts`, `worker/account-report.ts`.
+- 남은 미검증: 위 두 항목, 계정 수 상한 20(추정), 계정 파일 변경의 핫 리로드 없음(재시작 필요).
+
+### RQ-054 호출처의 계정과 등록 때 계정 고정
+
+- [ ] **진행 상태:** 진행 중 (7단계 묶음 A)
+
+**요구사항:**
+
+- 호출처 레지스트리의 선택 필드 `accountId`가 호출처의 계정 하나를 가리킨다. 생략하면 `default`다. 형식은 계정 ID 규칙이고 구성에 없는 ID이거나 `default` 계정이 없는데 생략하면 기동을 거부한다(ADR-0013 결정 2). 오류에 계정 목록을 싣지 않는다.
+- 작업은 등록 때 `mail_jobs.account_id`로 계정을 고정한다. 어떤 SQL도 이 컬럼을 `UPDATE`하지 않는다. 시도 기록(`mail_attempts.account_id`)은 작업 행의 값을 복사한다. 계정 변경·재라우팅·failover는 없다.
+- 같은 Key의 재전송은 기존 작업의 계정을 바꾸지 않는다. 지문은 계정을 포함하지 않는다(매핑이 바뀐 뒤의 재전송이 409가 되면 안 된다).
+- 마이그레이션 `0010`(`mail_jobs`)·`0011`(`mail_attempts`): `ADD COLUMN account_id text NOT NULL DEFAULT 'default'`와 `NOT VALID` CHECK(`^[a-z0-9][a-z0-9_-]{0,31}$`). 백필이 없고 표를 다시 쓰지 않는다. 기존 행은 `default`로 보이고 컬럼 없이 쓰는 구버전의 `INSERT`도 `default`가 된다.
+- `claim`은 구성한 계정(`accountIds`)의 작업만 점유한다. 구성에서 빠진 계정의 작업은 점유·전송되지 않고 다른 계정으로 옮겨지지 않으며 만료 sweep이 `EXPIRED`(`JOB_EXPIRED`)로 만든다. 기동 때 구성 밖 계정의 비종결 작업이 있으면 `account_orphan_jobs`(warn, `accountId`, `count`)를 남긴다.
+- `completeAttempt`는 작업 행의 `account_id`로 차단기 행을 정한다(키는 계정 ID). 기동 때 구성한 계정마다 차단기 행을 `INSERT ... ON CONFLICT DO NOTHING`으로 만들고 실패하면 Worker를 시작하지 않는다. 내부 오류(`internal: true`)는 어느 계정의 차단기도 건드리지 않는다. half_open 대표 작업은 차단기 계정의 작업만 고른다.
+- 호출처는 계정을 고르지도 알지도 못한다. 요청에 계정 필드가 없고(모르는 필드 `UNKNOWN_FIELD`) `Job`·`Event`·거부 기록·검증 오류에 계정 필드가 없다.
+
+**수용 조건:**
+
+- [x] 레지스트리 `accountId`: 생략은 `default`, 구성에 없는 ID·`default` 없는 생략·형식 오류는 기동 거부, 오류에 계정 목록이 없다. 파일 채널·REST 모두 앱 기동 단계에서 거부한다.
+- [x] `register`가 `account_id`를 쓴다. 같은 Key의 다른 계정 재등록은 `duplicate`이고 기존 계정이 그대로다. 형식이 틀린 값은 DB가 23514로 거부한다.
+- [x] 등록된 작업의 계정은 레지스트리 변경 뒤에도 그대로이고 새 요청만 새 매핑을 따른다(실제 앱 재기동으로 확인).
+- [x] 구성 밖 계정의 작업은 `claim`이 점유하지 않고 상태를 바꾸지 않으며 만료 sweep이 `EXPIRED`로 만든다. `account_orphan_jobs`가 한 줄 남는다. 전송되지 않는다.
+- [x] 차단기: 계정 상태 오류는 작업 계정의 행만 갱신하고 `default` 행은 그대로다. `SENT`는 작업 계정의 연속 실패를 0으로 만들고, 내부 오류는 건드리지 않는다. 대표 작업은 차단기 계정의 작업만 고른다. 기동 때 행이 만들어지고 실패하면 `start()`가 거부된다.
+- [x] 시도 기록(성공·lease 만료 회수 포함)이 작업의 `account_id`를 복사한다.
+- [x] 마이그레이션 `0010`·`0011`: 0001~0009 위에 적용, 재실행은 아무것도 적용하지 않음, 기존 행이 `default`, `relfilenode` 불변, `NOT VALID` 제약, 컬럼 없는 `INSERT`가 `default`, 형식 위반 23514.
+- [x] `src/`의 SQL 문자열이 `account_id`를 `SET`하지 않고 `mail_jobs`·`mail_attempts` `INSERT`가 `account_id`를 열거한다. `src/`에 `SELECT *`·`RETURNING *`가 없다(정적 검사).
+- [x] 호출처 응답에 계정 필드·값이 없고 요청의 계정 필드는 `UNKNOWN_FIELD`다.
+- [ ] 롤링 배포(구·신 혼용)와 롤백을 실행하지 않았다. 구버전이 `accountId`를 거부해 기동하지 못한다는 점과 컬럼을 무시한다는 점은 코드 읽기 결과다(컬럼 없는 `INSERT`만 통합 테스트로 확인).
+- [ ] 대용량 테이블·동시 쓰기에서 `0010`·`0011`의 `ACCESS EXCLUSIVE` 잠금 대기를 측정하지 않았다(ADR-0013 측정은 150만 행 단일 실행 1.2ms).
+- [ ] 저장소 밖 호출처가 `accountId` 도입에 영향받지 않는지 확인하지 않았다(계약 변경은 없다).
+
+**판정 근거:**
+
+- `callers/account-id.spec.ts`(단위), `db/account-id-migration.integration-spec.ts`·`queue/account-id.integration-spec.ts`(PostgreSQL), `queue/account-id-sql.spec.ts`(정적 검사), `e2e/multi-account.integration-spec.ts`·`file-channel/account-id.integration-spec.ts`(실제 앱·Worker·파일 폴러·로컬 `smtp-server`).
+- RED 확인(2026-11-24): `callers/account-id.spec.ts`는 구현 전 `accountId`가 모르는 필드라 거부됐고, `db/account-id-migration.integration-spec.ts`는 0010 파일이 없어 `ENOENT`로 실패했으며, `queue/account-id.integration-spec.ts`는 `ensureBreakerRows` export가 없어 로드에 실패했다. Worker가 모든 작업을 `default` 발송기로 보내게 바꾼 변이에서 `e2e/multi-account.integration-spec.ts`(그 시점 11건) 중 4건이 실패했다(변이는 되돌렸다).
+- 구현: `callers/registry.ts`, `queue/register.ts`·`claim.ts`·`complete.ts`·`circuit-breaker.ts`(`ensureBreakerRows`)·`backlog.ts`(`countOrphanAccountJobs`), `migrations/0010_job_account_id.sql`·`0011_attempt_account_id.sql`, `worker/runner.ts`.
+- 남은 미검증: 위 세 항목. 묶음 A의 `claim`은 모드를 `default` 차단기 하나로 정하고 `account_id` 인덱스가 없다(ADR-0013 구현 중 확정 1·2).
+
+### RQ-055 계정별 SMTP 전송과 발신 주소 허용 집합
+
+- [ ] **진행 상태:** 진행 중 (7단계 묶음 A)
+
+**요구사항:**
+
+- 작업은 자기 `account_id`의 SMTP 서버·자격증명·발신 주소로 전송한다. `MAIL FROM`, 인증, `Message-ID` 도메인은 작업 계정의 것이다(ADR-0013 결정 2, ADR-0007 결정 8). 요청이 `from`을 생략하면 작업 계정의 `from`으로 채운다.
+- 호출처의 허용 발신 주소 집합은 `{호출처 계정의 from} ∪ allowedFrom`이다(ADR-0013 결정 6). 다른 계정의 `from`은 `allowedFrom`에 없으면 거부한다(REST 400 `FROM_NOT_ALLOWED`, 파일 `VALIDATION_FAILED`). `validation/`의 `isSenderAllowed`·`checkRequestPolicy`는 바꾸지 않고 호출 쪽(`IntakeService`·파일 채널 `ingest`)이 계정의 `from`을 넘긴다.
+- `allowedFrom`이 다른 계정의 `from`과 같으면 기동 때 `allowed_from_other_account`(warn, `callerId`)를 남긴다. 거부하지 않는다. 계정 단위 `sendAs`는 보류한다(Gmail send-as 동작 미확인).
+- 이미 등록된 Key의 재전송은 호출처의 계정을 바꾼 뒤에도 기존 작업(200)이나 409를 그대로 돌려준다(ADR-0011 구현 중 확정 27).
+- Worker가 점유한 작업의 계정 발송기가 없으면 `internal: true`로 끝낸다(차단기를 건드리지 않고 독성 작업 규칙을 따른다). `claim`이 구성한 계정만 점유하므로 정상 경로에서는 일어나지 않는다.
+- 기존 단일 계정 설정은 계정 `default` 하나이고 발신 주소 집합이 이전과 같다(`MAILO_SMTP_FROM`에 `allowedFrom`을 더한 값).
+
+**수용 조건:**
+
+- [x] 가짜 SMTP 서버 둘에서 `default` 계정 작업은 서버 A로, 파일 계정 `marketing` 작업은 서버 B로 간다. 서버마다 `MAIL FROM`, 인증 사용자·비밀번호, `Message-ID` 도메인이 작업 계정 것이고 다른 서버로 가지 않는다.
+- [x] `from`을 생략한 작업이 계정마다 다른 기본 발신 주소로 나간다.
+- [x] REST: 호출처 계정의 `from`은 202, 다른 계정의 `from`은 400 `FROM_NOT_ALLOWED`이고 응답에 주소가 없다. `allowedFrom`은 계정 `from`에 더해 허용된다. 호출처의 계정을 바꾼 뒤 이미 등록된 Key의 재전송은 200이다.
+- [x] 파일 채널: 같은 판정이다. 계정 `from`은 등록하고 다른 계정의 `from`은 `VALIDATION_FAILED`로 거부하며 거부 기록에 주소가 없다. `from` 생략은 등록된다.
+- [x] `allowedFrom`의 다른 계정 `from` 경고와 호출처 자기 계정 `from`의 비경고.
+- [x] Worker 조립: `accounts`와 단일 계정 형태의 동시 지정·계정 없음은 던진다. 기존 단일 계정 테스트(`sender`·`defaultFrom`)는 그대로 통과한다.
+- [ ] 계정 발송기가 없는 점유 작업의 `internal` 종료 경로는 테스트하지 않았다(`claim`이 구성 계정만 점유해 만들 수 없다).
+- [ ] 실제 Gmail에서 `allowedFrom` 주소가 send-as 별칭이어야 `From`이 유지되는지, 계정마다 다른 한도·IP 정책을 확인하지 않았다.
+
+**판정 근거:**
+
+- `e2e/multi-account.integration-spec.ts`(실제 앱·Worker·로컬 `smtp-server` 둘), `file-channel/account-id.integration-spec.ts`, `worker/account-startup.spec.ts`. 기존 `worker/*.integration-spec.ts`·`http/rest-intake.integration-spec.ts`가 단일 계정 동작 불변을 확인한다.
+- 구현: `worker/worker.ts`(`accounts`), `worker/runner.ts`(`toSenderConfig`·계정별 발송기), `intake/intake.service.ts`, `file-channel/ingest.ts`·`poller.ts`, `envelope/register-input.ts`.
+- 남은 미검증: 위 두 항목.
+
+### RQ-056 계정 모델의 배포 호환성과 시크릿 비노출
+
+- [ ] **진행 상태:** 진행 중 (7단계 묶음 A)
+
+**요구사항:**
+
+- 배포 순서: (1) `0010`·`0011` 적용 (2) 모든 인스턴스를 새 버전으로 (3) 계정 파일·비밀 변수 배포와 재시작 (4) 레지스트리에 `accountId`를 넣고 재시작. 4는 모든 인스턴스가 3을 마친 뒤에만 한다("코드 먼저, 레지스트리 나중", ADR-0013 결정 2). 이 단계가 끝나기 전에 `default`가 아닌 계정의 작업이 생기면 구버전이 `default` SMTP로 보낸다. 롤백은 레지스트리의 `accountId` 제거, 비`default` 비종결 작업 0 확인, 앱 되돌림 순서다. 절차는 `docs/operations/deployment.md` "SMTP 계정 도입 배포 순서"다.
+- 계정 비밀번호·`auth.user`·host·`from`은 로그·오류·이벤트·지표·`/health/ready`·`/ops`·거부 기록에 남기지 않는다(RQ-027, ADR-0013 결정 6). 로그에는 계정 ID, 호출처 ID, 건수만 쓴다. 비밀번호는 `Secret`으로 감싼다.
+- 묶음 A는 `/metrics`·`/health/ready`·`/ops`의 응답 모양을 바꾸지 않는다(`account_id` 라벨은 `default` 상수 그대로). 호출처 API 계약(`openapi.yaml`)의 필드는 바뀌지 않는다.
+- 새 npm 의존성이 없고 새 상시 서비스가 없다(RQ-029).
+
+**수용 조건:**
+
+- [x] canary 검증: 계정 비밀번호·`auth.user`가 가짜 SMTP로 실제 전송된 상태에서 로그, `/health/ready`(공개·호출처 키·운영자 토큰), `/metrics`, 오류 응답에 없다.
+- [x] 설정 오류 메시지에 host·user·비밀번호가 없다. 설정 객체의 `inspect`·`JSON.stringify`에도 없다.
+- [x] 기동 점검 로그(`account_unused`·`allowed_from_other_account`·`account_limits_not_enforced`·`accounts_not_isolated`)에 host·from 값이 없다.
+- [x] 기존 단일 계정 환경에서 기존 단위·통합 테스트가 통과한다(변경은 설정 접근자 `config.smtp`→`config.smtpAccounts`와 픽스처의 `accountId` 필드뿐이다. 단언을 약화하지 않았다).
+- [ ] 롤링 배포·롤백 실행, 읽기 전용 루트 컨테이너에서 계정 파일 마운트와 `_FILE` 비밀 읽기를 실행하지 않았다.
+- [ ] `/ops`·CLI·감사의 계정 비노출은 해당 표면이 묶음 C에 있어 확인하지 않았다.
+
+**판정 근거:**
+
+- `e2e/multi-account.integration-spec.ts`의 시크릿 비노출 테스트, `config/smtp-accounts.spec.ts`, `worker/account-startup.spec.ts`, 전체 단위·통합 테스트.
+- 문서: `docs/operations/deployment.md`·`key-management.md`·`caller-onboarding.md`·`troubleshooting.md`, `.env.example`, `docker-compose.yml`(계정 파일 마운트 주석).
+- 남은 미검증: 위 두 항목.
+
 ## 확정한 항목
 
 2026-11-23 판정으로 미결정에서 확정한 항목이다. 값은 해당 RQ와 ADR이 정한다.
@@ -1859,6 +1990,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 | 구현 순서               | 구현 단계 절                                           |
 | 발송 우선순위           | RQ-033~038, ADR-0009                                   |
 | 요청별 만료 시간        | RQ-039, ADR-0010                                       |
+| 다중 SMTP 계정(묶음 A)  | RQ-053~056, ADR-0013                                   |
 | NFS 통합 테스트 환경    | 아래                                                   |
 
 NFS 통합 테스트 환경(3단계, 추정):
