@@ -172,6 +172,10 @@ describe("계정 정지·해제 REST (RQ-061, ADR-0013 결정 5, ADR-0011 결정
       { type: "caller", id: "alpha" },
       { type: "account", id: "marketing" },
     ]);
+    // 감사 목록에도 계정 host·user·from·비밀번호가 없다(RQ-027).
+    const text = JSON.stringify(entries);
+    for (const value of [...ACCOUNT_CANARY_VALUES, "MAILO_SMTP_SECRET"])
+      expect(text).not.toContain(value);
   });
 
   it("읽기 토큰은 403, 토큰 없음·호출처 키는 401이고 상태·감사가 바뀌지 않는다 (ADR-0011 결정 7)", async () => {

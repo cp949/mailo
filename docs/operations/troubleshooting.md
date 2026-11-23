@@ -5,7 +5,7 @@
 
 ## 결론
 
-- 발송이 멈췄으면 먼저 발송 정지를 확인한다. 호출처 키로 `GET /health/ready`를 호출해 `sendPaused`를, 운영자 토큰으로 `sendControls`를 본다("발송 정지").
+- 발송이 멈췄으면 먼저 발송 정지를 확인한다. 호출처 키로 `GET /health/ready`를 호출해 `sendPaused`를(`scope`가 `all`·`account`·`caller`), 운영자 토큰으로 `sendControls`를 본다("발송 정지").
 - 정지가 아니면 인증된 `GET /health/ready`의 `circuitBreaker`를 본다. `open`·`half_open`이면 SMTP 계정 단위 장애다. 차단기가 `closed`인데 쌓이면 운영자 토큰(`MAILO_OPS_TOKEN` 또는 관리 토큰)으로 호출해 `queue.oldestDueAgeSeconds`와 `worker.lastPollAgeSeconds`를 본다(`deployment.md` "헬스"). 둘 다 크면 점유 루프가 멈춘 것이다.
 - 차단기가 `closed`인데 작업이 쌓이면 호출처 할당(`caller_quota_exceeded`), lease 회수(`LEASE_EXPIRED`), DB 오류(`claim_failed`)를 순서대로 본다.
 - 파일이 입력 폴더에서 사라지지 않으면 `file_poll` 로그의 `unreadable`을 본다. 권한 문제다.
@@ -348,12 +348,12 @@ SELECT id, caller_id, idempotency_key, status, failure_reason,
 
 확인:
 
-- 호출처 키: `GET /health/ready`의 `sendPaused`(`{ paused, scope }`). `scope`가 `all`이면 전체 정지, `caller`이면 그 호출처만 정지다.
-- 운영자·관리 토큰: `GET /health/ready`의 `sendControls`(`allPaused`, `pausedCallerCount`)와 `GET /ops/pauses`(정지한 범위, 시각, 토큰 이름).
+- 호출처 키: `GET /health/ready`의 `sendPaused`(`{ paused, scope }`). `scope`가 `all`이면 전체 정지, `account`이면 그 호출처가 쓰는 SMTP 계정의 정지, `caller`이면 그 호출처만 정지다(우선순위 `all`, `account`, `caller`).
+- 운영자·관리 토큰: `GET /health/ready`의 `sendControls`(`allPaused`, `pausedCallerCount`, `pausedAccountCount`)와 `GET /ops/pauses`(정지한 범위(`all`·`caller`·`account`), 시각, 토큰 이름). 계정별 정지 여부는 `GET /ops/accounts`의 `paused`다.
 - 누가 언제 했는가: `GET /ops/audit` 또는 DB의 `SELECT at, actor, action, scope_type, scope_id, job_id FROM mail_ops_audit ORDER BY id DESC LIMIT 20;`
 
 ```sql
--- 현재 걸려 있는 정지(account 범위는 이 버전이 쓰지 않는다)
+-- 현재 걸려 있는 정지(scope_type: all·caller·account)
 SELECT scope_type, scope_id, paused_at, paused_by FROM mail_send_controls ORDER BY paused_at;
 ```
 
@@ -461,7 +461,7 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 - 작업의 계정 확인(읽기): `SELECT account_id, status, count(*) FROM mail_jobs GROUP BY 1, 2 ORDER BY 1, 2;`
 - 계정별 차단기 행(읽기): `SELECT breaker_key, state, open_until, last_reason FROM mail_circuit_breaker ORDER BY 1;`. 행 키가 계정 ID다. 구성에 있는 계정의 행은 기동 때 만든다. 구성에서 빠진 계정의 행은 지우지 않는다.
 - 계정별 차단기 상태는 `GET /ops/accounts`(CLI `accounts list`)와 `/metrics`의 `mailo_breaker_state{account_id}`가 낸다. `/health/ready`의 `circuitBreaker`는 인증 없음·운영자 토큰에서 가장 나쁜 계정의 상태이고 호출처 키에서 그 호출처 계정의 상태다. 어느 계정이 막혔는지는 `GET /ops/accounts`로 먼저 본다. 위 SQL은 API가 안 될 때의 대안이다.
-- `GET /ops/accounts`가 503이면 구성한 계정의 차단기 행이 없는 것이다(`mail_circuit_breaker`). Worker 기동이 행을 만든다. 행이 없으면 그 계정의 점유도 실패한다(`claim_failed`).
+- `GET /ops/accounts`가 503이면 구성한 계정의 차단기 행이 없는 것이다(`mail_circuit_breaker`). `/health/ready`도 같은 이유로 503이 되고 `checks.database: DOWN`으로 보일 수 있다(원인은 DB 연결이 아니라 차단기 행이다. `readiness_check_failed` 로그의 `name`으로 가른다). Worker 기동이 행을 만든다. 행이 없으면 그 계정의 점유도 실패한다(`claim_failed`).
 - 계정 정지 행(읽기): `SELECT scope_id, paused_at, paused_by FROM mail_send_controls WHERE scope_type = 'account';`
 - 계정의 24시간 사용량(읽기, 한도 판정과 같은 조건): `SELECT count(*) FROM mail_attempts WHERE account_id = '<ID>' AND counted AND stage IS DISTINCT FROM 'WORKER' AND finished_at > now() - interval '24 hours';` 점유 중(`SENDING`)인 작업 수가 더해진다.
 - 한 계정이 느려질 때: 그 계정은 인스턴스당 슬롯 `cap_a`(계정의 `concurrency`, 없으면 `max(1, C − (N − 1))`)까지만 쥔다. 다른 계정은 남은 슬롯으로 계속 발송한다. 처리량이 모자라면 `MAILO_WORKER_CONCURRENCY`를 올리거나 계정에 `concurrency`를 준다.

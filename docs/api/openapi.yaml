@@ -859,7 +859,7 @@ paths:
         | 인증 없음, 운영자 토큰 | 모든 계정 중 가장 나쁜 상태(`open` > `half_open` > `closed`). 같은 상태이면 계정 ID 오름차순 첫 계정의 `openUntil`·`lastReason`(인증된 경우) |
         | 호출처 API 키 | 그 호출처가 쓰는 계정의 상태·`openUntil`·`lastReason`. 호출처는 자기 메일이 막혔는지 알 수 있다 |
 
-        단일 계정 배포(`default`만 구성)는 값이 이전과 같다. 계정이 여럿인 배포에서 인증 없음·운영자 응답의 `closed`는 모든 계정이 `closed`라는 뜻이고,
+        단일 계정 배포(`default`만 구성)는 계정 정지를 쓰지 않는 한 값이 이전과 같다. 단일 계정 배포에서도 `default` 계정을 정지하면(`PUT /ops/pauses/accounts/default`) 호출처 키가 `sendPaused.scope: account`를 받는다. 계정이 여럿인 배포에서 인증 없음·운영자 응답의 `closed`는 모든 계정이 `closed`라는 뜻이고,
         `open`·`half_open`은 계정 하나 이상이 그렇다는 뜻이다. 어느 계정인지는 운영자가 `GET /ops/accounts`로 확인한다.
         호출처 키의 `circuitBreaker`는 이전에는 전역 값이었고 이제 자기 계정 값이다. 다른 계정이 막혀도 `closed`일 수 있다.
 

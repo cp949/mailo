@@ -527,7 +527,7 @@ secrets:
 
 - `/health/ready`는 읽기 전용 트랜잭션 하나로 PostgreSQL 점검을 3초 안에 마친다. 쿼리에는 서버 쪽 `statement_timeout` 2초를 따로 걸고, 3초를 넘기면 그 연결을 풀에서 버린다. 응답만 포기하면 쿼리가 풀 슬롯을 계속 잡기 때문이다. 차단기가 `open`·`half_open`이어도 200이다. 등록과 조회는 정상이므로 오케스트레이터가 인스턴스를 내리면 안 된다.
 - 발송 정지(Worker 정지, 적체)는 200/503에 반영하지 않는다. 원인이 DB나 SMTP 계정이면 재시작이 도움이 안 되고, 오탐이면 오케스트레이터가 정상 인스턴스를 재시작하기 때문이다. 대신 운영자 토큰(`MAILO_OPS_TOKEN`)으로 호출하면 아래 필드를 준다. 모니터링은 이 값을 폴링해 경보를 만든다.
-- 인증 없이는 `status`, `checks.database`, `circuitBreaker.state`만 반환한다. 계정이 여럿이면 `circuitBreaker`는 계정별 차단기에서 정한다. 인증 없음과 운영자 토큰은 모든 계정 중 가장 나쁜 상태(`open` > `half_open` > `closed`, 같으면 계정 ID 오름차순 첫 계정의 `openUntil`·`lastReason`)이고 호출처 Bearer는 그 호출처 계정의 상태다. 계정 ID와 수는 어느 응답에도 없다. 계정별 상태는 `GET /ops/accounts`다. 단일 계정(`default`만) 배포는 값이 이전과 같다. 유효한 호출처 Bearer가 있으면 `openUntil`, `lastReason`, `eventFeed`, `sendPaused`를 더한다. 틀린 `Authorization`은 401이다.
+- 인증 없이는 `status`, `checks.database`, `circuitBreaker.state`만 반환한다. 계정이 여럿이면 `circuitBreaker`는 계정별 차단기에서 정한다. 인증 없음과 운영자 토큰은 모든 계정 중 가장 나쁜 상태(`open` > `half_open` > `closed`, 같으면 계정 ID 오름차순 첫 계정의 `openUntil`·`lastReason`)이고 호출처 Bearer는 그 호출처 계정의 상태다. 계정 ID와 수는 어느 응답에도 없다. 계정별 상태는 `GET /ops/accounts`다. 단일 계정(`default`만) 배포는 계정 정지를 쓰지 않는 한 값이 이전과 같다. 단일 계정 배포에서도 `default` 계정을 정지하면(`PUT /ops/pauses/accounts/default`) 호출처 키가 `sendPaused.scope: account`를 받는다. 유효한 호출처 Bearer가 있으면 `openUntil`, `lastReason`, `eventFeed`, `sendPaused`를 더한다. 틀린 `Authorization`은 401이다.
 - `sendPaused`는 그 호출처에 해당하는 발송 정지 요약이다(`{ paused, scope }`, `scope`는 `all`·`account`·`caller`·`null`). 우선순위는 `all`, 그 호출처 계정의 정지(`account`), `caller`다. 다른 계정의 정지는 보지 않는다. 호출처 ID·계정 ID·운영자 이름·시각은 없다. 정지와 계정 차단기는 200/503에 반영하지 않는다.
 - 운영자 토큰(`Authorization: Bearer $MAILO_OPS_TOKEN` 또는 관리 토큰. 응답은 같다)은 `openUntil`, `lastReason`에 더해 다음을 반환한다(`eventFeed`·`sendPaused`는 호출처 전용이라 없다). 전역 수치는 다른 호출처의 발송량을 드러내므로 호출처 API 키로는 주지 않는다. 운영자 토큰은 업무 endpoint에서 401이다. 메일 본문·수신자·작업 ID·`caller_id`는 어느 필드에도 없다.
 
@@ -619,7 +619,7 @@ docker compose exec -e MAILO_CLI_TOKEN_FILE=/run/secrets/mailo_cli_token mailo n
 | `resume --all`, `resume --caller <호출처 ID>`, `resume --account <계정 ID>` | 관리 | `DELETE` 같은 경로 |
 | `jobs cancel <jobId>` | 관리 | `POST /ops/jobs/{jobId}/cancel` |
 
-- 변경 명령(`pause`, `resume`, `jobs cancel`)은 `--yes`가 없으면 서버를 부르지 않고 종료 코드 1이다. `pause`·`resume`은 범위(`--all`, `--caller`, `--account`)를 하나 명시해야
+- 변경 명령(`pause`, `resume`, `jobs cancel`)은 `--yes`가 없으면 서버를 부르지 않고 종료 코드 1이다. `pause`·`resume`은 범위(`--all`, `--caller`, `--account`)를 하나 명시해야 하고 기본 범위가 없다.
 - 토큰은 명령줄 인자로 받지 않는다(`ps`에 보인다). `--token` 같은 옵션은 거부한다. 출력·오류에 토큰을 쓰지 않는다. 토큰 파일은 Mailo 컨테이너에 읽기 전용으로 마운트하고 읽기 토큰과 관리 토큰을 파일로 나눈다. 평소에는 읽기 토큰 파일을 쓰고 변경할 때만 관리 토큰 파일을 지정한다.
 - 출력은 서버 응답 JSON(들여쓰기 2칸)이다. 성공은 stdout, 오류는 stderr다. 종료 코드: 0 성공, 1 사용법·설정 오류(토큰 없음, URL 형식 오류 포함), 2 HTTP 오류(상태와 problem 본문을 stderr에 낸다. 3xx도 따라가지 않고 2), 3 연결 실패·시간 초과(15초). 2xx이지만 JSON이 아니면 2다.
 - `http`이고 loopback이 아닌 주소에 접속하면 토큰이 평문으로 가므로 stderr에 경고한다. 원격에서 쓰려면 `https`(TLS 프록시)를 쓴다.

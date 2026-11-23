@@ -20,7 +20,12 @@ import path from "node:path";
 import { CLI_EXIT, runCli, type CliDeps } from "../../src/cli/index.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
 import { migrate } from "../support/queue-fixtures.js";
-import { postJob, startRestApp, type RestApp } from "../support/rest-app.js";
+import {
+  CANARY,
+  postJob,
+  startRestApp,
+  type RestApp,
+} from "../support/rest-app.js";
 
 // 테스트용 가짜 토큰이다. 실제 시크릿이 아니다.
 const READ = "cli-read-fake-token-0000000000000000000000001";
@@ -209,6 +214,38 @@ describe("운영 CLI 통합 (RQ-047, ADR-0011 결정 7)", () => {
       changed: true,
     });
     expect(await pauseRows()).toEqual([]);
+  });
+
+  it("계정 명령의 출력·감사 목록·로그에 계정 비밀번호·SMTP 사용자·호스트·발신 주소가 없다 (RQ-027, ADR-0013 결정 6)", async () => {
+    // 앱의 `default` 계정 값(`testEnv`)이다. 어느 출력에도 나오면 안 된다.
+    const secrets = [
+      CANARY.smtpPassword,
+      "fake-user@example.invalid",
+      "smtp.example.invalid",
+      "no-reply@example.com",
+    ];
+    const outputs = [
+      await cli(["accounts", "list"], asRead),
+      await cli(["pause", "--account", "default", "--yes"], asAdmin),
+      await cli(["status"], asRead),
+      await cli(["audit", "list"], asRead),
+      await cli(["resume", "--account", "default", "--yes"], asAdmin),
+    ];
+
+    for (const result of outputs) {
+      expect(result.code).toBe(CLI_EXIT.OK);
+      for (const secret of secrets) {
+        expect(result.out).not.toContain(secret);
+        expect(result.err).not.toContain(secret);
+      }
+    }
+    const audit = JSON.parse(outputs[3]!.out).entries;
+    expect(audit[0]).toMatchObject({
+      action: "PAUSE",
+      scope: { type: "account", id: "default" },
+    });
+    for (const secret of secrets)
+      expect(app.logs.lines.join("\n")).not.toContain(secret);
   });
 
   it("읽기 토큰으로 변경 명령을 부르면 종료 코드 2(403)이고 상태가 바뀌지 않는다", async () => {

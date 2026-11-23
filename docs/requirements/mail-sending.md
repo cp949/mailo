@@ -1968,7 +1968,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 - [x] 기동 점검 로그(`account_unused`·`allowed_from_other_account`)에 host·from 값이 없다. 묶음 B의 로그(`account_quota_exceeded`·`account_quota_recovered`·`claim_failed`·`send_paused`)는 계정 ID·한도 수치·건수만 싣는다(RQ-058, 수신자 주소 canary 검색).
 - [x] 기존 단일 계정 환경에서 기존 단위·통합 테스트가 통과한다(변경은 설정 접근자 `config.smtp`→`config.smtpAccounts`와 픽스처의 `accountId` 필드뿐이다. 단언을 약화하지 않았다).
 - [ ] 롤링 배포·롤백 실행, 읽기 전용 루트 컨테이너에서 계정 파일 마운트와 `_FILE` 비밀 읽기를 실행하지 않았다.
-- [x] `/ops`(`GET /ops/accounts`, 정지·해제 응답, 감사 목록)·CLI·`/metrics`·`/health/ready`에도 계정 host·user·from·비밀번호·비밀 변수 이름이 없다(canary, RQ-060~063).
+- [x] `/ops`(`GET /ops/accounts`, 정지·해제 응답, 감사 목록)·CLI 출력(`accounts list`·`pause|resume --account`·`status`·`audit list`)·`/metrics`·`/health/ready`에도 계정 host·user·from·비밀번호·비밀 변수 이름이 없다(canary, `e2e/ops-accounts`·`ops-account-pause`·`health-accounts`·`metrics-accounts`와 `cli/cli.integration-spec.ts`, RQ-060~063).
 
 **판정 근거:**
 
@@ -2153,7 +2153,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 
 **요구사항:**
 
-- `circuitBreaker`는 호출처 키에서는 그 호출처 계정의 상태·`openUntil`·`lastReason`이고, 인증 없음과 운영자 토큰에서는 모든 계정 중 가장 나쁜 상태(`open` > `half_open` > `closed`, 같으면 계정 ID 오름차순 첫 계정)다. 계정 ID와 수는 어느 응답에도 없다. 단일 계정(`default`만) 배포는 값이 이전과 같다(ADR-0013 결정 5).
+- `circuitBreaker`는 호출처 키에서는 그 호출처 계정의 상태·`openUntil`·`lastReason`이고, 인증 없음과 운영자 토큰에서는 모든 계정 중 가장 나쁜 상태(`open` > `half_open` > `closed`, 같으면 계정 ID 오름차순 첫 계정)다. 계정 ID와 수는 어느 응답에도 없다. 단일 계정(`default`만) 배포는 계정 정지를 쓰지 않는 한 값이 이전과 같다(`default` 계정을 정지하면 호출처 키가 `sendPaused.scope: account`를 받는다, ADR-0013 결정 5).
 - `sendPaused.scope`에 `account`를 더한다. 그 호출처 계정의 정지일 때만이고 우선순위는 `all`, `account`, `caller`다. 운영자 `sendControls`에 `pausedAccountCount`(구성 밖 계정 포함)를 더한다. `queue.dueCount`는 계정별 값의 합이다(RQ-059).
 - 200/503은 정지·차단기·계정 상태로 바뀌지 않는다(RQ-031).
 
