@@ -113,23 +113,24 @@ describe("PostgreSQL 통합: 작업의 account_id와 계정 차단기 (RQ-054, A
 
   describe("점유", () => {
     it("claim은 작업의 accountId를 ClaimedJob에 싣는다", async () => {
+      await ensureBreakerRows(db.pool, ["marketing"]);
       await createJob(db.pool, { accountId: "marketing" });
 
       const [job] = await claim(db.pool, {
         ...claimOpts,
-        accountIds: ["default", "marketing"],
+        accountId: "marketing",
       });
 
       expect(job).toMatchObject({ accountId: "marketing" });
     });
 
-    it("accountIds에 없는 계정의 작업은 점유하지 않고 상태를 바꾸지 않는다(구성에서 사라진 계정, 결정 2)", async () => {
+    it("구성한 계정이 아닌 계정의 작업은 점유하지 않고 상태를 바꾸지 않는다(구성에서 사라진 계정, 결정 2)", async () => {
       const orphan = await createJob(db.pool, { accountId: "retired" });
       const live = await createJob(db.pool, { accountId: "default" });
 
       const claimed = await claim(db.pool, {
         ...claimOpts,
-        accountIds: ["default"],
+        accountId: "default",
       });
 
       expect(claimed.map((j) => j.id)).toEqual([live]);
@@ -183,11 +184,11 @@ describe("PostgreSQL 통합: 작업의 account_id와 계정 차단기 (RQ-054, A
       ).toEqual([]);
     });
 
-    it("accountIds를 생략하면 계정으로 거르지 않는다(기존 호출 호환)", async () => {
+    it("accountId를 생략하면 default 계정의 작업만 점유한다(계정으로 거르지 않던 묶음 A의 동작은 계정별 claim으로 바뀌었다, ADR-0013 결정 3 가)", async () => {
       await createJob(db.pool, { accountId: "marketing" });
       await createJob(db.pool, { accountId: "default" });
 
-      expect(await claim(db.pool, claimOpts)).toHaveLength(2);
+      expect(await claim(db.pool, claimOpts)).toHaveLength(1);
     });
 
     it("half_open 대표 작업은 차단기 계정의 작업만 고른다(다른 계정의 작업이 default 차단기를 닫지 못한다)", async () => {
@@ -200,7 +201,7 @@ describe("PostgreSQL 통합: 작업의 account_id와 계정 차단기 (RQ-054, A
 
       const claimed = await claim(db.pool, {
         ...claimOpts,
-        accountIds: ["default", "marketing"],
+        accountId: "default",
       });
 
       expect(claimed.map((j) => j.id)).toEqual([mine]);
@@ -248,7 +249,7 @@ describe("PostgreSQL 통합: 작업의 account_id와 계정 차단기 (RQ-054, A
         const [job] = await claim(db.pool, {
           ...claimOpts,
           limit: 1,
-          accountIds: ["marketing"],
+          accountId: "marketing",
         });
         await failConnection(job!);
       }
@@ -277,7 +278,7 @@ describe("PostgreSQL 통합: 작업의 account_id와 계정 차단기 (RQ-054, A
       await createJob(db.pool, { accountId: "marketing" });
       const [job] = await claim(db.pool, {
         ...claimOpts,
-        accountIds: ["marketing"],
+        accountId: "marketing",
       });
 
       await completeAttempt(
@@ -301,7 +302,7 @@ describe("PostgreSQL 통합: 작업의 account_id와 계정 차단기 (RQ-054, A
       await createJob(db.pool, { accountId: "marketing" });
       const [job] = await claim(db.pool, {
         ...claimOpts,
-        accountIds: ["marketing"],
+        accountId: "marketing",
       });
 
       await completeAttempt(
@@ -321,10 +322,11 @@ describe("PostgreSQL 통합: 작업의 account_id와 계정 차단기 (RQ-054, A
     });
 
     it("시도 기록은 작업 행의 account_id를 복사해 쓴다", async () => {
+      await ensureBreakerRows(db.pool, ["marketing"]);
       await createJob(db.pool, { accountId: "marketing" });
       const [job] = await claim(db.pool, {
         ...claimOpts,
-        accountIds: ["marketing"],
+        accountId: "marketing",
       });
       await completeAttempt(
         db.pool,
@@ -343,10 +345,11 @@ describe("PostgreSQL 통합: 작업의 account_id와 계정 차단기 (RQ-054, A
     });
 
     it("lease 만료로 회수한 시도 기록도 작업의 account_id를 싣는다", async () => {
+      await ensureBreakerRows(db.pool, ["marketing"]);
       await createJob(db.pool, { accountId: "marketing" });
       const [job] = await claim(db.pool, {
         ...claimOpts,
-        accountIds: ["marketing"],
+        accountId: "marketing",
       });
       await db.pool.query(
         "UPDATE mail_jobs SET lease_until = now() - interval '1 second' WHERE id = $1",
@@ -354,7 +357,7 @@ describe("PostgreSQL 통합: 작업의 account_id와 계정 차단기 (RQ-054, A
       );
       await pastDue(db.pool, job!.id);
 
-      await claim(db.pool, { ...claimOpts, accountIds: ["default"] });
+      await claim(db.pool, { ...claimOpts, accountId: "default" });
 
       const { rows } = await db.pool.query(
         "SELECT account_id, classification FROM mail_attempts WHERE job_id = $1",

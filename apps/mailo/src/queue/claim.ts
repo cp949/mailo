@@ -3,7 +3,10 @@ import { withTransaction } from "../db/index.js";
 import type { JsonValue } from "../events/index.js";
 import { recoverExpiredLeases, type CompleteDeps } from "./complete.js";
 import { readSendControls, type SendControls } from "./send-controls.js";
-import { CALLER_QUOTA_USAGE_SQL } from "./quota-usage.js";
+import {
+  ACCOUNT_QUOTA_USAGE_SQL,
+  CALLER_QUOTA_USAGE_SQL,
+} from "./quota-usage.js";
 import type { ClaimedJob, EncryptedBody, TransitionListener } from "./types.js";
 
 /**
@@ -49,13 +52,27 @@ export interface ClaimOptions {
    */
   order?: ClaimOrder;
   /**
-   * 점유할 수 있는 SMTP 계정 ID(RQ-054, ADR-0013 결정 2). 작업의 `account_id`가 이 목록에 있을 때만 점유한다.
-   * 구성에서 빠진 계정의 작업은 점유하지 않고 그대로 두어 만료 sweep이 `EXPIRED`로 만든다. 다른 계정으로 옮기지 않는다.
-   * 생략하면 계정으로 거르지 않는다(테스트용). 앱은 항상 구성한 계정 목록을 넘긴다.
-   * 묶음 A의 한 번의 `claim`은 모든 계정의 작업을 함께 다룬다. 모드(closed/open/half_open)는 `deps.breaker.breakerKey`의
-   * 차단기 행 하나가 정하고, half_open 대표 작업은 그 차단기 계정의 작업만 고른다. 계정별 `claim` 분리는 묶음 B다.
+   * 점유할 SMTP 계정 ID(RQ-054, ADR-0013 결정 3 가). 한 호출은 계정 하나만 다룬다. 차단기 행·모드·대표 작업·정지·계정 할당이 모두 이 계정의 것이다.
+   * 작업의 `account_id`가 이 값일 때만 점유한다. 구성에서 빠진 계정의 작업은 어떤 호출도 점유하지 않아 만료 sweep이 `EXPIRED`로 만든다.
+   * 생략하면 `deps.breaker.breakerKey`(기본 `default`)다. 앱의 Worker는 계정마다 이 값을 명시해 부른다.
    */
-  accountIds?: readonly string[];
+  accountId?: string;
+  /**
+   * 이 계정의 24시간 rolling 발송 할당(`sendQuota24h`, RQ-055, ADR-0013 결정 3 라). 생략하면 계정은 무제한이다.
+   * 점유 전에 계정 advisory lock을 잡고 사용량을 읽어 점유 건수를 `min(남은 건수, 호출처 할당 남은 건수, limit)`로 줄인다.
+   * 남은 건수가 0 이하이면 모드를 `none`으로 하고 호출처 할당 계산을 건너뛴다. 락을 못 잡으면 이번 점유를 건너뛴다.
+   */
+  accountQuota?: number;
+  /**
+   * `accountQuota`를 준 호출마다 이번 판정 결과를 알린다. 한도에 닿아 점유하지 못하면 `{ limit }`, 한도 안이면 `null`이다.
+   * 다른 인스턴스가 락을 잡아 건너뛴 호출에는 부르지 않는다. 로그용이며 Worker가 상태가 바뀔 때만 기록한다. 한도 수치만 담는다.
+   */
+  onAccountQuota?: (blocked: { limit: number } | null) => void;
+  /**
+   * 점유 앞단의 lease 복구를 할지. 기본 true다. Worker는 poll 라운드마다 첫 호출에만 true로 두고 나머지 계정 호출은 false로 둔다
+   * (복구는 계정과 무관한 전역 작업이라 계정마다 반복하지 않는다, ADR-0013 결정 3 가).
+   */
+  recoverLeases?: boolean;
   /**
    * 호출처별 24시간 rolling 발송 할당(RQ-032, ADR-0007 결정 10). 키는 호출처 ID, 값은 양의 정수다.
    * 여기 없는 호출처는 무제한이다. 비어 있거나 생략하면 할당을 확인하지 않는다.
@@ -226,14 +243,41 @@ async function planQuotas(
   return plan;
 }
 
+// 계정 24시간 할당 advisory lock의 앞 정수. 호출처 할당(7364222)·정리(7364223)·마이그레이터(1-인자 형식)와 겹치지 않는다.
+export const ACCOUNT_QUOTA_LOCK_CLASS = 7_364_224;
+
 /**
- * 발송할 작업을 점유한다(ADR-0002 결정 4·5, ADR-0007 결정 5).
+ * 계정 24시간 할당의 남은 점유 가능 건수를 정한다(RQ-055, ADR-0013 결정 3 라).
+ * 호출처 할당(`planQuotas`)과 같은 방식이다. 계정 advisory lock(`pg_try_advisory_xact_lock`)을 잡은 인스턴스만
+ * 사용량 읽기부터 점유 커밋까지 들어와 동시 점유로 인한 초과가 없다. 못 잡으면 `locked: false`이고 호출자는 이번 점유를 건너뛴다(기다리지 않는다).
+ * 락은 커밋 때 풀린다. 비용은 한도(시도 쪽 `LIMIT`)에만 비례하고 큐 길이와 무관하다.
+ */
+async function planAccountQuota(
+  client: pg.PoolClient,
+  accountId: string,
+  quota: number,
+): Promise<{ locked: false } | { locked: true; remaining: number }> {
+  const lock = await client.query<{ locked: boolean }>(
+    "SELECT pg_try_advisory_xact_lock($1::int, hashtext($2::text)) AS locked",
+    [ACCOUNT_QUOTA_LOCK_CLASS, accountId],
+  );
+  if (lock.rows[0]?.locked !== true) return { locked: false };
+  const usage = await client.query<{ used: number }>(ACCOUNT_QUOTA_USAGE_SQL, [
+    accountId,
+    quota,
+  ]);
+  return { locked: true, remaining: quota - (usage.rows[0]?.used ?? 0) };
+}
+
+/**
+ * 계정 하나의 발송할 작업을 점유한다(ADR-0002 결정 4·5, ADR-0007 결정 5, ADR-0013 결정 3).
  * 점유 트랜잭션은 SMTP 전송 전에 커밋한다. 전송과 결과 기록은 호출자가 따로 한다(ADR-0002 결정 9).
  *
  * 순서:
- * 1. lease가 지난 SENDING 작업을 복구한다(별도 트랜잭션). 발송 정지 중에도 한다.
- * 2. 차단기를 읽고 발송 정지(`mail_send_controls`)를 읽어 모드를 정한다. 전체 정지면 아래 모드 모두 점유하지 않는다.
+ * 1. lease가 지난 SENDING 작업을 복구한다(별도 트랜잭션). 발송 정지 중에도 한다. `recoverLeases: false`이면 건너뛴다.
+ * 2. 이 계정의 차단기를 읽고 발송 정지(`mail_send_controls`)를 읽어 모드를 정한다. 전체 정지나 이 계정의 정지면 아래 모드 모두 점유하지 않는다.
  *    정지한 호출처는 할당 계산 전에 점유 대상에서 뺀다(RQ-043, ADR-0011 결정 2).
+ *    이 계정의 24시간 할당이 있으면 그 사용량을 먼저 판정한다(RQ-055).
  *    - closed: 점유 대상 중 `limit`건을 `FOR UPDATE SKIP LOCKED`로 잡는다.
  *    - open이고 `open_until` 전: 점유하지 않는다.
  *    - open이고 `open_until` 이후, 또는 half_open이고 `probe_until` 이후: 대표 작업 1건을 점유한다.
@@ -255,12 +299,17 @@ export async function claim(
   options: ClaimOptions,
 ): Promise<ClaimedJob[]> {
   const order = orderOf(options.order ?? "priority");
-  await recoverExpiredLeases(pool, options.deps, undefined, {
-    ...(options.onLeaseRecovered && { onRecovered: options.onLeaseRecovered }),
-  });
+  // 차단기 행의 키는 계정 ID다(ADR-0013 결정 3 나). 생략하면 `deps.breaker.breakerKey`(기본 `default`)다.
+  const accountId = options.accountId ?? options.deps.breaker.breakerKey;
+  if (options.recoverLeases !== false)
+    await recoverExpiredLeases(pool, options.deps, undefined, {
+      ...(options.onLeaseRecovered && {
+        onRecovered: options.onLeaseRecovered,
+      }),
+    });
 
   return withTransaction(pool, async (client) => {
-    const breakerKey = options.deps.breaker.breakerKey;
+    const breakerKey = accountId;
     const state = await client.query<{
       state: string;
       open_due: boolean;
@@ -279,12 +328,30 @@ export async function claim(
     options.onSendControls?.(controls);
 
     let mode: Mode;
-    if (controls.allPaused) mode = "none";
+    // 정지한 계정은 대표 작업도 점유하지 않는다. 정지는 차단기와 독립이라 차단기 행을 바꾸지 않는다.
+    if (controls.allPaused || controls.pausedAccountIds.includes(accountId))
+      mode = "none";
     else if (b.state === "closed") mode = "normal";
     else if (b.state === "open") mode = b.open_due ? "probe" : "none";
     else mode = b.probe_due ? "probe" : "none";
 
     if (mode === "none") return [];
+    // 계정 할당은 호출처 할당보다 먼저 본다. 남은 건수가 없으면 호출처 할당 계산을 건너뛴다. 락은 기다리지 않으므로 잠금 순서에 영향이 없다.
+    let limit = options.limit;
+    if (options.accountQuota !== undefined) {
+      const plan = await planAccountQuota(
+        client,
+        accountId,
+        options.accountQuota,
+      );
+      if (!plan.locked) return [];
+      if (plan.remaining <= 0) {
+        options.onAccountQuota?.({ limit: options.accountQuota });
+        return [];
+      }
+      options.onAccountQuota?.(null);
+      limit = Math.min(limit, plan.remaining);
+    }
     // 할당 판정은 작업 행을 잠그기 전에 한다. advisory lock은 기다리지 않으므로 잠금 순서에 영향이 없다.
     // 정지한 호출처는 할당 계산 전에 맵에서 뺀다. 남겨 두면 쓸모없는 advisory lock과 사용량 쿼리를 쓴다(ADR-0011 결정 2).
     const paused = new Set(controls.pausedCallerIds);
@@ -304,8 +371,8 @@ export async function claim(
     if (mode === "normal") {
       // 할당 초과 호출처는 `caller_id <> ALL`로 뺀다. 할당이 남은 호출처는 이번 배치에서 남은 건수까지만 점유한다.
       // 순위(rn)는 이미 잠근 최대 `limit`건 안에서만 매기므로 큐 길이에 영향받지 않는다.
-      // 단 점유 인덱스(`mail_jobs_claim_idx`, `mail_jobs_priority_claim_idx`)에 caller_id가 없어
-      // 초과 호출처의 대기 행은 인덱스로 건너뛰지 못하고 매 poll 읽고 버린다.
+      // 단 점유 인덱스(`mail_jobs_account_priority_claim_idx`, `mail_jobs_account_claim_idx`, 0012·0013)에 caller_id가 없어
+      // 같은 계정 안의 초과 호출처 대기 행은 인덱스로 건너뛰지 못하고 매 poll 읽고 버린다. 계정 조건은 인덱스 첫 열이라 다른 계정의 대기 행은 읽지 않는다.
       // 측정: ADR-0007 구현 중 확정 10(대기 순서), ADR-0009(두 경로). 만료(기본 24시간, 요청은 상한까지)가 대기 건수를 제한한다.
       // 상한(`MAILO_JOB_EXPIRY_MAX_SECONDS`)을 늘린 배치의 대기 건수는 측정하지 않았다(ADR-0010).
       // 남은 건수를 넘긴 행은 잠겼지만 갱신하지 않고 커밋 때 풀린다. 이 호출은 `limit`보다 적게 점유할 수 있다.
@@ -316,7 +383,7 @@ export async function claim(
             WHERE status IN ('PENDING', 'RETRY_WAIT')
               AND next_attempt_at <= now() AND expires_at > now()
               AND caller_id <> ALL($3::text[])
-              AND ($6::text[] IS NULL OR account_id = ANY($6::text[]))
+              AND account_id = $6::text
             ORDER BY ${order.bare}
             LIMIT $2
             FOR UPDATE SKIP LOCKED
@@ -338,11 +405,11 @@ export async function claim(
          RETURNING ${RETURNING}`,
         [
           options.leaseSeconds,
-          options.limit,
+          limit,
           quota.blocked,
           quota.remainingIds,
           quota.remainingCounts,
-          options.accountIds ? [...options.accountIds] : null,
+          accountId,
         ],
       );
       return rows.map((r) => toClaimed(r, false));

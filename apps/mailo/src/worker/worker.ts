@@ -201,6 +201,8 @@ export function createWorker(
   let lastPollMono: number | undefined;
   let lastPollWall: number | undefined;
   let claimFailureStreak = 0;
+  // 계정별 연속 claim 실패 횟수. 성공하면 지운다. `claimFailureStreak`은 이 중 최댓값이다.
+  const claimFailures = new Map<string, number>();
   let pollLoopCrashed = false;
   let pollLoopDone = false;
   let maintenanceLoop: Promise<void> | undefined;
@@ -290,45 +292,54 @@ export function createWorker(
         await waitForWork(options.pollMs);
         continue;
       }
-      let claimed: ClaimedJob[];
+      const claimed: ClaimedJob[] = [];
       // lease는 claim 쿼리 안에서 시작하므로 호출 전 시각이 가장 이른 기준이다(단조 시계).
       const claimStartedAt = clock.now();
-      try {
-        claimed = await claim(pool, {
-          leaseSeconds: options.leaseSeconds,
-          limit: free,
-          deps: completeDeps,
-          // 구성에서 빠진 계정의 작업은 점유하지 않는다. 만료 sweep이 EXPIRED로 만든다(ADR-0013 결정 2).
-          accountIds,
-          // [0, 1) 난수라 비율 0이면 항상 우선순위 경로, 1이면 항상 대기 순서 경로다.
-          order: claimRandom() < options.claimFifoRatio ? "fifo" : "priority",
-          onSendControls: reportSendControls,
-          onLeaseRecovered: (transitions) =>
-            countRecovered(metrics, transitions),
-          ...(options.callerQuotas && {
-            callerQuotas: options.callerQuotas,
-            onQuotaBlocked: reportQuotaBlocked,
-          }),
-        });
-        claimFailureStreak = 0;
+      let failed = false;
+      // 계정마다 claim을 부른다(ADR-0013 결정 3 가). lease 복구는 라운드의 첫 호출에서만 한다.
+      // 구성에서 빠진 계정의 작업은 어느 호출도 점유하지 않는다. 만료 sweep이 EXPIRED로 만든다(ADR-0013 결정 2).
+      // 한 계정의 오류는 그 계정에서 끝내고 이미 점유한 작업과 다른 계정은 계속 처리한다.
+      for (const [index, accountId] of accountIds.entries()) {
+        const room = free - claimed.length;
+        if (room <= 0) break;
+        try {
+          claimed.push(
+            ...(await claim(pool, {
+              accountId,
+              recoverLeases: index === 0,
+              leaseSeconds: options.leaseSeconds,
+              limit: room,
+              deps: completeDeps,
+              // [0, 1) 난수라 비율 0이면 항상 우선순위 경로, 1이면 항상 대기 순서 경로다.
+              order:
+                claimRandom() < options.claimFifoRatio ? "fifo" : "priority",
+              onSendControls: reportSendControls,
+              onLeaseRecovered: (transitions) =>
+                countRecovered(metrics, transitions),
+              ...(options.callerQuotas && {
+                callerQuotas: options.callerQuotas,
+                onQuotaBlocked: reportQuotaBlocked,
+              }),
+            })),
+          );
+          claimFailures.delete(accountId);
+        } catch (error) {
+          failed = true;
+          const streak = (claimFailures.get(accountId) ?? 0) + 1;
+          claimFailures.set(accountId, streak);
+          metrics.inc("mailo_claim_polls_total", { result: "error" });
+          log.error("claim_failed", {
+            accountId,
+            error: describeError(error),
+            streak,
+          });
+        }
+      }
+      claimFailureStreak = Math.max(0, ...claimFailures.values());
+      if (!failed)
         metrics.inc("mailo_claim_polls_total", {
           result: claimed.length > 0 ? "claimed" : "empty",
         });
-      } catch (error) {
-        claimFailureStreak += 1;
-        metrics.inc("mailo_claim_polls_total", { result: "error" });
-        log.error("claim_failed", {
-          error: describeError(error),
-          streak: claimFailureStreak,
-        });
-        await waitForWork(
-          Math.min(
-            MAX_POLL_ERROR_BACKOFF_MS,
-            options.pollMs * 2 ** Math.min(claimFailureStreak, 10),
-          ),
-        );
-        continue;
-      }
       // drain 상한이 지나 전송을 끊은 뒤에 늦게 돌아온 점유는 처리하지 않는다. lease 만료 뒤 복구가 다룬다.
       if (sendController.signal.aborted) {
         if (claimed.length > 0)
@@ -340,7 +351,15 @@ export function createWorker(
       // 점유한 작업은 종료 신호가 와도 끝까지 처리한다. 이미 SENDING이고 lease가 걸려 있다.
       for (const job of claimed) track(processJob(job, claimStartedAt));
       // 요청한 만큼 가득 점유했으면 바로 다음 점유를 시도하고, 모자라면 쉰다.
-      if (claimed.length < free) await waitForWork(pollDelay());
+      // 계정 호출이 실패했고 점유한 것이 없으면 연속 실패 횟수에 따라 지수 백오프한다.
+      if (failed && claimed.length === 0)
+        await waitForWork(
+          Math.min(
+            MAX_POLL_ERROR_BACKOFF_MS,
+            options.pollMs * 2 ** Math.min(claimFailureStreak, 10),
+          ),
+        );
+      else if (claimed.length < free) await waitForWork(pollDelay());
     }
   }
 

@@ -208,9 +208,16 @@ async function applyOutcome(
             lastAccountResponse = response === "" ? null : response;
         }
 
-        // 재개 시각. 차단기가 open이면 open_until, 아니면(half_open의 늦은 실패) 사유별 초기 대기 뒤다.
+        // 재개 시각. 차단기가 open이고 `open_until`이 아직 미래면 `open_until`이다. 그 밖은 사유별 초기 대기 뒤다.
+        // - half_open의 늦은 실패.
+        // - `open_until`이 이미 지난 open에서 늦게 도착한 실패(대기 시간이 지났지만 대표 작업이 아직 점유되지 않았다).
+        //   `open_until`을 그대로 쓰면 재시도 시각이 과거가 되어 같은 작업을 곧바로 다시 점유하고 SMTP를 연달아 부른다.
+        //   방금 실패했다는 사실이 더 새로운 증거라서 half_open의 늦은 실패와 같이 초기 대기를 둔다(ADR-0013 결정 3, RQ-054).
+        // 시각은 이 트랜잭션의 DB `now()`(`db_now`)다(ADR-0002 결정 10).
         const resume =
-          breaker.state === "open" && breaker.openUntil
+          breaker.state === "open" &&
+          breaker.openUntil &&
+          breaker.openUntil.getTime() > dbNow.getTime()
             ? breaker.openUntil
             : new Date(
                 dbNow.getTime() +

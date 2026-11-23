@@ -1,8 +1,9 @@
 import type { Queryable } from "../db/index.js";
 
 /**
- * 정지 범위(RQ-043, ADR-0011 결정 2). REST와 `claim`이 쓰는 범위는 `all`과 `caller`뿐이다.
- * 테이블에는 `account` 범위도 있지만 다계정 단계에서 쓰므로 이 모듈은 읽지도 쓰지도 않는다.
+ * 정지 범위(RQ-043, ADR-0011 결정 2). REST가 쓰는 범위는 `all`과 `caller`뿐이다.
+ * `account` 범위 행은 `claim`이 읽어 점유에 적용한다(`SendControls.pausedAccountIds`, ADR-0013 결정 3 다).
+ * 계정 정지를 쓰고 지우는 REST·CLI 표면은 구현 묶음 C다. 그 전에는 이 모듈이 `account` 행을 쓰지 않고 목록·요약에도 내지 않는다.
  */
 export type SendScope = { type: "all" } | { type: "caller"; id: string };
 
@@ -12,6 +13,11 @@ export interface SendControls {
   allPaused: boolean;
   /** 정지한 호출처 ID. 할당 계산 전에 점유 대상에서 뺀다. */
   pausedCallerIds: readonly string[];
+  /**
+   * 정지한 계정 ID(ADR-0013 결정 3 다). 그 계정의 `claim`은 모드가 `none`이다(대표 작업 포함).
+   * 정지는 차단기와 독립이다. 구성에 없는 계정의 행도 담는다.
+   */
+  pausedAccountIds: readonly string[];
 }
 
 export interface PauseRecord {
@@ -52,13 +58,19 @@ function keyOf(scope: SendScope): [string, string] {
  * 쿼리 하나이고 행 수는 정지한 범위 수다.
  */
 export async function readSendControls(db: Queryable): Promise<SendControls> {
-  const { rows } = await db.query<Pick<ControlRow, "scope_type" | "scope_id">>(
-    `SELECT scope_type, scope_id FROM mail_send_controls WHERE scope_type IN ('all', 'caller')`,
+  const { rows } = await db.query<{
+    scope_type: "all" | "caller" | "account";
+    scope_id: string;
+  }>(
+    `SELECT scope_type, scope_id FROM mail_send_controls WHERE scope_type IN ('all', 'caller', 'account')`,
   );
   return {
     allPaused: rows.some((r) => r.scope_type === "all"),
     pausedCallerIds: rows
       .filter((r) => r.scope_type === "caller")
+      .map((r) => r.scope_id),
+    pausedAccountIds: rows
+      .filter((r) => r.scope_type === "account")
       .map((r) => r.scope_id),
   };
 }
