@@ -120,6 +120,20 @@ export function checkAddress(
   if (local.length > MAX_LOCAL_PART || !LOCAL_PART.test(local))
     return "ADDRESS_FORMAT";
 
+  return checkDomain(domain, maxChars - local.length - 1);
+}
+
+/**
+ * 도메인 하나를 검사한다. `checkAddress`가 `@` 뒤에 쓰는 규칙과 같다. 문제가 없으면 undefined.
+ * 라벨은 ASCII 영숫자와 `-`이고 라벨 수는 2 이상이며 마지막 라벨은 숫자뿐일 수 없다. 대문자는 허용한다(대소문자 정규화는 호출자 몫).
+ * 호출처의 `allowedRecipientDomains`가 기동 때 같은 규칙으로 값을 검사한다(ADR-0011 결정 8).
+ * @param maxChars 도메인 길이 상한. 생략하면 주소 상한에서 로컬 파트 1자와 `@`를 뺀 값이다.
+ */
+export function checkDomain(
+  domain: string,
+  maxChars: number = DEFAULT_MAIL_REQUEST_LIMITS.maxAddressChars - 2,
+): ValidationCode | undefined {
+  if (domain.length > maxChars) return "ADDRESS_TOO_LONG";
   const labels = domain.split(".");
   if (labels.length < 2 || !labels.every((l) => DOMAIN_LABEL.test(l)))
     return "ADDRESS_FORMAT";

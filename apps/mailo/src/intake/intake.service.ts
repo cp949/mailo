@@ -27,7 +27,7 @@ import {
   type JobView,
 } from "../queue/index.js";
 import { toRegisterInput, type OpenRequestSuccess } from "../envelope/index.js";
-import { isSenderAllowed } from "../validation/index.js";
+import { checkRequestPolicy } from "../validation/index.js";
 import { presentEvent } from "./presenters.js";
 
 const logger = new Logger("intake");
@@ -51,7 +51,9 @@ export class IntakeService {
   /**
    * `openRequest`(복호화·검증·지문 계산)를 마친 요청을 멱등하게 등록한다(RQ-001, RQ-011, ADR-0005 결정 4·5).
    * - 신규: 202. 같은 Key와 같은 내용: 200과 기존 작업. 같은 Key에 다른 내용: 409.
-   * - 요청의 `from`이 호출처의 허용 발신 주소에 없으면 새 작업을 만들지 않고 400 validation-failed(`FROM_NOT_ALLOWED`)다.
+   * - 요청의 `from`이 호출처의 허용 발신 주소에 없거나(`FROM_NOT_ALLOWED`), 수신자 도메인이 `allowedRecipientDomains`에 없으면
+   *   (`RECIPIENT_DOMAIN_NOT_ALLOWED`, RQ-046) 새 작업을 만들지 않고 400 validation-failed다. 어긴 항목을 모두 `errors`에 담고 값은 담지 않는다.
+   *   수신자 하나라도 어기면 요청 전체를 거부한다(부분 등록 없음).
    *   이미 등록된 Key의 재전송은 허용 여부와 무관하게 기존 작업(200)이나 409를 그대로 돌려준다. 정책을 바꾼 뒤에도
    *   relay의 멱등 재시도가 영구 실패로 바뀌지 않게 하려는 것이다.
    * - DB·암호화 오류는 예외로 올라가 503이 된다. 등록은 한 트랜잭션이라 반쯤 등록된 작업이 남지 않는다.
@@ -63,6 +65,13 @@ export class IntakeService {
     idempotencyKey: string,
     opened: OpenRequestSuccess,
   ): Promise<CreateJobResult> {
+    // 호출처 정책(발신 주소·수신 도메인)을 어기면 새 작업을 만들지 않는다. 파일 채널과 같은 판정이다.
+    const caller = this.registry.callers.find((c) => c.id === callerId);
+    const violations = checkRequestPolicy(opened.request, {
+      defaultFrom: this.config.smtp.defaultFrom,
+      allowedFrom: caller?.allowedFrom ?? [],
+      allowedRecipientDomains: caller?.allowedRecipientDomains ?? null,
+    });
     const result = await register(
       this.pool,
       { cipher: this.cipher, fingerprinter: this.fingerprinter },
@@ -70,19 +79,10 @@ export class IntakeService {
         callerId,
         idempotencyKey,
         defaultExpiresInSeconds: this.config.queue.jobExpirySeconds,
-        denyNew: !isSenderAllowed(
-          opened.request.from,
-          this.config.smtp.defaultFrom,
-          this.registry.callers.find((c) => c.id === callerId)?.allowedFrom ??
-            [],
-        ),
+        denyNew: violations.length > 0,
       }),
     );
-    if (result.kind === "denied") {
-      throw problems.validationFailed([
-        { pointer: "/from", code: "FROM_NOT_ALLOWED" },
-      ]);
-    }
+    if (result.kind === "denied") throw problems.validationFailed(violations);
 
     if (result.kind === "fingerprint_mismatch") {
       throw problems.idempotencyConflict(

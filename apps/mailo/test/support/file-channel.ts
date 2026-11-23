@@ -104,6 +104,8 @@ export function createFileHarness(
     config?: Partial<Parameters<typeof createFilePoller>[0]["config"]>;
     /** 서명 none·폴더 사용 호출처를 레지스트리 끝에 더한다(호출처 수가 많은 시나리오용). */
     extraFileCallers?: readonly string[];
+    /** 호출처 레지스트리 항목에 더할 필드(호출처 ID별). 예: `{ alpha: { allowedRecipientDomains: ["example.com"] } }`. */
+    callerFields?: Record<string, Record<string, unknown>>;
   } = {},
 ): FileHarness {
   const root = mkdtempSync(path.join(tmpdir(), "mailo-file-"));
@@ -124,6 +126,7 @@ export function createFileHarness(
           ],
           fileChannel: true,
           signature: { mode: "none" },
+          ...options.callerFields?.["alpha"],
         },
         {
           id: "beta",

@@ -21,7 +21,7 @@ import {
 } from "../envelope/index.js";
 import { recordIntakeRejection } from "../events/index.js";
 import { register } from "../queue/index.js";
-import { isSenderAllowed } from "../validation/index.js";
+import { checkRequestPolicy } from "../validation/index.js";
 import type { AppLogger } from "../logging/index.js";
 import { errnoCode, isStale } from "./errno.js";
 import { peekIdempotencyKey } from "./key-hint.js";
@@ -196,14 +196,16 @@ export async function ingestFile(
       callerId: caller.id,
       idempotencyKey: key,
       defaultExpiresInSeconds: deps.jobExpirySeconds,
-      denyNew: !isSenderAllowed(
-        opened.request.from,
-        deps.defaultFrom,
-        caller.allowedFrom,
-      ),
+      denyNew:
+        checkRequestPolicy(opened.request, {
+          defaultFrom: deps.defaultFrom,
+          allowedFrom: caller.allowedFrom,
+          allowedRecipientDomains: caller.allowedRecipientDomains,
+        }).length > 0,
     }),
   );
-  // 허용되지 않은 발신 주소는 새 작업이 될 때만 거부한다. 이미 등록된 Key는 `duplicate`다(REST와 같은 규칙).
+  // 허용되지 않은 발신 주소·수신 도메인은 새 작업이 될 때만 거부한다. 이미 등록된 Key는 `duplicate`다(REST와 같은 규칙).
+  // 거부 기록에는 사유 코드만 남고 어긴 주소·도메인은 남기지 않는다(RQ-027).
   if (registered.kind === "denied")
     return reject("VALIDATION_FAILED", { ...fileRecord, key });
   if (registered.kind === "fingerprint_mismatch")

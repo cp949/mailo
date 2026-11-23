@@ -18,6 +18,8 @@ export type ValidationErrorCode =
   | "CALLER_MISMATCH"
   /** 요청의 `from`이 호출처의 허용 발신 주소(`defaultFrom` + `allowedFrom`)에 없다. */
   | "FROM_NOT_ALLOWED"
+  /** 요청의 수신자(`to`·`cc`·`bcc`) 중 호출처의 `allowedRecipientDomains`에 없는 도메인이 있다. 어긴 주소마다 한 항목이다. */
+  | "RECIPIENT_DOMAIN_NOT_ALLOWED"
   /** 정수지만 허용 범위 밖이다. 현재는 `ttlSeconds`의 하한·상한 위반에만 쓴다(RQ-039). */
   | "OUT_OF_RANGE";
 

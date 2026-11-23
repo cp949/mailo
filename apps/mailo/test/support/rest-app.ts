@@ -60,6 +60,7 @@ export function testEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 export function writeCallersFile(
   dir: string,
   fileChannel: readonly string[] = [],
+  callerFields: Record<string, Record<string, unknown>> = {},
 ): string {
   const file = path.join(dir, "callers.json");
   writeFileSync(
@@ -73,12 +74,14 @@ export function writeCallersFile(
           signature: { mode: "none" },
           // 발신 주소 허용 시험용(allowedFrom). beta는 기본 발신 주소만 쓴다.
           allowedFrom: ["Billing@Example.com"],
+          ...callerFields["alpha"],
         },
         {
           id: "beta",
           apiKeyHashes: [hashApiKey(BETA_KEY)],
           fileChannel: fileChannel.includes("beta"),
           signature: { mode: "none" },
+          ...callerFields["beta"],
         },
       ],
     }),
@@ -144,6 +147,8 @@ export interface StartRestAppOptions {
   worker?: AppModuleOptions["worker"];
   /** 파일 폴더를 쓰는 호출처 ID. `MAILO_FILE_CHANNEL_ROOT`와 함께 쓴다. */
   fileChannelCallers?: readonly string[];
+  /** 호출처 레지스트리 항목에 더할 필드(호출처 ID별). 예: `{ alpha: { allowedRecipientDomains: ["example.com"] } }`. */
+  callerFields?: Record<string, Record<string, unknown>>;
   /** HTTP 서버 시간제한. 느린 연결 종료 테스트가 줄여 쓴다. 생략하면 운영 기본값이다. */
   httpTimeouts?: HttpServerTimeouts;
 }
@@ -155,7 +160,11 @@ export async function startRestApp(
   const dir = mkdtempSync(path.join(tmpdir(), "mailo-rest-"));
   const logs = captureLogs();
   const env = testEnv({
-    MAILO_CALLERS_FILE: writeCallersFile(dir, options.fileChannelCallers),
+    MAILO_CALLERS_FILE: writeCallersFile(
+      dir,
+      options.fileChannelCallers,
+      options.callerFields,
+    ),
     ...options.env,
   });
   const config = loadConfig(env);

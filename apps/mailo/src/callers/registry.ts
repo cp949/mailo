@@ -17,6 +17,9 @@
  * 선택 필드 `allowedFrom`: 이 호출처가 요청의 `from`으로 쓸 수 있는 발신 주소 목록(addr-spec, 생략하면 빈 목록).
  * 허용 집합은 `MAILO_SMTP_FROM`(또는 `MAILO_SMTP_USER`)의 기본 발신 주소에 이 목록을 더한 것이다.
  * 집합 밖의 `from`을 보낸 요청은 400 validation-failed(`FROM_NOT_ALLOWED`)다. `from`을 생략하면 기본 발신 주소를 쓴다. `replyTo`는 제한하지 않는다.
+ * 선택 필드 `allowedRecipientDomains`: 이 호출처가 `to`·`cc`·`bcc`로 보낼 수 있는 수신 도메인 목록(1~50개, 생략하면 제한 없음, RQ-046).
+ * 값은 소문자 ASCII(국제화 도메인은 A-label `xn--`)이고 `@` 뒤를 소문자로 바꿔 정확히 비교한다. 하위 도메인은 따로 적는다.
+ * 대문자, U-label, 끝 점, `*`, 선행 점, 목록 안의 중복, 빈 배열, null은 기동을 거부한다. 모두 거부하려면 정지나 키 폐기를 쓴다.
  * 선택 필드 `sendQuota24h`: 호출처별 24시간 rolling 발송 할당(양의 정수, 생략하면 무제한, RQ-032).
  * 해시 만들기: `printf '%s' "$API_KEY" | sha256sum`. 키는 256비트 난수(`openssl rand -base64 32`)를 쓴다.
  *
@@ -49,6 +52,7 @@ import { verifyApiKeyAgainstAny } from "../crypto/index.js";
 import {
   DEFAULT_MAIL_REQUEST_LIMITS,
   checkAddress,
+  checkDomain,
 } from "../validation/index.js";
 
 /** 호출처의 JWS HS256 키. 값은 `Secret`으로 감싸 로그와 직렬화에 나오지 않게 한다. */
@@ -74,6 +78,11 @@ export interface CallerEntry {
   sendQuota24h: number | null;
   /** 요청의 `from`으로 쓸 수 있는 발신 주소(기본 발신 주소 외, 입력 표기 그대로). 비교는 대소문자를 무시한다. */
   allowedFrom: readonly string[];
+  /**
+   * 수신 도메인 허용 목록(RQ-046, ADR-0011 결정 8). 소문자 ASCII 도메인이다. null이면 수신자를 제한하지 않는다(기본).
+   * 빈 배열은 만들 수 없다. 수신자의 `@` 뒤를 소문자로 바꿔 정확히 비교한다.
+   */
+  allowedRecipientDomains: readonly string[] | null;
 }
 
 export interface CallerRegistry {
@@ -110,6 +119,7 @@ const ENTRY_FIELDS = new Set([
   "jwe",
   "sendQuota24h",
   "allowedFrom",
+  "allowedRecipientDomains",
 ]);
 const SIGNATURE_FIELDS = new Set(["mode", "keys"]);
 const SIGNATURE_KEY_FIELDS = new Set(["kid", "secretVar"]);
@@ -118,6 +128,7 @@ const SECRET_VAR = /^MAILO_JWS_SECRET_[A-Z0-9_]{1,80}$/;
 const MAX_KEYS_PER_CALLER = 2;
 const MAX_SEND_QUOTA = 10_000_000;
 const MAX_ALLOWED_FROM = 20;
+const MAX_ALLOWED_RECIPIENT_DOMAINS = 50;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -259,6 +270,11 @@ export function parseCallerRegistry(
     }
 
     const allowedFrom = parseAllowedFrom(raw["allowedFrom"], where, issues);
+    const allowedRecipientDomains = parseAllowedRecipientDomains(
+      raw["allowedRecipientDomains"],
+      where,
+      issues,
+    );
 
     if (typeof id === "string" && CALLER_ID.test(id)) {
       entries.push({
@@ -269,6 +285,7 @@ export function parseCallerRegistry(
         jwe: isRecord(jwe) ? jwe : null,
         sendQuota24h: typeof sendQuota === "number" ? sendQuota : null,
         allowedFrom,
+        allowedRecipientDomains,
       });
     }
   });
@@ -314,6 +331,60 @@ function parseAllowedFrom(
     addresses.push(item);
   });
   return addresses;
+}
+
+/**
+ * `allowedRecipientDomains`를 읽는다. 생략(undefined)하면 제한 없음(null)이다. null·빈 배열은 거부한다.
+ * 형식은 접수 검증의 도메인 규칙(`checkDomain`)이고 소문자 ASCII만 받는다. 정규화하지 않고 거부해 오타를 바로 알게 한다.
+ * 오류에는 항목 위치와 고정 사유만 싣고 값은 싣지 않는다(RQ-027).
+ */
+function parseAllowedRecipientDomains(
+  raw: unknown,
+  where: string,
+  issues: string[],
+): string[] | null {
+  if (raw === undefined) return null;
+  const at = `${where}.allowedRecipientDomains`;
+  if (
+    !Array.isArray(raw) ||
+    raw.length < 1 ||
+    raw.length > MAX_ALLOWED_RECIPIENT_DOMAINS
+  ) {
+    issues.push(
+      `${at}는 도메인 1~${MAX_ALLOWED_RECIPIENT_DOMAINS}개의 배열이어야 한다(제한하지 않으려면 필드를 생략한다)`,
+    );
+    return null;
+  }
+  const domains: string[] = [];
+  const seen = new Set<string>();
+  let valid = true;
+  raw.forEach((item: unknown, i: number) => {
+    const reason = typeof item === "string" ? domainProblem(item) : "문자열";
+    if (reason !== undefined) {
+      issues.push(
+        `${at}[${i}]는 소문자 ASCII 도메인이어야 한다(사유: ${reason})`,
+      );
+      valid = false;
+    } else if (seen.has(item as string)) {
+      issues.push(`${at}[${i}]가 같은 목록의 다른 항목과 중복이다(사유: 중복)`);
+      valid = false;
+    } else {
+      seen.add(item as string);
+      domains.push(item as string);
+    }
+  });
+  return valid ? domains : null;
+}
+
+/** 도메인 값의 거부 사유. 문제가 없으면 undefined. 값이 아니라 사유 이름만 돌려준다. */
+function domainProblem(domain: string): string | undefined {
+  if (/[\u0080-\uFFFF]/.test(domain))
+    return "비ASCII(U-label), A-label(xn--)로 적는다";
+  if (domain !== domain.toLowerCase()) return "대문자";
+  if (domain.endsWith(".")) return "끝 점";
+  if (domain.startsWith(".")) return "선행 점";
+  if (domain.includes("*")) return "와일드카드";
+  return checkDomain(domain) === undefined ? undefined : "도메인 형식";
 }
 
 /**
