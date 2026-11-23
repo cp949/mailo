@@ -546,7 +546,8 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 근거: RQ-043, ADR-0011 결정 2·3. 운영자가 장애 중 발송을 멈출 수 있다(`deployment.md` "발송 정지와 운영 REST").
 
 - 정지 중에도 등록은 평소처럼 202다. 작업은 `PENDING`에 쌓이고 만료 시각(`expiresAt`)에 `EXPIRED`가 된다. 사용처 relay는 등록 실패로 처리하지 않는다.
-- 정지를 알아보려면 호출처 API 키로 `GET /health/ready`를 호출해 `sendPaused`(`{ paused, scope }`)를 본다. `scope`가 `all`이면 전체 정지, `caller`이면 이 호출처만 정지다. 이 값은 이벤트 피드로 오지 않는다.
+- 정지를 알아보려면 호출처 API 키로 `GET /health/ready`를 호출해 `sendPaused`(`{ paused, scope }`)를 본다. `scope`가 `all`이면 전체 정지, `account`이면 이 호출처가 쓰는 SMTP 계정의 정지, `caller`이면 이 호출처만 정지다. `scope`는 앞으로 값이 더 늘 수 있으므로 모르는 값도 `paused: true`로 보고 정지로 다룬다(`account`는 SMTP 계정 도입 때 더해졌다). 계정 ID는 응답에 없다. 이 값은 이벤트 피드로 오지 않는다.
+- 호출처 키로 받는 `circuitBreaker`(`state`·`openUntil`·`lastReason`)는 이 호출처가 쓰는 SMTP 계정의 차단기다(SMTP 계정이 여럿인 배포). 다른 계정이 막혀도 `closed`일 수 있다. 인증 없이 받는 `circuitBreaker.state`는 모든 계정 중 가장 나쁜 상태라 이 호출처의 메일이 막혔는지는 호출처 키로 확인한다. 어느 경우에도 계정 ID와 계정 수는 없다. 계정이 하나인 배포는 이전과 같다. 어느 값도 200/503을 바꾸지 않으므로 readiness 판정에 쓰지 않는다.
 - 정지는 키 폐기와 다르다. 키 폐기는 새 요청을 막고 정지는 발송만 멈춘다. 호출처 키가 유출됐으면 운영자가 호출처 정지와 키 폐기를 함께 한다.
 - 운영자가 관리 토큰으로 작업을 취소하면(`POST /ops/jobs/{jobId}/cancel`) `CANCELED`와 `JOB_CANCELED`(`canceledBy: OPERATOR`)가 온다. 사용처는 호출처가 직접 취소한 경우와 같게 종결 처리한다(위 "작업 취소").
 

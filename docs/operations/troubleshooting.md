@@ -452,7 +452,7 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 | `allowed_from_other_account`(warn, `callerId`) | 그 호출처의 `allowedFrom`이 다른 계정의 `from`과 같다 | 의도한 별칭 공유인지 확인한다. 거부하지 않는다 |
 | `account_quota_exceeded`(warn, `accountId`, `limit`) | 그 계정의 24시간 `sendQuota24h`에 닿아 그 계정의 점유가 멈췄다. 다른 계정은 계속 발송한다. 상태가 바뀔 때만 한 줄 남는다 | 한도 수치와 시도 수를 본다(아래 SQL). 24시간 안에 시도가 빠지면 `account_quota_recovered`(info)가 남고 다시 발송한다. 한도를 올리려면 파일을 고치고 재시작한다 |
 | `claim_failed`(error, `accountId`, `error`, `streak`) | 그 계정의 점유 쿼리가 실패했다. 그 계정만 지수 백오프(상한 30초)하고 다른 계정은 계속 점유한다 | `accountId`가 있는 줄만 본다. 같은 `accountId`가 계속되면 그 계정의 차단기 행이 없는지(`mail_circuit_breaker`) 본다. 모든 계정에서 나오면 DB 연결 문제다("DB 연결 문제") |
-| `send_paused`·`send_resumed`(`scope: "account"`, `accountId`) | `mail_send_controls`에 `account` 범위 행이 생기거나 사라졌다. 그 계정의 점유가 멈추거나 재개된다 | 계정 정지를 쓰고 지우는 REST·CLI는 아직 없다(구현 묶음 C). 직접 SQL로 넣은 행이다. 아래 SQL로 확인한다 |
+| `send_paused`·`send_resumed`(`scope: "account"`, `accountId`) | `mail_send_controls`에 `account` 범위 행이 생기거나 사라졌다. 그 계정의 점유가 멈추거나 재개된다 | `PUT`·`DELETE /ops/pauses/accounts/{accountId}`나 CLI `pause|resume --account`로 건 정지다. 누가 언제 걸었는지는 `GET /ops/pauses`·`GET /ops/audit`(`scope.type: account`)로 본다. 직접 SQL로 넣은 행일 수도 있다. 아래 SQL로 확인한다 |
 | 기동 실패 `invalid worker option (field=accounts)` | 구성한 계정 수가 `MAILO_WORKER_CONCURRENCY`보다 많다 | 계정을 줄이거나 `MAILO_WORKER_CONCURRENCY`를 올린다. 계정마다 슬롯 하나를 보장하는 조건이다 |
 | 기동 실패 `invalid worker option (field=accountConcurrency)`·`accountQuota`·`accountQuota.retention` | 계정의 `concurrency`가 1~`MAILO_WORKER_CONCURRENCY`가 아니거나, `sendQuota24h`가 양의 정수가 아니거나, 계정 할당이 있는데 시도 기록 보존이 24시간 미만이다 | 계정 파일의 값을 고치거나 `MAILO_RECORD_RETENTION_SECONDS`를 24시간 이상으로 둔다 |
 | `job_internal_error`(error)가 계속된다 | 작업이 고정한 계정의 발송기가 없는 등 Mailo 내부 오류. 차단기를 건드리지 않고 같은 작업이 3번째 시도에서 `FAILED`가 된다 | 정상 경로에서는 일어나지 않는다. 계정 구성과 `mail_jobs.account_id`를 확인한다 |
@@ -460,7 +460,8 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 
 - 작업의 계정 확인(읽기): `SELECT account_id, status, count(*) FROM mail_jobs GROUP BY 1, 2 ORDER BY 1, 2;`
 - 계정별 차단기 행(읽기): `SELECT breaker_key, state, open_until, last_reason FROM mail_circuit_breaker ORDER BY 1;`. 행 키가 계정 ID다. 구성에 있는 계정의 행은 기동 때 만든다. 구성에서 빠진 계정의 행은 지우지 않는다.
-- 이 버전은 계정별 차단기 상태를 `/health/ready`·`/ops`·`/metrics`에 내지 않는다(구현 묶음 C). 위 SQL로 본다.
+- 계정별 차단기 상태는 `GET /ops/accounts`(CLI `accounts list`)와 `/metrics`의 `mailo_breaker_state{account_id}`가 낸다. `/health/ready`의 `circuitBreaker`는 인증 없음·운영자 토큰에서 가장 나쁜 계정의 상태이고 호출처 키에서 그 호출처 계정의 상태다. 어느 계정이 막혔는지는 `GET /ops/accounts`로 먼저 본다. 위 SQL은 API가 안 될 때의 대안이다.
+- `GET /ops/accounts`가 503이면 구성한 계정의 차단기 행이 없는 것이다(`mail_circuit_breaker`). Worker 기동이 행을 만든다. 행이 없으면 그 계정의 점유도 실패한다(`claim_failed`).
 - 계정 정지 행(읽기): `SELECT scope_id, paused_at, paused_by FROM mail_send_controls WHERE scope_type = 'account';`
 - 계정의 24시간 사용량(읽기, 한도 판정과 같은 조건): `SELECT count(*) FROM mail_attempts WHERE account_id = '<ID>' AND counted AND stage IS DISTINCT FROM 'WORKER' AND finished_at > now() - interval '24 hours';` 점유 중(`SENDING`)인 작업 수가 더해진다.
 - 한 계정이 느려질 때: 그 계정은 인스턴스당 슬롯 `cap_a`(계정의 `concurrency`, 없으면 `max(1, C − (N − 1))`)까지만 쥔다. 다른 계정은 남은 슬롯으로 계속 발송한다. 처리량이 모자라면 `MAILO_WORKER_CONCURRENCY`를 올리거나 계정에 `concurrency`를 준다.

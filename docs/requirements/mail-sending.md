@@ -66,6 +66,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 7단계 묶음 C 운영 표면 반영 뒤): `pnpm test` 단위 890건(49개 파일), `pnpm test:integration` 통합 816건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 최종 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 3건이 실패했다(`queue/cancel.integration-spec.ts` 2건: 취소 결과에 `accountId`가 더해졌고, `cli/cli.integration-spec.ts` 1건: `sendControls`에 `pausedAccountCount`가 더해졌다). 둘 다 새 필드를 기대값에 더한 뒤 그 파일 2개(25건)만 다시 실행해 통과했다. 기존 테스트의 변경은 모두 새 필드·인자를 반영한 것이고 단언을 약화하지 않았다. (1) `test/queue/send-controls.integration-spec.ts`: `listPauses`가 `account` 행을 내므로 기대 목록에 `{ type: "account", id: "default" }`를 더했고(제목에서 "account 행은 REST 목록에 없다"를 뺐다), `getCallerPauseSummary`가 계정 ID를 세 번째 인자로 받아 호출에 `"default"`를 더했으며 `getSendControlsSummary` 기대값에 `pausedAccountCount`를 더했다. (2) `http/ops.integration-spec.ts`·`cli/cli.integration-spec.ts`의 `sendControls` 기대값에 `pausedAccountCount: 0`을 더했다. (3) `worker/metrics.spec.ts`·`queue/metrics-reads.integration-spec.ts`·`queue/cancel.integration-spec.ts`의 입력·기대값에 `accountId`를 더했다(`JobTransition`·취소 결과가 계정을 가진다). (4) `metrics/catalog.spec.ts`의 전역 접두 목록에 `mailo_account_`를 더했다. 컨테이너: `scripts/container/verify-metrics.sh`(읽기 전용 루트, 응답·토큰 행렬·`promtool check metrics` 통과, 비밀 값 노출 0건)와 `verify-sigterm-file.sh`(1000건, 재기동 뒤 중복·유실 없음)를 각 1회 실행했다. 이 스크립트는 단일 계정(`default`) 구성이다. 다중 계정 컨테이너, 롤링 배포·롤백, 실제 Gmail·Workspace, 외부 호출처의 `/health/ready` 처리, 실제 Prometheus의 새 알림 규칙 평가는 실행하지 않았다. 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다(최종 전체 실행은 한 번이다).
 - 검증 수치(2026-11-24 7단계 묶음 B 계정 단위 점유 반영 뒤): `pnpm test` 단위 873건(48개 파일), `pnpm test:integration` 통합 774건(53개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint`(oxlint) 경고·오류 없음(종료 코드 0). 기존 테스트의 변경은 다섯 가지다. (1) `getQueueBacklog`·`getQueueDepth`가 구성 계정 목록을 필수 인자로 받아 `http/health-ops.integration-spec.ts`·`queue/metrics-reads.integration-spec.ts`의 호출에 `["default"]`를 더했다(단언은 그대로). (2) `queue/claim-priority.integration-spec.ts`의 우선순위 점유 인덱스 존재 단언이 0015가 지운 `mail_jobs_priority_claim_idx`에서 새 `mail_jobs_account_priority_claim_idx`로 바뀌었다. (3) `queue/account-id.integration-spec.ts`는 `accountIds` 옵션이 `accountId`로 바뀌어 호출을 고쳤고, 비`default` 계정의 claim이 차단기 행을 요구해 세 테스트에 `ensureBreakerRows`를 더했으며, "`accountIds`를 생략하면 계정으로 거르지 않는다"(점유 2건)는 "`accountId`를 생략하면 `default` 계정만 점유한다"(점유 1건)로 바뀌었다. (4) `worker/account-startup.spec.ts`의 `account_limits_not_enforced` 경고를 단언하던 테스트가 "더는 남기지 않는다"로 바뀌었다. (5) `e2e/multi-account.integration-spec.ts`의 "묶음 B 전의 방어" 기동 거부 단언이 "비`default` 계정 구성의 기동" 성공 단언으로 바뀌고 `support/rest-app.ts`의 `allowNonDefaultAccounts` 옵션을 지웠다. 나머지 기존 단언은 바꾸지 않았다. 컨테이너 스크립트 `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`를 실행했다(`Dockerfile`·`docker-compose.yml`은 바꾸지 않았고 Worker 조립과 점유 경로를 지나므로 회귀 확인이다. 스크립트 검증이라 `[x]` 근거에 쓰지 않았다): `verify-sigterm-file.sh`는 SIGTERM 종료 코드 0, 재기동 뒤 작업 1000건이 모두 `SENT`이고 SMTP 수신 1000통(유일 `Message-ID` 1000), 남은 파일 0이었다. `verify-sigkill-duplicate.sh`는 관찰 스크립트이며 같은 `Message-ID`로 2통이 SMTP에 도착했다(`attempts=2`, RQ-013의 기존 한계와 같다). 두 스크립트 모두 단일 계정(`default`) 구성이다. 다중 계정 구성의 컨테이너 검증, `verify-metrics.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다.
 - 검증 수치(2026-11-24 7단계 묶음 A 다중 SMTP 계정 모델 반영 뒤): `pnpm test` 단위 858건(47개 파일), `pnpm test:integration` 통합 711건(48개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 기존 테스트의 변경은 네 가지다. (1) `config.smtp`가 `config.smtpAccounts`로 바뀌어 `config/load-config.spec.ts`·`http/rest-intake.integration-spec.ts`·`support/file-channel.ts`의 접근 경로와 필드 이름(`defaultFrom`→`from`)을 고쳤다. (2) `RegisterInput.accountId`가 필수가 되어 `support/queue-fixtures.ts`의 입력과 `envelope/open-request.spec.ts`의 인자에 `accountId`를 더했다. (3) `db/ops-controls.integration-spec.ts`·`db/event-purges.integration-spec.ts`는 0001~0007·0001~0008만 적용한 schema에 작업 행을 넣는데 `register`가 `account_id`를 쓰므로 컬럼 없는 옛 형태의 `INSERT`(`createLegacyJob`)로 바꿨다(단언은 그대로). (4) `db/event-purges.integration-spec.ts`의 "전체 적용 시 0009가 마지막"은 0010·0011이 이어지므로 "0008 바로 뒤에 0009"로 고쳤다. 나머지 기존 단언은 바꾸지 않았다. 컨테이너 스크립트 `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`를 실행했다(`docker-compose.yml`에 주석만 더했고 코드 경로가 Worker 조립을 지나므로, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다): `verify-sigterm-file.sh`는 SIGTERM 뒤 재기동에서 작업 1000건이 모두 `SENT`이고 SMTP 수신 1000통(유일 `Message-ID` 1000), 남은 파일 0이었다. `verify-sigkill-duplicate.sh`는 관찰 스크립트이며 같은 `Message-ID`로 2통이 SMTP에 도착했다(`attempts=2`, 중복 발송 재현, RQ-013의 기존 한계와 같다). 두 스크립트 모두 단일 계정(`default`) 구성이다. `verify-metrics.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음. 샘플은 호출처 API 계약이 바뀌지 않았다). 읽기 전용 컨테이너의 계정 파일 마운트와 `_FILE` 비밀 읽기, 실제 Gmail 계정 둘은 실행하지 않았다(RQ-053~056 판정 근거).
 - 검증 수치(2026-11-24 8단계 관측성 `/metrics` 반영 뒤): `pnpm test` 단위 776건(43개 파일), `pnpm test:integration` 통합 663건(44개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합은 한 번의 묶음으로 실행했고 실패한 파일이 없었다. 기존 테스트의 단언은 한 곳만 바꿨다(취소 결과 `canceled`에 `callerId` 필드가 더해져 `queue/cancel.integration-spec.ts`의 기대값 두 곳이 새 필드를 포함한다, ADR-0012 구현 중 확정 1). Dockerfile·종료 순서·파일 채널 I/O·`docker-compose.yml`은 바꾸지 않았다(`.env.example`은 주석만 더했다). `scripts/container/verify-metrics.sh`를 실행했다(read_only 컨테이너에서 `/metrics` 응답·토큰 행렬·`promtool check metrics`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 실제 Prometheus 스크레이프와 `promtool check rules`는 일회성 확인이다(ADR-0012 구현 중 확정 11). `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-049~052 판정 근거).
@@ -96,7 +97,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 | 5단계 | 요청별 만료 시간(RQ-039, ADR-0010) |
 | 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041), 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044), 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI(RQ-045~047), 묶음 D 결과 불명 표시(RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다 |
 | 8단계 | 관측성(ADR-0012). `GET /metrics`(RQ-049), 이름·라벨 규칙(RQ-050), 전역 gauge(RQ-051), 인스턴스 counter·gauge(RQ-052). 마이그레이션 없음 |
-| 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`)과 B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`)를 구현했다. C 운영 표면, D 호출처 동시 상한(선택)은 구현 전이다. RQ-060 이후를 해당 묶음에서 추가한다 |
+| 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-064 이후를 해당 묶음에서 추가한다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -1845,7 +1846,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 
 ## 16. 다중 SMTP 계정
 
-결정은 [ADR-0013](../adr/0013-multiple-smtp-accounts.md)이고 구현은 묶음 A(계정 모델)·B(계정 단위 점유)·C(운영 표면)·D(호출처 동시 상한, 선택)로 나눈다. RQ-053~056은 묶음 A, RQ-057~059는 묶음 B의 범위다. `/metrics`·`/health/ready`·`/ops` 계정 표면(묶음 C)과 호출처 동시 상한(묶음 D)은 이 RQ에 없고 해당 묶음을 구현할 때 RQ-060 이후로 추가한다. 계정이 `default` 하나일 때는 현행과 같은 동작이다.
+결정은 [ADR-0013](../adr/0013-multiple-smtp-accounts.md)이고 구현은 묶음 A(계정 모델)·B(계정 단위 점유)·C(운영 표면)·D(호출처 동시 상한, 선택)로 나눈다. RQ-053~056은 묶음 A, RQ-057~059는 묶음 B, RQ-060~063은 묶음 C(`/ops` 계정 조회·정지, `/metrics`·`/health/ready`의 계정 표면)의 범위다. 호출처 동시 상한(묶음 D)은 이 RQ에 없고 구현할 때 RQ-064 이후로 추가한다. 계정이 `default` 하나일 때는 현행과 같은 동작이다.
 
 ### RQ-053 SMTP 계정 정의와 설정 로드
 
@@ -1957,7 +1958,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 
 - 배포 순서: (1) `0010`·`0011` 적용 (2) 모든 인스턴스를 새 버전으로 (3) 계정 파일·비밀 변수 배포와 재시작 (4) 레지스트리에 `accountId`를 넣고 재시작. 4는 모든 인스턴스가 3을 마친 뒤에만 한다("코드 먼저, 레지스트리 나중", ADR-0013 결정 2). 이 단계가 끝나기 전에 `default`가 아닌 계정의 작업이 생기면 구버전이 `default` SMTP로 보낸다. 롤백은 레지스트리의 `accountId` 제거, 비`default` 비종결 작업 0 확인, 앱 되돌림 순서다. 절차는 `docs/operations/deployment.md` "SMTP 계정 도입 배포 순서"다.
 - 계정 비밀번호·`auth.user`·host·`from`은 로그·오류·이벤트·지표·`/health/ready`·`/ops`·거부 기록에 남기지 않는다(RQ-027, ADR-0013 결정 6). 로그에는 계정 ID, 호출처 ID, 건수만 쓴다. 비밀번호는 `Secret`으로 감싼다.
-- 묶음 A·B는 `/metrics`·`/health/ready`·`/ops`의 응답 모양을 바꾸지 않는다(`account_id` 라벨은 `default` 상수 그대로, 묶음 C). `queue.dueCount`의 값만 계정별 합이 된다(계정이 하나면 같다, RQ-059). 호출처 API 계약(`openapi.yaml`)의 필드는 바뀌지 않는다.
+- 묶음 A·B는 `/metrics`·`/health/ready`·`/ops`의 응답 모양을 바꾸지 않았다. 묶음 C가 `account_id` 라벨·`circuitBreaker` 의미·`sendPaused.scope`·`/ops` 계정 표면을 바꾼다(RQ-060~063). `queue.dueCount`의 값은 계정별 합이다(계정이 하나면 같다, RQ-059). 호출처 `Job`·`Event`의 필드는 바뀌지 않는다.
 - 새 npm 의존성이 없고 새 상시 서비스가 없다(RQ-029).
 
 **수용 조건:**
@@ -1967,7 +1968,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 - [x] 기동 점검 로그(`account_unused`·`allowed_from_other_account`)에 host·from 값이 없다. 묶음 B의 로그(`account_quota_exceeded`·`account_quota_recovered`·`claim_failed`·`send_paused`)는 계정 ID·한도 수치·건수만 싣는다(RQ-058, 수신자 주소 canary 검색).
 - [x] 기존 단일 계정 환경에서 기존 단위·통합 테스트가 통과한다(변경은 설정 접근자 `config.smtp`→`config.smtpAccounts`와 픽스처의 `accountId` 필드뿐이다. 단언을 약화하지 않았다).
 - [ ] 롤링 배포·롤백 실행, 읽기 전용 루트 컨테이너에서 계정 파일 마운트와 `_FILE` 비밀 읽기를 실행하지 않았다.
-- [ ] `/ops`·CLI·감사의 계정 비노출은 해당 표면이 묶음 C에 있어 확인하지 않았다.
+- [x] `/ops`(`GET /ops/accounts`, 정지·해제 응답, 감사 목록)·CLI·`/metrics`·`/health/ready`에도 계정 host·user·from·비밀번호·비밀 변수 이름이 없다(canary, RQ-060~063).
 
 **판정 근거:**
 
@@ -1984,7 +1985,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 - `claim`은 계정 하나(`accountId`)만 다룬다. 차단기 행(키는 계정 ID)·모드(closed·open·half_open)·대표 작업·정지가 계정마다 독립이다. 한 계정의 `open`은 다른 계정의 점유를 막지 않는다(ADR-0013 결정 3 가·나).
 - 호출 순서는 차단기 행 읽기 → 정지 읽기 → 모드 결정 → (none이면 종료) → 계정 할당(RQ-058) → 호출처 할당(RQ-032) → 작업 쿼리다. 작업 쿼리는 `account_id = $n` 조건과 계정 부분 인덱스를 쓴다(RQ-059). lease 복구는 poll 라운드마다 한 번이다(`recoverLeases`).
 - 대표 작업은 그 계정의 작업만 고른다. 내부 오류(`internal: true`)로 끝난 대표 작업은 그 계정을 닫지 않는다. 임계값·대기 시간은 모든 계정이 공유하는 `MAILO_BREAKER_*` 값이다.
-- 계정 정지(`mail_send_controls`의 `account` 범위 행)는 그 계정의 점유를 멈춘다(대표 작업 포함). 정지는 차단기와 독립이다. 전체 정지·호출처 정지와 합쳐진다. 정지를 쓰고 지우는 REST·CLI·감사는 묶음 C다.
+- 계정 정지(`mail_send_controls`의 `account` 범위 행)는 그 계정의 점유를 멈춘다(대표 작업 포함). 정지는 차단기와 독립이다. 전체 정지·호출처 정지와 합쳐진다. 정지를 쓰고 지우는 REST·CLI·감사는 RQ-061이다.
 - 계정 상태 오류의 재시도 시각(`next_attempt_at`)은 차단기가 open이고 `open_until`이 미래일 때만 `open_until`이다. 그 밖은 사유별 초기 대기 뒤다. 과거로 기록하지 않는다.
 - 잠금 순서는 작업 행 → 차단기 행이다. `claim`과 `completeAttempt`는 트랜잭션당 차단기 행을 하나만 갱신한다. advisory lock은 `try`뿐이다. 시각은 DB `now()`다.
 - 계정이 하나(`default`)일 때 `claim` 한 번의 문장 수는 묶음 A와 같다.
@@ -2008,7 +2009,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 - `queue/account-claim.integration-spec.ts`, `queue/claim-query-count.integration-spec.ts`, `queue/account-id.integration-spec.ts`, `worker/worker-accounts.integration-spec.ts`, `e2e/multi-account.integration-spec.ts`(실제 PostgreSQL, 로컬 `smtp-server`).
 - RED 확인(2026-11-24): `queue/account-claim.integration-spec.ts`는 구현 전 27건 중 24건 실패했다(`claim`이 `accountId`를 몰라 계정 조건이 없었고, `open_until`이 지난 open에서의 계정 오류가 `next_attempt_at`을 과거로 썼다). `e2e/multi-account.integration-spec.ts`는 기동 거부를 제거하기 전 17건 중 16건 실패했다.
 - 구현: `queue/claim.ts`·`complete.ts`·`send-controls.ts`, `worker/worker.ts`.
-- 남은 미검증: 위 두 항목, 계정 정지의 REST·CLI(묶음 C)와 `/health/ready`·`/metrics` 반영.
+- 남은 미검증: 위 두 항목. 계정 정지의 REST·CLI와 `/health/ready`·`/metrics` 반영은 RQ-061~063이다.
 
 ### RQ-058 계정 24시간 할당과 슬롯 배분
 
@@ -2039,7 +2040,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 - `worker/slots.spec.ts`(단위), `queue/account-claim.integration-spec.ts`(계정 할당·동시 점유), `worker/worker-accounts.integration-spec.ts`(Worker·슬롯·정지·할당 로그).
 - RED 확인(2026-11-24): `worker/slots.spec.ts`는 모듈이 없어 로드에 실패했다. `worker/worker-accounts.integration-spec.ts`는 Worker 구현 전 12건 중 8건 실패했다(슬롯 상한 없음, 계정 할당 미적용 등).
 - 구현: `worker/slots.ts`·`worker/worker.ts`·`worker/runner.ts`, `queue/claim.ts`·`quota-usage.ts`.
-- 남은 미검증: 위 두 항목. `/metrics`의 `mailo_account_quota_*`·`mailo_worker_in_flight`와 `/ops/accounts`의 할당 표시는 묶음 C다.
+- 남은 미검증: 위 두 항목. `/metrics`의 `mailo_account_quota_*`·`mailo_worker_in_flight`와 `/ops/accounts`의 할당 표시는 RQ-060·062다.
 
 ### RQ-059 계정 단위 인덱스와 건수 쿼리
 
@@ -2069,6 +2070,109 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 - 구현: `migrations/0012`~`0016`, `queue/backlog.ts`, `health/health.service.ts`·`metrics-collector.ts`.
 - 남은 미검증: 위 두 항목.
 
+### RQ-060 계정별 운영 상태 조회(`GET /ops/accounts`)
+
+- [ ] **진행 상태:** 진행 중 (7단계 묶음 C)
+
+**요구사항:**
+
+- `GET /ops/accounts`는 읽기·관리 토큰을 받고 호출처 키는 401이다. 이 인스턴스가 구성한 계정마다 `accountId`, `breaker`(`state`·`openUntil`·`lastReason`, `/health/ready`의 인증된 `circuitBreaker`와 같은 값), `paused`, `sendQuota24h`(`{ limit, used }`, 한도가 없으면 `null`), `queue`(`dueCount`·`dueCountTruncated`·`oldestDueAgeSeconds`)를 구성 순서로 준다(ADR-0013 결정 5).
+- host·user·`from`·비밀번호·비밀 변수 이름은 담지 않는다(RQ-027). 구성에서 빠진 계정은 목록에 없다(그 계정의 정지 행은 `GET /ops/pauses`에 있다). 구성한 계정의 차단기 행이 없으면 던진다(fail-closed, 503).
+- `GET /ops/jobs/{jobId}`의 `OpsJob`에 `accountId`가 있고 호출처의 `Job`에는 없다(ADR-0013 결정 6).
+
+**수용 조건:**
+
+- [x] 구성한 계정을 구성 순서로 내고 `Cache-Control: no-store`다. 계정마다 차단기 상태와 정지 여부가 독립이고 대기 건수가 작업의 계정에 센다.
+- [x] 24시간 사용량은 계정의 최근 시도와 점유 중 작업을 센다. 한도가 없는 계정은 `null`이다.
+- [x] 읽기·관리 토큰은 200, 호출처 키·토큰 없음·틀린 토큰은 401이다.
+- [x] canary: 계정 host·user·from·비밀번호·`MAILO_SMTP_SECRET` 이름이 응답과 로그에 없다.
+- [x] `OpsJob.accountId`가 있고 호출처 `Job`의 키에는 `accountId`가 없다.
+- [ ] 운영 크기에서의 쿼리 비용(계정당 쿼리 2개와 사용량 쿼리)을 측정하지 않았다.
+
+**판정 근거:**
+
+- `e2e/ops-accounts.integration-spec.ts`(PostgreSQL, 실제 앱).
+- RED 확인(2026-11-24): 구현 전 8건 중 7건이 404 또는 400으로 실패했다.
+- 구현: `ops/ops.service.ts`·`ops.controller.ts`, `queue/circuit-breaker.ts`(`getBreakerStates`)·`quota-usage.ts`(`getAccountQuotaUsage`)·`breaker-view.ts`·`read.ts`.
+- 남은 미검증: 위 한 항목.
+
+### RQ-061 계정 정지·해제 REST와 CLI
+
+- [ ] **진행 상태:** 진행 중 (7단계 묶음 C)
+
+**요구사항:**
+
+- `PUT`·`DELETE /ops/pauses/accounts/{accountId}`는 관리 토큰만 받는다(읽기 토큰 403, 호출처 키·없음 401). `mail_send_controls`의 `account` 범위 행을 쓰고 지우며, 상태가 바뀐 경우만 같은 트랜잭션에 `PAUSE`·`RESUME` 감사(`scope_type: account`)를 쓴다. 마이그레이션과 감사 CHECK 변경이 없다. 멱등이고 응답은 호출처 정지와 같은 모양에 `inRegistry` 대신 `inConfig`를 쓴다(ADR-0013 결정 5).
+- `accountId`가 `^[a-z0-9][a-z0-9_-]{0,31}$`(`unregistered` 제외)가 아니면 400(`accountId`, `INVALID_FORMAT`)이다. 퍼센트 디코딩 실패도 같고 인증이 먼저다(ADR-0011 결정 7). 구성에 없는 ID도 받는다. `GET /ops/pauses`와 `GET /ops/audit`가 `account` 범위를 낸다.
+- `SendScope`에 `account`를 더하고 정지 범위 분기는 `all`·`caller`·`account`를 모두 나열한다. 계정을 호출처로 오인하는 분기를 만들지 않는다.
+- CLI: `accounts list`(읽기), `pause|resume --account <id> --yes`(`--yes` 없으면 서버를 부르지 않고 종료 코드 1). 종료 코드 0/1/2/3과 `sanitizeForTerminal`은 기존 명령과 같다(RQ-047).
+
+**수용 조건:**
+
+- [x] 정지·해제의 응답·멱등·감사 한 건·구성 밖 계정(`inConfig: false`)·정지 목록·감사 목록의 계정 범위.
+- [x] 읽기 토큰 403·호출처 키 401·토큰 없음 401, 상태·감사 불변. 형식 오류 400, 디코딩 실패는 자격 없음 401·관리 토큰 400.
+- [x] 실제 Worker: 계정을 정지하면 그 계정의 호출처 작업만 `PENDING`에 남고 다른 계정은 발송하며 해제하면 발송한다.
+- [x] CLI 인자 해석(`--account`, `--yes`, 범위 하나, 계정 ID 형식이 서버 `isAccountId`와 같음), 경로·메서드, 제어 문자 치환, 실제 서버 통합(`accounts list`, 읽기 토큰 403 → 종료 코드 2).
+- [x] 로그 `ops_pause_set`·`ops_pause_cleared`에 `scope: "account"`와 `accountId`가 있고 canary가 응답·로그에 없다.
+- [ ] 롤링 배포 중(구버전은 계정 정지를 읽지 않음)의 동작은 코드 읽기 결과이고 실행하지 않았다. 읽기 전용 컨테이너에서 CLI 새 명령을 실행하지 않았다.
+
+**판정 근거:**
+
+- `e2e/ops-account-pause.integration-spec.ts`, `cli/args.spec.ts`·`cli/run.spec.ts`·`cli/cli.integration-spec.ts`, `queue/send-controls.integration-spec.ts`.
+- RED 확인(2026-11-24): 구현 전 REST 8건 중 8건, CLI 단위 5건과 통합 1건이 실패했다.
+- 구현: `queue/send-controls.ts`, `ops/ops.controller.ts`·`ops.service.ts`·`query-params.ts`, `http/problem.filter.ts`, `cli/args.ts`·`run.ts`.
+- 남은 미검증: 위 한 항목.
+
+### RQ-062 `/metrics`의 계정 라벨과 계정 지표
+
+- [ ] **진행 상태:** 진행 중 (7단계 묶음 C)
+
+**요구사항:**
+
+- `account_id` 라벨 값은 이 인스턴스가 구성한 계정 ID와 `unregistered`(구성에 없는 계정의 작업이 종결되는 경우)의 닫힌 집합이다. counter는 작업의 계정으로 센다(시도·실패 분류·점유·종결·취소·lease 회수). 0 시리즈 시드는 (호출처, 그 호출처의 계정) 쌍이다. 곱집합이면 호출처 50개 × 계정 20개에서 `mailo_attempts_total`이 5000시리즈가 되어 상한 2000에서 잘린다(ADR-0013 결정 5).
+- 전역 gauge `mailo_queue_*`·`mailo_breaker_*`는 계정마다 시리즈를 낸다. 새 지표: `mailo_account_paused`, `mailo_account_quota_limit`·`mailo_account_quota_used`(한도를 설정한 계정만), `mailo_send_paused_accounts`(구성 밖 계정의 정지도 센다), 인스턴스 gauge `mailo_worker_in_flight`(`account_id`). 기존 `mailo_worker_in_flight_jobs`는 전체 값으로 남는다.
+- 지표·HELP·라벨 어디에도 host·user·from·비밀번호가 없다(RQ-027).
+
+**수용 조건:**
+
+- [x] 단위: 구성 밖·형식이 틀린 계정 값은 `unregistered` 하나로 모이고(서로 다른 값 3000개를 넣어도 시리즈가 늘지 않음), 생략하면 `default`다. 시드가 쌍으로 만들어져 50 × 20에서 상한 안이다(곱집합은 2000에서 잘림을 같은 테스트에서 확인). Worker counter가 작업·전이의 계정을 쓴다. 계정별 진행 중 시리즈.
+- [x] 통합: 큐 건수·차단기 상태/사유·정지(구성 밖 계정은 라벨 없이 수만 셈)·할당 게이지가 계정별이고, 실제 발송에서 시도·점유·종결이 작업의 계정으로 센다. 만료 sweep으로 종결된 구성 밖 계정 작업은 `unregistered`이며 전체 응답의 `account_id` 값이 구성 계정과 `unregistered`뿐이다.
+- [x] canary: 계정 host·user·from·비밀번호와 비밀 변수 이름이 `/metrics`와 로그에 없다.
+- [ ] 실제 Prometheus가 새 시리즈를 스크레이프해 알림 규칙을 평가하는 것과 계정 20개 규모의 시리즈 수·스크레이프 쿼리 비용(계정당 쿼리 약 6개)을 측정하지 않았다.
+
+**판정 근거:**
+
+- `e2e/metrics-accounts.integration-spec.ts`, `metrics/store.spec.ts`·`metrics/catalog.spec.ts`·`worker/metrics.spec.ts`·`health/metrics-samples-accounts.spec.ts`.
+- RED 확인(2026-11-24): 구현 전 `e2e/metrics-accounts.integration-spec.ts`는 8건 중 7건, `metrics/store.spec.ts`는 새 export가 없어 로드에 실패했다.
+- 구현: `metrics/catalog.ts`·`store.ts`, `health/metrics-collector.ts`·`metrics-samples.ts`·`metrics.service.ts`, `worker/metrics.ts`·`worker.ts`, `queue/backlog.ts`(`getAccountQueueDepths`), `app.module.ts`.
+- 남은 미검증: 위 한 항목.
+
+### RQ-063 `/health/ready`의 계정 표면
+
+- [ ] **진행 상태:** 진행 중 (7단계 묶음 C)
+
+**요구사항:**
+
+- `circuitBreaker`는 호출처 키에서는 그 호출처 계정의 상태·`openUntil`·`lastReason`이고, 인증 없음과 운영자 토큰에서는 모든 계정 중 가장 나쁜 상태(`open` > `half_open` > `closed`, 같으면 계정 ID 오름차순 첫 계정)다. 계정 ID와 수는 어느 응답에도 없다. 단일 계정(`default`만) 배포는 값이 이전과 같다(ADR-0013 결정 5).
+- `sendPaused.scope`에 `account`를 더한다. 그 호출처 계정의 정지일 때만이고 우선순위는 `all`, `account`, `caller`다. 운영자 `sendControls`에 `pausedAccountCount`(구성 밖 계정 포함)를 더한다. `queue.dueCount`는 계정별 값의 합이다(RQ-059).
+- 200/503은 정지·차단기·계정 상태로 바뀌지 않는다(RQ-031).
+
+**수용 조건:**
+
+- [x] 공개 응답은 `{ state }`뿐이고 최악 상태 순서가 맞다. 호출처 키는 자기 계정 상태를 보고 다른 계정이 막혀도 `closed`일 수 있다. 운영자 응답은 최악 계정의 `openUntil`·`lastReason`과 `pausedAccountCount`를 준다.
+- [x] `sendPaused.scope`의 `account`는 자기 계정 정지에서만 나오고 `all` > `account` > `caller`다.
+- [x] 전체·계정 정지와 계정 차단기가 열려도 모든 호출(공개·호출처 키·읽기·관리 토큰)이 200 `UP`이다.
+- [x] canary: 어느 응답·로그에도 계정 host·user·from·비밀번호·비밀 변수 이름·계정 ID가 없다.
+- [x] 호출처 계약 변경(`circuitBreaker` 의미, `sendPaused.scope` 값 `account`, `sendControls.pausedAccountCount`, `OpsJob.accountId`)을 `openapi.yaml`에 반영했다. 저장소 안 Java 샘플은 `/health/live`만 쓰고 `/health/ready`·`/ops`를 소비하지 않아 영향이 없다(코드 읽기).
+- [ ] 저장소 밖 호출처가 `sendPaused.scope`의 새 값 `account`와 `circuitBreaker`의 계정별 의미를 어떻게 처리하는지 확인하지 않았다. 롤링 배포 중 구·신 인스턴스가 다른 의미의 `circuitBreaker`를 내는 구간도 확인하지 않았다.
+
+**판정 근거:**
+
+- `e2e/health-accounts.integration-spec.ts`, `queue/send-controls.integration-spec.ts`, `http/ops.integration-spec.ts`.
+- RED 확인(2026-11-24): 구현 전 `e2e/health-accounts.integration-spec.ts`는 11건 중 7건이 실패했다.
+- 구현: `health/health.service.ts`, `queue/send-controls.ts`·`breaker-view.ts`.
+- 남은 미검증: 위 한 항목.
+
 ## 확정한 항목
 
 2026-11-23 판정으로 미결정에서 확정한 항목이다. 값은 해당 RQ와 ADR이 정한다.
@@ -2087,7 +2191,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 | 구현 순서               | 구현 단계 절                                           |
 | 발송 우선순위           | RQ-033~038, ADR-0009                                   |
 | 요청별 만료 시간        | RQ-039, ADR-0010                                       |
-| 다중 SMTP 계정(묶음 A·B) | RQ-053~059, ADR-0013                                  |
+| 다중 SMTP 계정(묶음 A·B·C) | RQ-053~063, ADR-0013                                |
 | NFS 통합 테스트 환경    | 아래                                                   |
 
 NFS 통합 테스트 환경(3단계, 추정):

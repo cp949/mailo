@@ -29,6 +29,7 @@
 - `docs/requirements/mail-sending.md`의 미결정 항목 "비기능 요구(처리량 목표, 메트릭)" 중 메트릭을 닫는다. 처리량 목표는 닫지 않는다. 측정 뒤에 정한다.
 - 새 RQ 번호는 기능 구현 때 RQ-049 이후로 정한다. 이 ADR은 번호를 가정하지 않는다.
 - 2026-11-24 ADR-0013 승인: 구현 중 확정 13의 `createMetrics({ accountIds })`와 `account_id` 값은 ADR-0013 결정 5가 정한다(구현 묶음 C). 지표 이름과 라벨 이름은 바뀌지 않는다. 결정 문구는 그대로 둔다.
+- 2026-11-24 ADR-0013 묶음 C 구현: `account_id` 라벨 값은 구성한 계정 ID와 `unregistered`이고 `createMetrics({ accountIds, callerAccounts })`로 정했다. 이름과 라벨 이름은 그대로이고 계정 지표 4개와 `mailo_worker_in_flight`(`account_id`)가 더해졌다(RQ-062).
 
 ## 배경
 

@@ -94,21 +94,27 @@ RQ-001~052 이후의 장기 방향이다. 확정한 요구사항이 아니라 �
 
 ## 단계 7. 다중 SMTP 계정
 
-상태: 구현 중(묶음 A·B 구현 완료, 미검증 항목 있음). 결정은 [ADR-0013](../adr/0013-multiple-smtp-accounts.md)이 소유하고 요구사항은 묶음 A가 RQ-053~056, 묶음 B가 RQ-057~059이다. 구현은 묶음 A(계정 모델) → B(계정 단위 점유) → C(운영 표면) → D(호출처 동시 상한, 선택) 순서이고 C·D는 미착수다.
+상태: 구현 중(묶음 A·B·C 구현 완료, 미검증 항목 있음). 결정은 [ADR-0013](../adr/0013-multiple-smtp-accounts.md)이 소유하고 요구사항은 묶음 A가 RQ-053~056, 묶음 B가 RQ-057~059, 묶음 C가 RQ-060~063이다. 구현은 묶음 A(계정 모델) → B(계정 단위 점유) → C(운영 표면) → D(호출처 동시 상한, 선택) 순서이고 D는 미착수다.
 
 7단계 묶음 A 결과 요약(2026-11-24):
 
 - 계정 파일 로더(`MAILO_SMTP_ACCOUNTS_FILE`, `secretVar`, `default` 출처 규칙), 호출처 `accountId`, 작업의 등록 때 계정 고정(`mail_jobs.account_id`·`mail_attempts.account_id`, 마이그레이션 `0010`·`0011`), 작업 계정의 SMTP 서버·자격증명·발신 주소로 전송, 계정별 차단기 행 생성과 완료 경로의 계정 키, 발신 주소 허용 집합 `{계정 from} ∪ allowedFrom`을 구현하고 자동 테스트로 검증했다. 새 npm 의존성이 없다.
 - 호출처 API 계약의 필드는 바뀌지 않았다. 호출처는 계정을 모른다.
-- 묶음 A의 한계(한 번의 점유 호출이 모든 계정을 다루고 비`default` 계정은 기동 거부)는 묶음 B에서 없앴다. `/metrics`의 `account_id`는 아직 `default`뿐이다. 구체는 ADR-0013 "구현 중 확정".
+- 묶음 A의 한계(한 번의 점유 호출이 모든 계정을 다루고 비`default` 계정은 기동 거부)는 묶음 B에서 없앴다. `/metrics`의 `account_id`는 묶음 C가 실제 계정 값으로 바꿨다. 구체는 ADR-0013 "구현 중 확정".
 - 남은 미검증 항목: 롤링 배포·롤백 실행, `0010`·`0011`의 `ACCESS EXCLUSIVE` 잠금 대기(동시 쓰기), 읽기 전용 루트 컨테이너의 계정 파일 마운트, 실제 Gmail·Workspace 계정 둘 이상(send-as 별칭, 계정별 한도).
 
 7단계 묶음 B 결과 요약(2026-11-24):
 
 - `claim(accountId)`로 차단기 행·모드·대표 작업·정지를 계정마다 독립으로 두고, 계정 24시간 할당(`sendQuota24h`)과 슬롯 배분(`cap_a`, N > C 기동 거부)을 Worker에 적용했다. 마이그레이션 `0012`~`0016`이 계정 단위 부분 인덱스 셋을 만들고 기존 점유 인덱스 둘을 지운다. 건수 쿼리는 계정별 합이다. 묶음 A의 비`default` 계정 기동 거부는 제거했다. 새 npm 의존성이 없다.
 - 묶음 A가 미완으로 둔 항목(비`default` 계정 open 이후 닫힘·재시도 시각)을 통합 테스트로 닫았다. `open_until`이 지난 open에서 늦게 도착한 계정 오류의 `next_attempt_at`이 과거로 쓰이던 문제도 고쳤다(default 계정에도 있던 문제다).
-- 한계: 계정 정지를 쓰고 지우는 REST·CLI·감사는 묶음 C다(점유는 `account` 범위 행을 읽는다). 계정 단위 전역 동시성 상한은 없다(인스턴스별 `cap_a`).
+- 한계: 계정 정지를 쓰고 지우는 REST·CLI·감사는 묶음 C가 구현했다(RQ-061). 계정 단위 전역 동시성 상한은 없다(인스턴스별 `cap_a`).
 - 남은 미검증 항목: 롤링 배포·롤백 실행과 레거시 인덱스 삭제 뒤 구버전 점유 성능, 동시 쓰기 부하의 인덱스 생성·삭제 시간, 다중 인스턴스 동시 부하, 실제 Gmail·Workspace 계정의 한도.
+
+7단계 묶음 C 결과 요약(2026-11-24):
+
+- `GET /ops/accounts`(계정별 차단기·정지·24시간 사용량·대기 건수), `PUT`·`DELETE /ops/pauses/accounts/{accountId}`(감사 포함)와 CLI(`accounts list`, `pause|resume --account`), `OpsJob.accountId`를 더했다(RQ-060·061). `/metrics`의 `account_id` 라벨은 구성한 계정과 `unregistered`의 닫힌 집합이고 계정 지표 4개와 `mailo_worker_in_flight`를 더했다(RQ-062). `/health/ready`의 `circuitBreaker`는 호출처 키에서 자기 계정, 인증 없음·운영자에서 가장 나쁜 계정의 상태이고 `sendPaused.scope`에 `account`, `sendControls`에 `pausedAccountCount`를 더했다(RQ-063). 마이그레이션·새 npm 의존성이 없다.
+- 호출처 계약 변경: `circuitBreaker`의 의미(호출처 키는 자기 계정), `sendPaused.scope`의 새 값 `account`, `queue.dueCount` 합산(묶음 B). 저장소 안 Java 샘플은 `/health/live`만 쓰므로 영향이 없다.
+- 남은 미검증 항목: 저장소 밖 호출처가 새 값·의미를 어떻게 처리하는지, 롤링 배포 중 구·신 혼용, 계정 20개 규모의 시리즈 수·스크레이프 비용, 실제 Prometheus의 알림 평가.
 
 가장 큰 구조 변경이다. 새 ADR에서 아래를 모두 정한다. 현재는 SMTP 설정 하나와 전역 차단기 하나다.
 

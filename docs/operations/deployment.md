@@ -405,10 +405,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 - 점유·차단기·정지·24시간 할당이 계정 단위다. 한 계정의 차단기 `open`이나 SMTP 지연이 다른 계정의 발송을 막지 않는다. 차단기 임계값과 대기 시간은 모든 계정이 공유하는 `MAILO_BREAKER_*` 값이다.
 - Worker는 `MAILO_WORKER_CONCURRENCY`(C)를 계정에 나눈다. 계정마다 한 인스턴스가 동시에 쓰는 슬롯 상한 `cap_a`는 계정의 `concurrency`이고 생략하면 `max(1, C − (N − 1))`이다(N은 계정 수). C=4, N=2이면 한 계정은 3슬롯이다. 상한은 인스턴스별이라 계정 하나의 전체 동시 전송 수는 인스턴스 수 × `cap_a` 이하다. 다른 계정이 한가해도 `cap_a`를 넘지 못한다. 처리량이 필요하면 C를 올리거나 `concurrency`를 준다. 계정 수가 C보다 많으면 기동을 거부한다.
 - `sendQuota24h`가 있는 계정은 최근 24시간의 시도 수와 점유 중 수가 한도에 닿으면 점유를 멈춘다(대표 작업 포함, 시도가 24시간 밖으로 밀려나면 재개). 단위는 메시지 시도 수이고 수신자 수로 가중하지 않는다. 인스턴스가 여럿이고 `sendQuota24h`가 있는 계정은 다른 인스턴스가 계정 advisory lock을 잡고 있으면 그 인스턴스의 이번 점유를 건너뛰고 다음 poll(`MAILO_WORKER_POLL_MS` 안팎)까지 기다리므로 점유가 지연될 수 있다(부하를 측정하지 않았다). 호출처 `sendQuota24h`와 함께 걸리면 더 작은 쪽이다. 계정 할당을 쓰면 `MAILO_RECORD_RETENTION_SECONDS`가 24시간 이상이어야 한다(미만이면 기동 실패). 인스턴스가 여럿이어도 계정 advisory lock으로 초과하지 않는다(통합 테스트는 한 인스턴스 안의 동시 호출 12개로 확인했다).
-- 계정 정지는 `mail_send_controls`의 `scope_type = 'account'` 행을 점유가 읽어 그 계정을 멈춘다. 정지를 쓰고 지우는 REST·CLI·감사는 구현 묶음 C라 지금은 직접 SQL로만 넣을 수 있다. 구버전은 `account` 범위를 읽지 않는다. 계정 정지에 기대어 롤백하지 않는다.
+- 계정 정지는 `mail_send_controls`의 `scope_type = 'account'` 행을 점유가 읽어 그 계정을 멈춘다. 쓰고 지우는 방법은 `PUT`·`DELETE /ops/pauses/accounts/{accountId}`와 CLI `pause|resume --account <id> --yes`다("발송 정지와 운영 REST"). 구버전은 `account` 범위를 읽지 않는다. 계정 정지에 기대어 롤백하지 않는다.
 - 새 로그: `account_quota_exceeded`·`account_quota_recovered`, `send_paused`·`send_resumed`의 `scope: "account"`, `claim_failed`의 `accountId`, `worker_started`의 `accounts`. 모두 계정 ID와 한도 수치만 싣는다. `account_limits_not_enforced`는 없다.
 - `/health/ready`의 `queue.dueCount`는 구성한 계정별 값(각각 10000에서 멈춤)의 합이다. 합이 10000을 넘으면 10000으로 자르고 `dueCountTruncated`를 true로 둔다(계약의 상한 10000 유지, 등급별 값도 같다). `dueCountTruncated`는 어느 한 계정이라도 상한에 닿았거나 합이 상한을 넘었는지다. 구성에서 빠진 계정의 작업은 점유되지 않아 세지 않는다.
-- 아직 없다: `/metrics`의 `account_id` 라벨은 모든 작업을 `default`로 센다. `/health/ready`·`/ops`·CLI에 계정 정보가 없다(구현 묶음 C). 호출처 동시 상한(`maxConcurrentSends`)은 묶음 D다.
+- 계정별 상태는 `GET /ops/accounts`(CLI `accounts list`)가 낸다. 계정마다 `breaker`(`state`·`openUntil`·`lastReason`), `paused`, `sendQuota24h`(`limit`·`used`, 한도가 없으면 `null`), `queue`(`dueCount`·`dueCountTruncated`·`oldestDueAgeSeconds`)다. host·user·`from`·비밀번호는 없다. 구성에서 빠진 계정은 목록에 없고 그 계정의 정지 행은 `GET /ops/pauses`에 있다. 구성한 계정의 차단기 행이 없으면 503이다(Worker 기동이 행을 만든다).
+- `/metrics`의 `account_id` 라벨은 구성한 계정 ID와 `unregistered`(구성에서 빠진 계정의 작업이 만료 sweep으로 종결될 때)뿐이다. 계정마다 큐·차단기 시리즈를 낸다("지표"). 호출처 동시 상한(`maxConcurrentSends`)은 묶음 D이고 아직 없다.
 
 #### 평문 SMTP 모드
 
@@ -526,13 +527,13 @@ secrets:
 
 - `/health/ready`는 읽기 전용 트랜잭션 하나로 PostgreSQL 점검을 3초 안에 마친다. 쿼리에는 서버 쪽 `statement_timeout` 2초를 따로 걸고, 3초를 넘기면 그 연결을 풀에서 버린다. 응답만 포기하면 쿼리가 풀 슬롯을 계속 잡기 때문이다. 차단기가 `open`·`half_open`이어도 200이다. 등록과 조회는 정상이므로 오케스트레이터가 인스턴스를 내리면 안 된다.
 - 발송 정지(Worker 정지, 적체)는 200/503에 반영하지 않는다. 원인이 DB나 SMTP 계정이면 재시작이 도움이 안 되고, 오탐이면 오케스트레이터가 정상 인스턴스를 재시작하기 때문이다. 대신 운영자 토큰(`MAILO_OPS_TOKEN`)으로 호출하면 아래 필드를 준다. 모니터링은 이 값을 폴링해 경보를 만든다.
-- 인증 없이는 `status`, `checks.database`, `circuitBreaker.state`만 반환한다. 유효한 호출처 Bearer가 있으면 `openUntil`, `lastReason`, `eventFeed`, `sendPaused`를 더한다. 틀린 `Authorization`은 401이다.
-- `sendPaused`는 그 호출처에 해당하는 발송 정지 요약이다(`{ paused, scope }`, `scope`는 `all`·`caller`·`null`). `all`과 `caller`가 함께 걸려 있으면 `all`이다. 호출처 ID·운영자 이름·시각은 없다. 정지는 200/503에 반영하지 않는다.
+- 인증 없이는 `status`, `checks.database`, `circuitBreaker.state`만 반환한다. 계정이 여럿이면 `circuitBreaker`는 계정별 차단기에서 정한다. 인증 없음과 운영자 토큰은 모든 계정 중 가장 나쁜 상태(`open` > `half_open` > `closed`, 같으면 계정 ID 오름차순 첫 계정의 `openUntil`·`lastReason`)이고 호출처 Bearer는 그 호출처 계정의 상태다. 계정 ID와 수는 어느 응답에도 없다. 계정별 상태는 `GET /ops/accounts`다. 단일 계정(`default`만) 배포는 값이 이전과 같다. 유효한 호출처 Bearer가 있으면 `openUntil`, `lastReason`, `eventFeed`, `sendPaused`를 더한다. 틀린 `Authorization`은 401이다.
+- `sendPaused`는 그 호출처에 해당하는 발송 정지 요약이다(`{ paused, scope }`, `scope`는 `all`·`account`·`caller`·`null`). 우선순위는 `all`, 그 호출처 계정의 정지(`account`), `caller`다. 다른 계정의 정지는 보지 않는다. 호출처 ID·계정 ID·운영자 이름·시각은 없다. 정지와 계정 차단기는 200/503에 반영하지 않는다.
 - 운영자 토큰(`Authorization: Bearer $MAILO_OPS_TOKEN` 또는 관리 토큰. 응답은 같다)은 `openUntil`, `lastReason`에 더해 다음을 반환한다(`eventFeed`·`sendPaused`는 호출처 전용이라 없다). 전역 수치는 다른 호출처의 발송량을 드러내므로 호출처 API 키로는 주지 않는다. 운영자 토큰은 업무 endpoint에서 401이다. 메일 본문·수신자·작업 ID·`caller_id`는 어느 필드에도 없다.
 
 | 필드 | 의미 | 읽는 법 |
 | ---- | ---- | ------- |
-| `sendControls` | `{ allPaused, pausedCallerCount }`. 호출처 ID는 없다 | `allPaused`가 true이거나 `pausedCallerCount`가 0보다 크면 발송 정지가 걸려 있다. 어느 호출처인지는 `GET /ops/pauses`로 본다("발송 정지와 운영 REST") |
+| `sendControls` | `{ allPaused, pausedCallerCount, pausedAccountCount }`(구성 밖 호출처·계정의 정지 행도 센다). 호출처·계정 ID는 없다 | `allPaused`가 true이거나 정지 수가 0보다 크면 발송 정지가 걸려 있다. 어느 대상인지는 `GET /ops/pauses`로 본다("발송 정지와 운영 REST") |
 | `queue.dueCount` | 점유 대상(`PENDING`·`RETRY_WAIT`, `next_attempt_at` 경과) 작업 수. 상한 10000 | `queue.dueCountTruncated`가 true면 더 있다. 차단기가 `open`이거나 호출처 할당에 걸린 작업도 센다 |
 | `queue.oldestDueAgeSeconds` | 가장 오래 기다린 작업이 점유 가능해진 뒤 지난 초. 없으면 null | 이 값이 커지는데 `worker.lastPollAgeSeconds`도 크면 점유 정지다. 차단기가 `closed`이고 할당에 걸리지 않았는데 커지면 이상이다 |
 | `queue.dueCountByPriority` | 등급(`LOW`·`NORMAL`·`HIGH`·`URGENT`)별 `dueCount`. 네 키가 항상 있다. 상한 10000이 등급마다 따로 걸린다 | 등급별 합은 `dueCount`와 다를 수 있다(상한이 따로 걸린다). 읽는 순서는 `troubleshooting.md` "등급별 적체" |
@@ -560,6 +561,9 @@ secrets:
 | 전체 재개 | `curl -s -X DELETE -H "Authorization: Bearer $ADMIN" http://<host>:3000/ops/pauses/all` |
 | 호출처만 정지 | `curl -s -X PUT -H "Authorization: Bearer $ADMIN" http://<host>:3000/ops/pauses/callers/<callerId>` |
 | 호출처 재개 | `curl -s -X DELETE -H "Authorization: Bearer $ADMIN" http://<host>:3000/ops/pauses/callers/<callerId>` |
+| 계정만 정지 | `curl -s -X PUT -H "Authorization: Bearer $ADMIN" http://<host>:3000/ops/pauses/accounts/<accountId>` |
+| 계정 재개 | `curl -s -X DELETE -H "Authorization: Bearer $ADMIN" http://<host>:3000/ops/pauses/accounts/<accountId>` |
+| 계정별 상태 | `curl -s -H "Authorization: Bearer $READ" http://<host>:3000/ops/accounts` |
 | 정지 목록 | `curl -s -H "Authorization: Bearer $READ" http://<host>:3000/ops/pauses` |
 | 감사 목록 | `curl -s -H "Authorization: Bearer $READ" "http://<host>:3000/ops/audit?limit=20"` |
 
@@ -568,6 +572,7 @@ secrets:
 - 정지 중에도 lease 복구, 결과 기록, 만료 sweep, 본문·기록 삭제, 등록(REST·파일)은 계속 돈다. 이미 `SENDING`인 작업의 전송은 끝까지 간다. 정지 응답 직후에도 최대 인스턴스 수 × `MAILO_WORKER_CONCURRENCY`건이 점유를 마친 채 남을 수 있다(코드 읽기에 따른 상한 추정, 측정하지 않았다).
 - 정지 중에도 작업의 `expiresAt`은 흐른다. 정지가 길면 `PENDING` 작업이 `EXPIRED`가 된다(`JOB_EXPIRED`). 정지 시간은 호출처 TTL(기본 24시간)보다 짧게 잡는다. 재개하면 점유 가능한 작업이 한꺼번에 대상이 되고 동시 전송 수와 우선순위(RQ-035)가 처리 순서를 정한다.
 - 호출처 정지는 레지스트리의 `callerId`가 아니어도 걸린다. 응답의 `inRegistry`로 오타를 확인한다. 새 요청 자체를 막으려면 API 키를 폐기한다(`key-management.md`). 호출처를 레지스트리에서 빼도 큐에 이미 있는 작업은 계속 발송된다.
+- 계정 정지는 그 계정의 점유만 멈춘다(차단기 대표 작업 포함). 그 계정을 쓰는 호출처의 등록은 계속 받고 작업은 `PENDING`에 쌓인다. 계정 ID는 `^[a-z0-9][a-z0-9_-]{0,31}$`이고 형식이 틀리면 400이다. 구성에 있는지 확인하지 않는다(응답의 `inConfig`로 오타를 알아본다). 구성에서 뺀 계정의 정지 행을 `DELETE`로 지울 수 있다. 감사는 `scope.type: account`로 남는다. 구버전 인스턴스는 계정 정지를 읽지 않으므로 롤링 배포 중에는 쓰지 않는다.
 - 정지 요약은 `GET /health/ready`에 있다. 호출처 키 응답은 `sendPaused`, 운영자 응답은 `sendControls`다. `/health/ready`의 200/503에는 반영하지 않는다.
 - 발송이 멈춘 것처럼 보이면 `troubleshooting.md` "발송이 멈췄다"에서 정지를 먼저 확인한다.
 - 정지 해제 직후 대량 재개가 SMTP 계정의 일일 한도·분당 한도에 닿을 수 있다. 차단기가 열릴 수 있으므로 재개 뒤 `circuitBreaker.state`를 본다(추정, 실제 Gmail 한도는 확인하지 않았다).
@@ -609,11 +614,12 @@ docker compose exec -e MAILO_CLI_TOKEN_FILE=/run/secrets/mailo_cli_token mailo n
 | `queue stats` | 읽기 | `GET /health/ready`의 `queue` 값. 운영자 응답이 아니면 종료 코드 2 |
 | `jobs show <jobId>` | 읽기 | `GET /ops/jobs/{jobId}`. 응답에 `outcomeUncertain`이 있다(`troubleshooting.md` "결과 불명 실패") |
 | `audit list [--limit N] [--before ID]` | 읽기 | `GET /ops/audit` |
-| `pause --all` 또는 `pause --caller <호출처 ID>` | 관리 | `PUT /ops/pauses/all`, `PUT /ops/pauses/callers/{callerId}` |
-| `resume --all` 또는 `resume --caller <호출처 ID>` | 관리 | `DELETE` 같은 경로 |
+| `accounts list` | 읽기 | `GET /ops/accounts`. 계정별 차단기·정지·24시간 사용량·대기 건수 |
+| `pause --all`, `pause --caller <호출처 ID>`, `pause --account <계정 ID>` | 관리 | `PUT /ops/pauses/all`, `.../callers/{callerId}`, `.../accounts/{accountId}` |
+| `resume --all`, `resume --caller <호출처 ID>`, `resume --account <계정 ID>` | 관리 | `DELETE` 같은 경로 |
 | `jobs cancel <jobId>` | 관리 | `POST /ops/jobs/{jobId}/cancel` |
 
-- 변경 명령(`pause`, `resume`, `jobs cancel`)은 `--yes`가 없으면 서버를 부르지 않고 종료 코드 1이다. `pause`·`resume`은 범위(`--all` 또는 `--caller`)를 하나 명시해야 하고 기본 범위가 없다.
+- 변경 명령(`pause`, `resume`, `jobs cancel`)은 `--yes`가 없으면 서버를 부르지 않고 종료 코드 1이다. `pause`·`resume`은 범위(`--all`, `--caller`, `--account`)를 하나 명시해야
 - 토큰은 명령줄 인자로 받지 않는다(`ps`에 보인다). `--token` 같은 옵션은 거부한다. 출력·오류에 토큰을 쓰지 않는다. 토큰 파일은 Mailo 컨테이너에 읽기 전용으로 마운트하고 읽기 토큰과 관리 토큰을 파일로 나눈다. 평소에는 읽기 토큰 파일을 쓰고 변경할 때만 관리 토큰 파일을 지정한다.
 - 출력은 서버 응답 JSON(들여쓰기 2칸)이다. 성공은 stdout, 오류는 stderr다. 종료 코드: 0 성공, 1 사용법·설정 오류(토큰 없음, URL 형식 오류 포함), 2 HTTP 오류(상태와 problem 본문을 stderr에 낸다. 3xx도 따라가지 않고 2), 3 연결 실패·시간 초과(15초). 2xx이지만 JSON이 아니면 2다.
 - `http`이고 loopback이 아닌 주소에 접속하면 토큰이 평문으로 가므로 stderr에 경고한다. 원격에서 쓰려면 `https`(TLS 프록시)를 쓴다.
@@ -680,14 +686,14 @@ scrape_configs:
 
 | 분류 | 종류 | 이름 | 합치는 법 |
 | ---- | ---- | ---- | --------- |
-| 전역 | gauge만 | `mailo_queue_`, `mailo_breaker_`, `mailo_send_paused`, `mailo_caller_`, `mailo_ops_audit_` 접두 | `max by (...)`. `sum`은 인스턴스 수만큼 곱해진다 |
+| 전역 | gauge만 | `mailo_queue_`, `mailo_breaker_`, `mailo_send_paused`, `mailo_caller_`, `mailo_account_`, `mailo_ops_audit_` 접두 | `max by (...)`. `sum`은 인스턴스 수만큼 곱해진다 |
 | 인스턴스 counter | counter만 | `mailo_*_total` | `sum by (...) (rate(...))`. 재시작하면 0에서 다시 시작한다 |
 | 인스턴스 gauge | gauge | `mailo_worker_`, `mailo_file_poller_`, `mailo_metrics_` 접두 | 인스턴스별로 본다 |
 | 프로세스 | counter·gauge | `process_start_time_seconds`, `process_resident_memory_bytes`, `process_cpu_seconds_total` | 인스턴스별로 본다. 시작 시각은 프로세스가 시작할 때 한 번 정한 값이라 바뀌면 재시작이다 |
 
 - `instance` 라벨은 앱이 붙이지 않는다. Prometheus의 타깃 라벨이 준다. 앱 로그의 `instance`와 다른 값이다.
-- 라벨은 `caller_id`, `account_id`, `reason`과 값이 닫힌 열거(`state`, `priority`, `result`, `stage`, `status`, `group`)뿐이다. `caller_id`는 호출처 레지스트리에 있는 값이거나 `unregistered`다(레지스트리에서 뺀 호출처의 작업이 큐에 남아 있을 때). `account_id`는 `default` 하나다. 수신자·본문·제목·`Idempotency-Key`·작업 ID·SMTP 응답 코드와 텍스트·토큰은 어느 라벨에도 없다.
-- 지표 하나의 시리즈는 2000개까지다. 넘으면 새 시리즈를 만들지 않고 `mailo_metrics_dropped_samples_total`을 올리며 `metrics_series_limit`(warn, 지표 이름만)을 한 번 남긴다. 호출처가 약 400개를 넘어야 닿는다(계산).
+- 라벨은 `caller_id`, `account_id`, `reason`과 값이 닫힌 열거(`state`, `priority`, `result`, `stage`, `status`, `group`)뿐이다. `caller_id`는 호출처 레지스트리에 있는 값이거나 `unregistered`다(레지스트리에서 뺀 호출처의 작업이 큐에 남아 있을 때). `account_id`는 이 인스턴스가 구성한 계정 ID이거나 `unregistered`(계정이 구성에서 빠진 뒤 남은 작업이 만료 sweep으로 종결될 때)다. 계정이 하나(`default`)이면 `default` 하나다. 0 시리즈 시드는 호출처마다 그 호출처의 계정 하나만 만든다(호출처 × 계정 곱집합이 아니다). 수신자·본문·제목·`Idempotency-Key`·작업 ID·SMTP 응답 코드와 텍스트·토큰은 어느 라벨에도 없다.
+- 지표 하나의 시리즈는 2000개까지다. 넘으면 새 시리즈를 만들지 않고 `mailo_metrics_dropped_samples_total`을 올리며 `metrics_series_limit`(warn, 지표 이름만)을 한 번 남긴다. 호출처가 약 400개를 넘어야 닿는다(계산). 계정이 늘면 계정마다 고정 시리즈가 약 18개 더해진다(계정 20개이면 약 360개, 계산). `mailo_attempt_errors_total`은 이론상 계정당 최대 224개라 계정 20개에서 2000을 넘을 수 있다. 실제 조합은 훨씬 적다고 추정하며 측정하지 않았다. 넘으면 위 경고가 알린다.
 
 ### 전역 gauge
 
@@ -700,7 +706,9 @@ DB 상태와 DB `now()`로 계산한다. 인스턴스마다 `MAILO_METRICS_CACHE
 | `mailo_queue_oldest_due_age_seconds` | `account_id`, `priority`=`low`·`normal`·`high`·`urgent` | 등급별 가장 오래 기다린 점유 가능 작업의 경과 초. 대기가 없으면 0. 전체 값은 `max by (account_id)` |
 | `mailo_breaker_state` | `account_id`, `state`=`closed`·`open`·`half_open` | 현재 상태만 1 |
 | `mailo_breaker_reason_info` | `account_id`, `reason` | 상태가 `closed`가 아니고 사유가 있을 때만 1. 어휘는 헬스 `lastReason`과 같다 |
-| `mailo_send_paused_all`, `mailo_send_paused_callers` | 없음 | 전체 정지 0/1, 정지한 호출처 수(레지스트리에 없는 호출처 포함) |
+| `mailo_send_paused_all`, `mailo_send_paused_callers`, `mailo_send_paused_accounts` | 없음 | 전체 정지 0/1, 정지한 호출처 수(레지스트리에 없는 호출처 포함), 정지한 계정 수(구성에 없는 계정 포함) |
+| `mailo_account_paused` | `account_id` | 구성한 계정별 정지 0/1 |
+| `mailo_account_quota_limit`, `mailo_account_quota_used` | `account_id` | `sendQuota24h`를 설정한 계정만. 한도(이 인스턴스의 계정 구성 값)와 사용량(최근 24시간 시도 수와 점유 중 수의 합. 한도를 넘을 수 있다) |
 | `mailo_caller_paused` | `caller_id` | 레지스트리 호출처별 정지 0/1 |
 | `mailo_caller_quota_limit`, `mailo_caller_quota_used` | `caller_id` | `sendQuota24h`를 설정한 호출처만. 한도(이 인스턴스의 레지스트리 값)와 사용량(최근 24시간 시도 수와 점유 중 수의 합. 시도 쪽은 한도에서 멈추지만 점유 중 수를 더하므로 사용량이 한도를 넘을 수 있고 사용량/한도가 1을 넘을 수 있다) |
 | `mailo_caller_latest_event_age_seconds` | `caller_id` | 피드에 보이는 최신 이벤트의 경과 초. 이벤트가 없으면 시리즈가 없다. 소비자의 처리 지연이 아니다. 새 이벤트가 없으면 시간이 지날수록 커진다 |
@@ -720,6 +728,7 @@ DB 상태와 DB `now()`로 계산한다. 인스턴스마다 `MAILO_METRICS_CACHE
 | `mailo_event_cursor_gap_total` | `caller_id` | 이벤트 피드 cursor 공백을 감지한 요청 수 |
 | `mailo_metrics_dropped_samples_total` | 없음 | 시리즈 상한이나 값 검증 때문에 버린 증가 수. 정상이면 0이다 |
 | `mailo_worker_state` | `state`=`disabled`·`idle`·`running`·`paused`·`stopping`·`stopped` | Worker 상태(원핫) |
+| `mailo_worker_in_flight` | `account_id` | 구성한 계정마다 진행 중 전송 수(0 포함). Worker가 꺼져 있으면 시리즈가 없다. 전체 값은 아래 `mailo_worker_in_flight_jobs`다 |
 | `mailo_worker_in_flight_jobs`, `mailo_worker_last_poll_age_seconds` | 없음 | 진행 중 전송 수, 점유 루프가 마지막으로 돈 뒤 경과 초. Worker가 꺼져 있거나 아직 안 돌았으면 시리즈가 없다 |
 | `mailo_worker_claim_failure_streak`, `mailo_worker_poll_loop_crashed` | 없음 | 연속 점유 실패 수, 점유 루프 사망 0/1(1이면 종료 코드 70으로 끝나는 중) |
 | `mailo_file_poller_enabled`, `_running`, `_callers` | 없음 | 파일 채널이 켜졌는가, 동작 중인가, 폴링 대상 호출처 수. 꺼져 있으면 0 |
@@ -736,7 +745,7 @@ DB 상태와 DB `now()`로 계산한다. 인스턴스마다 `MAILO_METRICS_CACHE
 
 ### 알림 규칙 예시
 
-임계값은 모두 추정이고 부하에서 확인하지 않았다. `promtool check rules`가 문법을 통과시켰고(2026-11-24, `prom/prometheus:v2.55.1`) 실제 Prometheus가 컨테이너를 스크레이프하며 12개 규칙을 평가했다(모두 `ok`). 알림이 발화하는 조건은 실행해 확인하지 않았다. 전역 gauge는 `max by`로, counter는 `sum`과 `rate`·`increase`로 쓴다. `for:`는 캐시 TTL(기본 5초)보다 충분히 길다.
+임계값은 모두 추정이고 부하에서 확인하지 않았다. `promtool check rules`가 문법을 통과시켰고(2026-11-24, `prom/prometheus:v2.55.1`) 실제 Prometheus가 컨테이너를 스크레이프하며 12개 규칙을 평가했다(모두 `ok`). 알림이 발화하는 조건은 실행해 확인하지 않았다. 계정 규칙(묶음 C: `MailoNoProgress` 계정별 변경, `MailoSendPausedLong`·`MailoAccountQuotaNearLimit`)은 `promtool check rules`로 문법만 확인했고(13개 규칙, `prom/prometheus:v2.55.1`, 2026-11-24) 실제 Prometheus의 평가는 실행하지 않았다. 전역 gauge는 `max by`로, counter는 `sum`과 `rate`·`increase`로 쓴다. `for:`는 캐시 TTL(기본 5초)보다 충분히 길다.
 
 ```yaml
 groups:
@@ -746,7 +755,7 @@ groups:
         expr: up{job="mailo"} == 0
         for: 2m
 
-      - alert: MailoBreakerNotClosed
+      - alert: MailoBreakerNotClosed   # 계정마다 차단기가 있다. account_id가 어느 계정인지 알려 준다
         expr: max by (account_id) (mailo_breaker_state{state=~"open|half_open"}) == 1
         for: 10m
 
@@ -758,12 +767,13 @@ groups:
         expr: max(mailo_queue_jobs_truncated{state="due"}) == 1
         for: 15m
 
-      - alert: MailoNoProgress
+      - alert: MailoNoProgress   # 계정별. 그 계정이 닫혀 있고 정지가 아닌데 적체가 있고 시도가 없다
         expr: |
-          max(mailo_queue_jobs{state="due"}) > 0
-          and sum(rate(mailo_attempts_total[10m])) == 0
-          and max(mailo_send_paused_all) == 0
-          and max(mailo_breaker_state{state="closed"}) == 1
+          max by (account_id) (mailo_queue_jobs{state="due"}) > 0
+          and on (account_id) sum by (account_id) (rate(mailo_attempts_total[10m])) == 0
+          and on (account_id) max by (account_id) (mailo_breaker_state{state="closed"}) == 1
+          and on (account_id) max by (account_id) (mailo_account_paused) == 0
+          and on () max(mailo_send_paused_all) == 0
         for: 15m
 
       - alert: MailoFailedRatioHigh
@@ -774,7 +784,9 @@ groups:
         for: 5m
 
       - alert: MailoSendPausedLong
-        expr: max(mailo_send_paused_all) == 1 or max(mailo_send_paused_callers) > 0
+        expr: |
+          max(mailo_send_paused_all) == 1 or max(mailo_send_paused_callers) > 0
+          or max(mailo_send_paused_accounts) > 0
         for: 30m   # 정지 중에도 TTL이 흘러 EXPIRED가 쌓인다
 
       - alert: MailoWorkerStalled
@@ -791,6 +803,12 @@ groups:
             / max by (caller_id) (mailo_caller_quota_limit) >= 0.9
         for: 10m
 
+      - alert: MailoAccountQuotaNearLimit   # 계정 24시간 할당. 점유 중 수가 더해져 비율이 1을 넘을 수 있다
+        expr: |
+          max by (account_id) (mailo_account_quota_used)
+            / max by (account_id) (mailo_account_quota_limit) >= 0.9
+        for: 10m
+
       - alert: MailoLeaseRecovered
         expr: sum(increase(mailo_lease_recovered_total[15m])) > 0   # 중복 발송 가능성 신호(RQ-013)
 
@@ -799,7 +817,8 @@ groups:
         for: 1h
 ```
 
-- `MailoNoProgress`의 `sum(rate(mailo_attempts_total[10m])) == 0`은 호출처 시리즈를 0으로 미리 내므로 시도가 한 번도 없어도 참이다. 기동 직후 `due`가 있고 정지·차단이 없는데 15분 동안 시도가 없으면 발화한다(추정, 실행해 확인하지 않았다).
+- `MailoNoProgress`의 `sum by (account_id) (rate(mailo_attempts_total[10m])) == 0`은 호출처 시리즈를 0으로 미리 내므로 시도가 한 번도 없어도 참이다. 계정마다 따로 본다. 기동 직후 그 계정에 `due`가 있고 계정 정지·차단이 없는데 15분 동안 시도가 없으면 발화한다(추정, 실행해 확인하지 않았다). 호출처 시드가 없는 계정(어느 호출처도 쓰지 않는 계정)은 시도 시리즈가 없어 이 규칙에 들지 않는다.
+- `MailoAccountQuotaNearLimit`의 `mailo_account_quota_used`는 시도 수에 점유 중 수를 더하므로 한도보다 커질 수 있다. 한도를 설정하지 않은 계정은 시리즈가 없다.
 - `MailoCallerQuotaNearLimit`의 `mailo_caller_quota_used`는 시도 수에 점유 중 수를 더하므로 `mailo_caller_quota_limit`보다 커질 수 있다. 비율이 1을 넘어도 이 규칙에 든다.
 - `MailoLeaseRecovered`·`MailoFailedRatioHigh`는 레지스트리 호출처의 0 시리즈가 있으므로 프로세스의 첫 회수·첫 실패도 `increase()`에 잡힌다. Prometheus가 그 인스턴스를 처음 스크레이프하기 전에 일어난 증가는 어느 경우에도 보이지 않는다.
 - 발송 정지(`MailoSendPausedLong`)는 의도한 조작일 수 있다. 장기 정지가 `EXPIRED`를 만드는 점을 알리는 용도다.
