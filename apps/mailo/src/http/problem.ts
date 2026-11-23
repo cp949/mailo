@@ -9,6 +9,7 @@ export type ProblemType =
   | "malformed-request"
   | "validation-failed"
   | "unauthorized"
+  | "forbidden"
   | "not-found"
   | "idempotency-conflict"
   | "job-not-cancelable"
@@ -34,6 +35,11 @@ const CATALOG: Record<
     status: 401,
     title: "Unauthorized",
     detail: "인증에 실패했다.",
+  },
+  forbidden: {
+    status: 403,
+    title: "Forbidden",
+    detail: "이 토큰으로는 요청한 동작을 할 수 없다.",
   },
   "not-found": {
     status: 404,
@@ -111,6 +117,8 @@ export const problems = {
     new ProblemException("unauthorized", {
       headers: { "WWW-Authenticate": "Bearer" },
     }),
+  // 읽기 토큰으로 관리 endpoint를 부른 경우다. 토큰이 유효하다는 사실만 알린다.
+  forbidden: () => new ProblemException("forbidden"),
   notFound: () => new ProblemException("not-found"),
   idempotencyConflict: (jobId: string | null) =>
     new ProblemException(

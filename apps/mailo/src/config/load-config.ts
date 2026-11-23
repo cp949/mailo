@@ -79,6 +79,19 @@ export const POOL_RESERVE_CONNECTIONS = 4;
 const PUBLIC_SAMPLE_DB_PASSWORDS: readonly string[] = ["mailo-dev-password"];
 
 /** 앱이 부팅 때 읽는 설정. */
+/** 관리 토큰 하나. `name`은 감사 기록의 `actor`가 된다(ADR-0011 결정 6). */
+export interface OpsAdminToken {
+  name: string;
+  token: Secret<string>;
+}
+
+export interface OpsConfig {
+  /** 읽기 토큰(`MAILO_OPS_TOKEN`). 없으면 null이다. */
+  token: Secret<string> | null;
+  /** 관리 토큰 목록(`MAILO_OPS_ADMIN_NAMES`). 비어 있으면 관리 기능이 꺼진다. */
+  admins: readonly OpsAdminToken[];
+}
+
 export interface AppConfig {
   env: "development" | "test" | "production";
   /** HTTP listen 포트. */
@@ -124,10 +137,11 @@ export interface AppConfig {
     fingerprint: Secret<KeyRingInput>;
   };
   /**
-   * 운영자 토큰(선택). 있으면 `/health/ready`가 이 토큰을 Bearer로 받은 호출에 호출처 전체 큐 수치와 Worker 상태를 준다.
-   * 호출처 API 키로는 전역 수치를 볼 수 없다(다른 호출처의 발송량이 드러난다). 업무 endpoint에는 쓸 수 없다.
+   * 운영 토큰(ADR-0011 결정 1). 읽기 토큰(`token`)은 `/health/ready`의 운영자 응답과 `GET /ops/*`만 연다.
+   * 관리 토큰(`admins`)은 이름마다 하나이고 읽기 권한을 포함하며 `/ops`의 변경 endpoint를 연다.
+   * 호출처 API 키로는 전역 수치를 볼 수 없다(다른 호출처의 발송량이 드러난다). 업무 endpoint에는 어느 토큰도 쓸 수 없다.
    */
-  ops: { token: Secret<string> | null };
+  ops: OpsConfig;
   /** 호출처 레지스트리 JSON 파일 경로(RQ-028). 내용은 callers 모듈이 읽는다. */
   callersFile: string;
   /** 로그 줄의 `instance` 값(`MAILO_INSTANCE_ID`, 없으면 호스트 이름). */
@@ -511,20 +525,97 @@ function loadStopGracePeriod(
   return ms;
 }
 
-/** 운영자 토큰은 사람이 고른 짧은 문자열을 막기 위해 최소 길이를 둔다. `openssl rand -base64 32`(44자)를 권한다. */
+/** 운영 토큰은 사람이 고른 짧은 문자열을 막기 위해 최소 길이를 둔다. `openssl rand -base64 32`(44자)를 권한다. */
 const OPS_TOKEN_MIN_CHARS = 32;
+/** 관리 토큰 이름 형식과 개수 상한(ADR-0011 결정 1). 변수 이름과 감사 `actor`에 그대로 쓴다. */
+const OPS_ADMIN_NAME = /^[a-z][a-z0-9]{0,31}$/;
+const OPS_ADMIN_MAX = 8;
 
-/** `MAILO_OPS_TOKEN_FILE`(우선) 또는 `MAILO_OPS_TOKEN`. 없으면 undefined이고 운영자 응답은 꺼진다. */
-function loadOpsToken(reader: EnvReader): string | undefined {
-  const token = reader.secret("MAILO_OPS_TOKEN")?.trim();
-  if (token === undefined) return undefined;
+/** 토큰 값 규칙을 검사한다. 어기면 변수 이름만 담은 사유를 남기고 undefined를 돌려준다. 값은 사유에 넣지 않는다. */
+function checkOpsTokenValue(
+  reader: EnvReader,
+  variable: string,
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) return undefined;
+  const token = value.trim();
   if (token.length < OPS_TOKEN_MIN_CHARS || /\s/.test(token)) {
     reader.issue(
-      `MAILO_OPS_TOKEN은 공백 없는 ${OPS_TOKEN_MIN_CHARS}자 이상이어야 한다(openssl rand -base64 32)`,
+      `${variable}은 공백 없는 ${OPS_TOKEN_MIN_CHARS}자 이상이어야 한다(openssl rand -base64 32)`,
     );
     return undefined;
   }
   return token;
+}
+
+/**
+ * 읽기 토큰 `MAILO_OPS_TOKEN_FILE`(우선) 또는 `MAILO_OPS_TOKEN`과
+ * 관리 토큰 `MAILO_OPS_ADMIN_NAMES` + `MAILO_OPS_ADMIN_TOKEN_<이름 대문자>`(`_FILE` 우선)를 읽는다(ADR-0011 결정 1).
+ * 기동을 거부하는 경우: 이름 형식 위반·중복·9개 이상, 이름의 토큰 없음·규칙 위반, 토큰 값끼리 같음.
+ * 호출처 API 키와 같은지는 레지스트리를 읽는 `callers`가 검사한다.
+ */
+function loadOps(reader: EnvReader): OpsConfig {
+  const read = checkOpsTokenValue(
+    reader,
+    "MAILO_OPS_TOKEN",
+    reader.secret("MAILO_OPS_TOKEN"),
+  );
+
+  const admins: OpsAdminToken[] = [];
+  const rawNames = reader.raw("MAILO_OPS_ADMIN_NAMES");
+  if (rawNames !== undefined) {
+    const names = rawNames.split(",").map((n) => n.trim());
+    if (names.length > OPS_ADMIN_MAX)
+      reader.issue(
+        `MAILO_OPS_ADMIN_NAMES는 이름을 ${OPS_ADMIN_MAX}개까지 받는다`,
+      );
+    const seen = new Set<string>();
+    names.slice(0, OPS_ADMIN_MAX).forEach((name, index) => {
+      // 이름 자체가 잘못이면 그 값을 사유에 넣지 않고 위치만 알린다.
+      if (!OPS_ADMIN_NAME.test(name)) {
+        reader.issue(
+          `MAILO_OPS_ADMIN_NAMES의 ${index + 1}번째 이름은 영문 소문자로 시작하는 소문자·숫자 32자 이하여야 한다`,
+        );
+        return;
+      }
+      if (seen.has(name)) {
+        reader.issue(`MAILO_OPS_ADMIN_NAMES에 같은 이름이 두 번 있다`);
+        return;
+      }
+      seen.add(name);
+      const variable = `MAILO_OPS_ADMIN_TOKEN_${name.toUpperCase()}`;
+      const raw = reader.secret(variable);
+      if (raw === undefined) {
+        reader.issue(
+          `MAILO_OPS_ADMIN_NAMES의 이름 ${name}에 해당하는 ${variable}이 설정되지 않았다`,
+        );
+        return;
+      }
+      const token = checkOpsTokenValue(reader, variable, raw);
+      if (token !== undefined) admins.push({ name, token: new Secret(token) });
+    });
+  }
+
+  // 토큰끼리 같으면 감사의 `actor`와 권한 구분이 무의미해진다.
+  const values: Array<{ label: string; token: string }> = [
+    ...(read === undefined ? [] : [{ label: "MAILO_OPS_TOKEN", token: read }]),
+    ...admins.map((a) => ({
+      label: `MAILO_OPS_ADMIN_TOKEN_${a.name.toUpperCase()}`,
+      token: a.token.reveal(),
+    })),
+  ];
+  const seenToken = new Map<string, string>();
+  for (const { label, token } of values) {
+    const first = seenToken.get(token);
+    if (first !== undefined)
+      reader.issue(`${label}이 ${first}과 같은 값이다. 토큰마다 달라야 한다`);
+    else seenToken.set(token, label);
+  }
+
+  return {
+    token: read === undefined ? null : new Secret(read),
+    admins,
+  };
 }
 
 /** 결과 기록의 마감 여유(ms). lease 만료 전에 기록을 끝내기 위해 worker가 같은 값을 쓴다(`worker.ts`의 `COMPLETE_LEASE_MARGIN_MS`). */
@@ -728,7 +819,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
 
-  const opsToken = loadOpsToken(reader);
+  const ops = loadOps(reader);
   const stopGracePeriodMs = loadStopGracePeriod(reader, worker.lease.seconds);
 
   const callersFile = reader.requiredString("MAILO_CALLERS_FILE");
@@ -759,7 +850,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       dbEncryption: new Secret(dbEncryption as KeyRingInput),
       fingerprint: new Secret(fingerprint as KeyRingInput),
     },
-    ops: { token: opsToken === undefined ? null : new Secret(opsToken) },
+    ops,
     callersFile: callersFile ?? "",
     instanceId: loadInstanceId(reader),
     fileChannel,

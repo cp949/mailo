@@ -9,6 +9,8 @@ export {
   type AppConfig,
   type DatabaseTimeouts,
   type FileChannelConfig,
+  type OpsAdminToken,
+  type OpsConfig,
   type SmtpConfig,
 } from "./load-config.js";
 export {

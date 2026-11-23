@@ -2,10 +2,17 @@ export { CallersModule } from "./callers.module.js";
 export {
   BearerAuthGuard,
   CallerId,
+  OpsAdminGuard,
+  OpsReadGuard,
   OptionalBearerAuthGuard,
   checkBearer,
+  createOpsTokenMatcher,
 } from "./bearer-auth.js";
-export type { BearerResult } from "./bearer-auth.js";
+export type {
+  BearerResult,
+  OperatorRole,
+  OpsTokenMatcher,
+} from "./bearer-auth.js";
 export {
   CallerRegistryError,
   loadCallerRegistryFile,
