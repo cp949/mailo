@@ -11,7 +11,7 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 - `stop_grace_period`는 drain 상한(`MAILO_LEASE_SECONDS` − 10초) + 10초 이상이어야 한다. compose는 `MAILO_STOP_GRACE_PERIOD`(기본 150s)로 이 값을 정하고 앱에도 같은 값을 전달한다. 앱은 변수가 있으면 관계를 검사해 어긋나면 기동을 거부한다.
 - PostgreSQL 13 이상이 필요하다. compose는 `postgres:17-alpine`이다.
 - `mailo` 컨테이너는 읽기 전용 루트(`read_only`), 모든 capability 제거, `no-new-privileges`로 실행한다. 이미지의 `/repo`는 root 소유라 런타임(`node`)이 코드·`node_modules`·마이그레이션을 바꿀 수 없다.
-- 로그는 모두 표준 출력의 한 줄 JSON(`ts`, `instance`, `level`, `event`, ...)이다("로그").
+- 앱의 로그는 모두 표준 출력의 한 줄 JSON(`ts`, `instance`, `level`, `event`, ...)이다("로그"). 기동 실패(`startup_failed`)와 `worker_fatal`도 같은 형식이다. 마이그레이션 CLI(`migrate-cli`)만 사람이 읽는 평문을 쓴다.
 - DB 쓰기 권한 계정은 Mailo 앱으로 최소화한다. DB 본문 AES-GCM의 AAD가 `job_id`뿐이라 쓰기 권한자의 `recipients` 변경은 막지 못한다(ADR-0008 구현 중 확정 10, `key-management.md`).
 - DB 암호화 키·지문 키·JWE 개인키를 DB 백업과 별도로 보관한다. 이 키 없이는 복원한 DB의 일부 기능이 동작하지 않는다("백업과 복구").
 
@@ -61,7 +61,7 @@ docker compose up -d --build
   - 성공하면 `schema_migrations`에 기록한다. 실패하면 기록하지 않아 다음 실행(컨테이너 재시작 포함)에서 다시 시도하므로 문장은 멱등해야 한다(`IF NOT EXISTS` 등).
   - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다).
   - 같은 실행에서 앞서 적용한 파일은 이미 커밋돼 있다. 표식 파일이 실패해도 앞 파일은 롤백되지 않는다.
-  - 현재 파일(`0001`, `0002`)은 모두 트랜잭션 실행이다.
+  - 현재 파일(`0001`~`0003`)은 모두 트랜잭션 실행이다.
 - 잠금 대기: 기본(트랜잭션) 실행은 풀에 `lock_timeout`이 걸려 있으면 그 값(CLI는 10초)을 쓰고, 없으면(0) 10초를 `SET LOCAL`로 건다. 표식 파일은 같은 값을 세션 `SET`으로 걸고 끝나면 `RESET`한다. 마이그레이션이 다른 쿼리를 막는 잠금을 10초 넘게 기다리면 실패한다(`55P03`). 인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
 
 ### 마이그레이션 일회성 실행(선택)
@@ -83,7 +83,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 
 - 확인한 것: 로컬 PostgreSQL 17에서 위 권한으로 `mail_intake_rejections`의 INSERT·UPDATE·DELETE(식별 컬럼 포함)와 `pg_current_xact_id()`가 되고 `CREATE TABLE`은 `permission denied`였다. 확인하지 않은 것: 이 권한으로 앱 전체(Worker, 이벤트 피드, 보존 삭제)를 돌리는 것, override 파일의 실제 기동(`docker compose config` 문법 확인만 했다). 이 구성은 기본이 아니다.
 - 이 파일을 쓰면 기동 때 자동 마이그레이션이 없으므로 배포 절차에서 `mailo-migrate`가 끝났는지 확인한다(`docker compose ps -a mailo-migrate`의 종료 코드 0).
-- 현재 파일: `0001_queue_schema.sql`(5개 테이블, PostgreSQL 13 이상 필요), `0002_caller_quota.sql`(`mail_attempts.caller_id` 추가·채움, 부분 인덱스 2개).
+- 현재 파일: `0001_queue_schema.sql`(5개 테이블, PostgreSQL 13 이상 필요), `0002_caller_quota.sql`(`mail_attempts.caller_id` 추가·채움, 부분 인덱스 2개), `0003_attempt_instance.sql`(`mail_attempts.instance` NULL 허용 컬럼과 길이 CHECK(`NOT VALID`) 추가. PostgreSQL 11 이상에서 테이블을 다시 쓰지 않는다).
 - `0002`는 `mail_attempts` 전체를 `UPDATE`하고 인덱스를 `CONCURRENTLY` 없이 만든다. 시도 행이 많은 DB에서는 적용 중 쓰기가 잠시 막힐 수 있다(코드 읽기 결과, 대용량에서 측정하지 않았다).
 - 이전 버전 인스턴스가 `0002` 적용 뒤에도 돌면 `caller_id` 없이 시도를 기록한다. 그런 행은 호출처 할당 사용량에 잡히지 않는다(마이그레이션 주석). 롤링 배포가 끝나면 사라진다.
 
@@ -105,14 +105,14 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_PORT` | 3000 | 1~65535 | listen 포트. 컨테이너 안은 3000 고정 |
 | `MAILO_DATABASE_URL` | 없음(`MAILO_DB_HOST`가 없으면 필수) | `postgres://` 또는 `postgresql://` URL | 시크릿(`_FILE` 지원). 비밀번호는 호출자가 URL 인코딩해야 한다. compose 컨테이너는 비운다 |
 | `MAILO_DB_HOST`, `MAILO_DB_PORT`, `MAILO_DB_USER`, `MAILO_DB_PASSWORD`, `MAILO_DB_NAME` | 포트 5432, 나머지 없음 | `MAILO_DB_HOST`를 주면 사용자·DB 이름 필수, 비밀번호 선택 | `MAILO_DATABASE_URL`의 대안. 앱이 URL 인코딩해 조립한다. `MAILO_DB_HOST`는 호스트 이름, IPv4, 대괄호 IPv6(`[::1]`)만 받는다. 포트·경로·공백이 있으면 기동 거부(포트는 `MAILO_DB_PORT`). `MAILO_DB_PASSWORD`는 `_FILE` 지원. `MAILO_DATABASE_URL`과 함께 주면 기동 거부 |
-| `MAILO_DB_SSLMODE` | 없음(암호화 설정을 하지 않는다) | `disable`, `require`, `verify-ca`, `verify-full` | `MAILO_DB_HOST` 경로 전용. 값을 pg의 `ssl` 옵션으로 직접 옮긴다(URL `sslmode`는 pg-connection-string이 `require`·`verify-ca`를 `verify-full`처럼 다루고 경고하므로 쓰지 않는다). `require`: 암호화만 하고 인증서를 검증하지 않는다(중간자 공격은 막지 못한다). `verify-ca`: 체인을 CA로 검증하고 호스트 이름은 보지 않는다. `verify-full`: 체인과 호스트 이름을 모두 검증한다(권장). `MAILO_DATABASE_URL`과 함께 주면 기동 거부(그 경로는 URL의 `sslmode` 매개변수를 pg가 해석한다) |
-| `MAILO_DB_SSLROOTCERT_FILE` | 없음(Node 기본 CA) | PEM 파일 경로 | `verify-ca`·`verify-full`에서 서버 인증서를 검증할 CA. 다른 모드와 함께 주면 기동 거부. 파일을 읽지 못하면 변수 이름과 errno만 알린다 |
-| `MAILO_DB_ALLOW_INSECURE` | `false` | `true`, `false` | production(`NODE_ENV`가 development·test가 아님)에서 DB 호스트가 원격인데 `MAILO_DB_SSLMODE`가 없거나 `disable`이면 기동을 거부한다. `true`면 거부하지 않는다. 원격 판정: 점 없는 단일 라벨(compose 서비스 이름 `postgres`), `localhost`, 루프백(`127.x`, `::1`)은 로컬이고 그 밖(FQDN, 10/8·192.168/16 같은 사설 IP 포함)은 원격이다. `MAILO_DATABASE_URL`이면 URL의 호스트와 `sslmode` 매개변수에 같은 규칙을 쓴다 |
+| `MAILO_DB_SSLMODE` | 없음(암호화 설정을 하지 않는다) | `disable`, `require`, `verify-ca`, `verify-full` | `MAILO_DB_HOST` 경로 전용. 값을 pg의 `ssl` 옵션으로 직접 옮긴다(URL `sslmode`는 pg-connection-string이 `require`·`verify-ca`를 `verify-full`처럼 다루고 경고하므로 쓰지 않는다). `require`: 암호화만 하고 인증서를 검증하지 않는다(중간자 공격은 막지 못한다). `verify-ca`: 체인을 CA로 검증하고 호스트 이름은 보지 않는다. 호스트 이름을 보지 않으므로 `MAILO_DB_SSLROOTCERT_FILE` 없이 쓰면 기동을 거부한다(공개 CA에서 인증서를 받은 누구나 DB 연결을 가로챌 수 있다). `verify-full`: 체인과 호스트 이름을 모두 검증한다(권장). `MAILO_DATABASE_URL`과 함께 주면 기동 거부(그 경로는 URL의 `sslmode` 매개변수를 pg가 해석한다) |
+| `MAILO_DB_SSLROOTCERT_FILE` | 없음(`verify-full`만 Node 기본 CA, `verify-ca`는 필수) | PEM 파일 경로 | `verify-ca`·`verify-full`에서 서버 인증서를 검증할 CA. 다른 모드와 함께 주면 기동 거부. 파일을 읽지 못하면 변수 이름과 errno만 알린다 |
+| `MAILO_DB_ALLOW_INSECURE` | `false` | `true`, `false` | production(`NODE_ENV`가 development·test가 아님)에서 DB 호스트가 원격인데 `MAILO_DB_SSLMODE`가 없거나 `disable`이면 기동을 거부한다. `true`면 거부하지 않는다. 원격 판정: 점 없는 단일 라벨(compose 서비스 이름 `postgres`), `localhost`, 루프백(`127.x`, `::1`)은 로컬이고 그 밖(FQDN, 10/8·192.168/16 같은 사설 IP 포함)은 원격이다. `MAILO_DATABASE_URL`이면 pg가 계산한 접속 값(`pg.Client`의 `connectionParameters`의 `host`와 `ssl`)으로 판정한다. 호스트는 `?host=`가 URL의 호스트보다 우선하고 `/`로 시작하면(유닉스 소켓) 로컬이다. `ssl=true`·`ssl=1`·`sslmode`(`disable` 제외)·`sslnegotiation=direct`는 암호화이고 `ssl=0`·`sslmode=disable`은 아니다. `ssl=false`는 pg가 TLS를 요청하는 값이라 암호화로 본다. `hostaddr`는 pg 8.23.1이 접속에 쓰지 않아 보지 않는다. pg가 이 값을 주지 못하면(pg 버전 변경) production에서 기동을 거부한다 |
 | `MAILO_INSTANCE_ID` | 호스트 이름(컨테이너에서는 컨테이너 ID) | 영문·숫자로 시작, 영문·숫자·`.`·`_`·`-`, 64자 이하 | 로그 줄의 `instance` 값. 컨테이너를 다시 만들어도 같은 이름이 필요하면 지정한다. 인스턴스를 가르는 용도이고 DB에는 쓰지 않는다 |
 | `MAILO_DB_POOL_MAX` | 10 | 1~200, `MAILO_WORKER_CONCURRENCY` + 4 이상 | 커넥션 풀 최대 수. 어기면 기동 거부 |
-| `MAILO_DB_CONNECT_TIMEOUT_MS` | 5000 | 100~60000 | 연결 대기 |
+| `MAILO_DB_CONNECT_TIMEOUT_MS` | 5000 | 100~60000 | 연결 대기. `MAILO_DB_QUERY_TIMEOUT_MS`와의 합이 `MAILO_LEASE_SECONDS` − 10초 미만이어야 한다(아래 표) |
 | `MAILO_DB_STATEMENT_TIMEOUT_MS` | 30000 | 1000~3600000 | 서버가 쿼리 하나에 허용하는 시간(`statement_timeout`). 넘으면 서버가 취소한다(SQLSTATE 57014) |
-| `MAILO_DB_LOCK_TIMEOUT_MS` | 10000 | 1000~3600000 | 잠금 대기 상한(`lock_timeout`, 55P03) |
+| `MAILO_DB_LOCK_TIMEOUT_MS` | 10000 | 1000~3600000 | 잠금 대기 상한(`lock_timeout`, 55P03). 앱 풀에만 적용한다. 마이그레이션 CLI는 이 변수를 읽지 않고 10초로 고정이다 |
 | `MAILO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | 60000 | 1000~3600000 | 트랜잭션을 열고 쿼리 없이 머무는 상한(`idle_in_transaction_session_timeout`). 넘으면 서버가 연결을 끊는다(25P03) |
 | `MAILO_DB_QUERY_TIMEOUT_MS` | 35000 | 1000~3600000, `STATEMENT` 초과 | 클라이언트(pg `query_timeout`)의 응답 대기 상한. 서버가 응답하지 않는 단절을 끊는다 |
 | `MAILO_OPS_TOKEN` | 없음(꺼짐) | 공백 없는 32자 이상 | 운영자 토큰. 시크릿(`_FILE` 지원). `GET /health/ready`에 전역 큐·Worker 상태를 더한다. 호출처 API 키로는 볼 수 없다. 업무 endpoint에는 쓸 수 없다(401) |
@@ -210,7 +210,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 
 | 제약 | 어기면 |
 | ---- | ------ |
-| `MAILO_SMTP_TIMEOUT_SECONDS` < `MAILO_LEASE_SECONDS` | 기동 실패(설정 오류). 이 검사만 통과해도 발송기 조립에서 `SmtpConfigError code=TIMEOUT_EXCEEDS_LEASE`로 실패할 수 있다. 조건은 `2×min(T,10초) + T + 10초 ≤ lease`(T = 이 변수)이고 기본값(T=30)은 lease 60초 이상이다. 실행으로 확인: lease 20초·T 10초는 `TIMEOUT_EXCEEDS_LEASE`, lease 45초·T 10초는 기동 |
+| `MAILO_SMTP_TIMEOUT_SECONDS` < `MAILO_LEASE_SECONDS` | 기동 실패(설정 오류). 이 검사만 통과해도 발송기 조립에서 `SmtpConfigError code=TIMEOUT_EXCEEDS_LEASE`로 실패할 수 있다. 조건은 `2×min(T,10초) + T + 10초 ≤ lease`(T = 이 변수)이고 기본값(T=30)은 lease 60초 이상이다. 실행으로 확인: lease 20초·T 10초는 `TIMEOUT_EXCEEDS_LEASE`, lease 45초·T 10초는 기동(단 DB 시간제한 기본값에서는 lease 51초 이상이어야 하므로 `scripts/container/common.sh`는 `MAILO_DB_QUERY_TIMEOUT_MS`를 15000으로 줄인다) |
 | `MAILO_MAX_CONTENT_BYTES` ≤ `MAILO_MAX_REQUEST_BYTES` | 기동 실패 |
 | `MAILO_RETRY_CAP_SECONDS` ≥ `MAILO_RETRY_BASE_SECONDS` | 기동 실패 |
 | `MAILO_RECORD_RETENTION_SECONDS` ≥ `MAILO_BODY_RETENTION_SECONDS`, ≥ `MAILO_JOB_EXPIRY_SECONDS` | 기동 실패 |
@@ -220,6 +220,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_STOP_GRACE_PERIOD` ≥ drain 상한 + 10초(`max(1초, lease − 10초) + 10초`) | `MAILO_STOP_GRACE_PERIOD`가 설정된 경우에만 기동 실패. 변수가 없으면(앱이 오케스트레이터 설정을 알 수 없는 환경) 검사하지 않는다. 어기면 종료 때 SIGKILL이 먼저 와서 진행 중 전송이 lease 회수로 재발송될 수 있다 |
 | `MAILO_DB_POOL_MAX` ≥ `MAILO_WORKER_CONCURRENCY` + 4 | 기동 실패. 전송이 끝난 작업마다 결과 기록에 커넥션 1개가 필요하고, 점유·주기 작업·HTTP·헬스·파일 폴러 몫으로 4개를 남긴다(4는 추정). 풀이 모자라면 기록이 대기하다 lease가 만료돼 중복 발송이 된다 |
 | `MAILO_DB_QUERY_TIMEOUT_MS` > `MAILO_DB_STATEMENT_TIMEOUT_MS` | 기동 실패. 서버가 먼저 쿼리를 취소해야 연결이 살아남는다 |
+| `MAILO_DB_CONNECT_TIMEOUT_MS` + `MAILO_DB_QUERY_TIMEOUT_MS` < `MAILO_LEASE_SECONDS` × 1000 − 10000 | 기동 실패. 결과 기록 시도 하나는 연결을 기다린 뒤 응답 없는 쿼리를 최대 이 시간까지 기다린다. 기록 재시도는 다음 시도의 시작 시각에 이 합을 더해도 lease 마감(lease − 10초) 안일 때만 한다. 기본값은 5초 + 35초 = 40초이고 lease 120초에서 통과한다(lease 50초 이하는 거부). 한 트랜잭션의 여러 문장이 각각 `query_timeout` 가까이 걸리는 경우까지는 막지 못한다 |
 | 호출처 `sendQuota24h`가 있으면 `MAILO_RECORD_RETENTION_SECONDS` ≥ 86400 | Worker 기동 실패(`invalid worker option (field=callerQuotas.retention)`). 사용량은 최근 24시간의 `mail_attempts`를 세는데 기록이 그 전에 지워지면 할당이 느슨해진다(RQ-032) |
 
 ## 시크릿 주입
@@ -294,9 +295,9 @@ secrets:
 - `event: "http_request"`: 응답이 끝날 때 한 줄. 필드는 `requestId`, `method`, `route`(라우트 패턴, 예 `/jobs/:jobId`), `status`, `callerId`(인증 전에는 `null`), `durationMs`뿐이다. 쿼리 문자열, 경로 값, `Idempotency-Key`, 헤더, 본문은 없다(RQ-027). `requestId`는 오류 응답 본문의 `instance`(`urn:uuid:…`)와 같다.
 - `event: "nest_log"`: Nest 프레임워크와 `Logger`로 쓴 문자열 로그. `message`, `context`(클래스·모듈 이름), 오류 수준이면 Nest가 넘긴 `stack`이 있다. `stack`의 첫 줄에는 예외 메시지가 들어 있을 수 있다(이전 텍스트 출력과 같은 정보다).
 - 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`(앱 계층), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
-- 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패 메시지(`ConfigError` 등)는 앱이 로거를 만들기 전이라 JSON이 아니다.
+- 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패는 `event: "startup_failed"`(필드 `error`는 예외 이름·코드, 설정 오류는 변수 이름만 담은 `message`)로 남는다. 설정을 읽기 전의 실패는 `instance`가 호스트 이름이다(`MAILO_INSTANCE_ID`를 아직 읽지 못했다).
 - 본문·제목·수신자 주소·SMTP 인증 정보·키는 어느 필드에도 넣지 않는다. 예외는 이름과 코드(`Error:57014`)만 쓴다(RQ-027). 이 규칙은 canary 문자열 테스트로 확인한다.
-- 로그 수집기가 인스턴스를 구분하려면 `instance`를 쓴다. 컨테이너를 다시 만들면 호스트 이름이 바뀌므로 고정 이름이 필요하면 `MAILO_INSTANCE_ID`를 준다.
+- 로그 수집기가 인스턴스를 구분하려면 `instance`를 쓴다. 로그와 DB 행의 연결: 결과를 기록한 시도의 `instance`가 `mail_attempts.instance` 컬럼에 같은 값으로 남는다(128자까지). 로그의 `jobId`(`job_completed` 등)로 시도 행을 찾고 `instance`로 기록한 인스턴스를 확인한다. lease 회수로 쓴 `LEASE_EXPIRED` 시도, 0003 적용 전 행, 롤링 배포 중 이전 버전이 쓴 행은 NULL이다(점유한 인스턴스를 DB에 쓰지 않는다: lease는 `lease_token`으로만 다룬다). REST 응답에는 노출하지 않는다. 컨테이너를 다시 만들면 호스트 이름이 바뀌므로 고정 이름이 필요하면 `MAILO_INSTANCE_ID`를 준다.
 
 ## 종료와 stop_grace_period
 
@@ -310,7 +311,7 @@ secrets:
 - drain 상한은 SMTP 시간제한 중 가장 긴 값과 HTTP 요청 시간제한 30초보다 길어야 한다. 한 건 전체 마감(`totalMs`)은 기동 검증이 `totalMs + 10초 ≤ lease`로 강제하므로(위 "변수 사이의 제약") drain 상한 이하다. lease가 40초 미만이면 HTTP 30초가 drain 상한보다 길 수 있다. 둘이 병행하므로 종료 시간은 둘 중 긴 쪽이다.
 - 기본값: lease 120초, drain 상한 110초, `stop_grace_period` 150초. 40초는 drain 상한 뒤 풀 닫기와 폴러 정지의 여유다(수치는 추정이며 이 시간을 측정하지 않았다).
 - lease를 바꾸면 `MAILO_STOP_GRACE_PERIOD`를 함께 바꾼다. 예: `MAILO_LEASE_SECONDS=300`이면 `MAILO_STOP_GRACE_PERIOD=300s` 이상으로 둔다(drain 290초 + 10초). 안 바꾸면 기동이 거부된다. compose를 쓰지 않아 변수를 주지 않는 환경에서는 검사가 없으므로 오케스트레이터의 종료 대기 시간을 직접 맞춘다.
-- 점유 루프가 예외로 죽으면(`poll_loop_crashed` 로그) 프로세스는 즉시 끝나지 않는다. 위 종료 순서(`pause` → drain → 풀 닫기)를 거친 뒤 종료 코드 70(`worker_fatal reason=poll_loop_crashed exitCode=70`)으로 끝난다. 즉시 끝내면 진행 중 SMTP 전송이 끊겨 중복 발송이 생기기 때문이다. 종료 경로가 멈추면 lease 길이만큼 기다린 뒤 강제로 종료한다. compose의 `restart: unless-stopped`가 비0 종료에 재시작하는 것을 2026-11-23 일회용 컨테이너(`exit 70`)로 확인했다(재시작 4회). 실제 Mailo 컨테이너에서 이 경로를 일으켜 보지는 않았다(`apps/mailo/test/fatal-exit.spec.ts`는 처리기만 확인한다). 주기 작업 루프(`maintenance_loop_crashed`)가 죽은 경우는 로그만 남기고 종료하지 않는다.
+- 점유 루프가 예외로 죽으면(`poll_loop_crashed` 로그) 프로세스는 즉시 끝나지 않는다. 위 종료 순서(`pause` → drain → 풀 닫기)를 거친 뒤 종료 코드 70(`worker_fatal` 로그(error, `reason=poll_loop_crashed`, `exitCode=70`))으로 끝난다. 즉시 끝내면 진행 중 SMTP 전송이 끊겨 중복 발송이 생기기 때문이다. 종료 경로가 멈추면 lease 길이만큼 기다린 뒤 강제로 종료한다. compose의 `restart: unless-stopped`가 비0 종료에 재시작하는 것을 2026-11-23 일회용 컨테이너(`exit 70`)로 확인했다(재시작 4회). 실제 Mailo 컨테이너에서 이 경로를 일으켜 보지는 않았다(`apps/mailo/test/fatal-exit.spec.ts`는 처리기만 확인한다). 주기 작업 루프(`maintenance_loop_crashed`)가 죽은 경우는 로그만 남기고 종료하지 않는다.
 - `docker compose stop`과 `restart`는 SIGTERM을 보낸다. 앱은 SIGTERM·SIGINT에서 종료 훅을 실행한다(`enableShutdownHooks`).
 - 컨테이너에 실제 SIGTERM을 보내 확인한 것은 이 변경 이전 순서의 파일 채널 시나리오뿐이다. 변경한 순서와 느린 요청 종료는 통합 테스트로 확인했다(RQ-025).
 

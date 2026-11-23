@@ -12,6 +12,7 @@ export {
   type SmtpConfig,
 } from "./load-config.js";
 export {
+  interpretDatabaseUrl,
   isLocalDatabaseHost,
   toPgSsl,
   type DatabaseSsl,

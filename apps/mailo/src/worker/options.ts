@@ -29,6 +29,12 @@ export interface WorkerOptions {
   /** SIGTERM 뒤 진행 중 전송을 기다리는 시간 상한(ms). 컨테이너 `stop_grace_period`보다 짧아야 한다. */
   drainTimeoutMs: number;
   /**
+   * 결과 기록 시도 하나가 걸릴 수 있는 최악 시간(ms): DB 연결 대기 + 응답 없는 쿼리 대기(`MAILO_DB_CONNECT_TIMEOUT_MS`
+   * + `MAILO_DB_QUERY_TIMEOUT_MS`). 재시도는 이 시간을 더해도 기록 마감 안에 끝날 때만 한다(N4). 생략하면 0이다.
+   * 한 트랜잭션의 여러 문장이 각각 느린 경우까지는 막지 못한다(문장마다 `query_timeout`까지 기다릴 수 있다).
+   */
+  recordAttemptMaxMs?: number;
+  /**
    * Mailo 내부 오류(본문 복호화 실패, 잘못된 작업 데이터 등)로 처리하지 못한 작업을 이 횟수째 시도에서
    * FAILED로 만든다(독성 작업 격리). 추정값이다. 계정 상태 오류가 아니라 작업 데이터 문제일 가능성이 높아
    * 최대 시도 횟수(기본 8)까지 계속 재시도하지 않는다.
@@ -110,6 +116,12 @@ export function validateWorkerOptions(options: WorkerOptions): void {
     throw new WorkerOptionsError("concurrency");
   if (!Number.isInteger(options.poisonMaxAttempts))
     throw new WorkerOptionsError("poisonMaxAttempts");
+  if (
+    options.recordAttemptMaxMs !== undefined &&
+    (!Number.isFinite(options.recordAttemptMaxMs) ||
+      options.recordAttemptMaxMs < 0)
+  )
+    throw new WorkerOptionsError("recordAttemptMaxMs");
   for (const quota of options.callerQuotas?.values() ?? []) {
     if (!Number.isInteger(quota) || quota < 1)
       throw new WorkerOptionsError("callerQuotas");

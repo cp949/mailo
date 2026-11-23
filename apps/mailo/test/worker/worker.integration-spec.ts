@@ -130,7 +130,11 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
         bodyCipher: testCipher,
         defaultFrom: DEFAULT_FROM,
         random: () => 0.5,
-        logger: createJsonLogger((line) => logs.push(line)),
+        // 로그의 instance와 시도 기록의 instance가 같은 값이다.
+        instance: "mailo-test-1",
+        logger: createJsonLogger((line) => logs.push(line), {
+          instance: "mailo-test-1",
+        }),
       },
       options(over),
     );
@@ -292,6 +296,22 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     );
     expect(events.rows).toEqual([{ type: "JOB_SENT", attempt_count: 1 }]);
     expect((await job(id))!.attempts).toBe(1);
+  });
+
+  it("시도 기록의 instance가 로그의 instance와 같아 로그와 DB 행을 jobId로 잇는다 (migrations/0003)", async () => {
+    const id = await mailJob();
+    startWorker();
+    await waitStatus(id, "SENT");
+
+    const { rows } = await pool.query(
+      "SELECT instance FROM mail_attempts WHERE job_id = $1",
+      [id],
+    );
+    expect(rows).toEqual([{ instance: "mailo-test-1" }]);
+    const completed = logs
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .find((l) => l.event === "job_completed" && l.jobId === id);
+    expect(completed?.instance).toBe("mailo-test-1");
   });
 
   it("4xx 응답은 RETRY_WAIT가 되고 backoff(60초, 120초)로 다음 시각이 잡힌 뒤 재시도로 SENT가 된다 (RQ-008·009)", async () => {

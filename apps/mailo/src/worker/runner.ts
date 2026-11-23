@@ -39,7 +39,12 @@ export function toWorkerOptions(
   config: AppConfig,
   callerQuotas?: ReadonlyMap<string, number>,
 ): WorkerOptions {
-  return workerOptionsFromConfig(config.worker, callerQuotas);
+  return {
+    ...workerOptionsFromConfig(config.worker, callerQuotas),
+    // 기록 재시도는 한 시도의 최악 시간(연결 대기 + 쿼리 응답 대기)이 마감 안에 들어갈 때만 한다(N4).
+    recordAttemptMaxMs:
+      config.database.connectTimeoutMs + config.database.timeouts.queryMs,
+  };
 }
 
 /**
@@ -91,6 +96,7 @@ export function createWorkerRunner(deps: WorkerRunnerDeps): WorkerHandle {
       ...(deps.clock && { clock: deps.clock }),
       ...(deps.onFatal && { onFatal: deps.onFatal }),
       logger: deps.logger,
+      instance: config.instanceId,
     },
     toWorkerOptions(config, deps.callerQuotas),
   );

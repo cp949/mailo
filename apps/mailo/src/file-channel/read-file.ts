@@ -6,6 +6,8 @@
  * - `O_NONBLOCK`이 없으면 이름이 `*.json`인 FIFO를 여는 순간 폴러가 멈춘다.
  * - 일반 파일이고 `st_nlink == 1`이어야 읽는다. `st_nlink == 0`은 open 뒤에 이름이 지워진 파일이라 `gone`이다. 심볼릭 링크·FIFO·소켓·디렉터리·하드링크는 내용을 읽지 않는다.
  *   하드링크는 다른 파일(다른 호출처의 파일 등)을 가리킬 수 있어, 읽으면 해시로 내용을 추측하는 통로가 된다.
+ *   일부 FUSE·SMB가 살아 있는 파일의 `st_nlink`를 0으로 보고하면 그 파일은 영구히 건너뛰어진다. 그래서 nlink 0으로 인한 `gone`에는
+ *   `nlinkZero: true`를 붙이고 폴러가 세어 알린다(poller.ts, ADR-0004 구현 중 확정 36).
  * - 읽기는 상한 + 1바이트까지만 한다. 호출처가 `rename` 뒤에도 파일을 열어 두고 추가로 쓸 수 있으므로
  *   `fstat` 크기는 읽을 양을 정하는 데 쓰지 않는다.
  *
@@ -36,8 +38,11 @@ export interface FileIdent {
 export type NotReadKind = "SYMLINK" | "NOT_REGULAR" | "HARDLINK";
 
 export type ReadOutcome =
-  /** 읽기 전에 이미 사라졌다. 다른 인스턴스가 처리했을 수 있다. */
-  | { kind: "gone" }
+  /**
+   * 읽기 전에 이미 사라졌다. 다른 인스턴스가 처리했을 수 있다.
+   * `nlinkZero`는 open 성공 뒤 `fstat`의 nlink가 0이라 gone으로 본 경우다(ENOENT·ESTALE에는 붙지 않는다).
+   */
+  | { kind: "gone"; nlinkZero?: true }
   /** 권한 때문에 열 수 없다. 운영 구성 오류일 수 있어 거부하지 않고 남겨 둔다. */
   | { kind: "unreadable"; code: string }
   | { kind: "not_read"; why: NotReadKind; ident: FileIdent | null }
@@ -59,11 +64,16 @@ async function identOf(path: string): Promise<FileIdent | null> {
   }
 }
 
+/** 테스트 전용 후크. 운영 코드(`ingestFile`)는 넘기지 않는다. */
+export interface ReadInboxFileTestHooks {
+  /** `open` 성공 직후, `fstat` 전에 부른다. 테스트가 이 틈에 다른 인스턴스의 삭제를 흉내 낸다. */
+  afterOpen?: () => Promise<void> | void;
+}
+
 export async function readInboxFile(
   path: string,
   maxBytes: number,
-  /** `open` 성공 직후, `fstat` 전에 부른다. 테스트가 이 틈에 다른 인스턴스의 삭제를 흉내 낸다. */
-  afterOpen?: () => Promise<void> | void,
+  testHooks?: ReadInboxFileTestHooks,
 ): Promise<ReadOutcome> {
   let handle;
   try {
@@ -91,13 +101,14 @@ export async function readInboxFile(
   }
 
   try {
-    await afterOpen?.();
+    await testHooks?.afterOpen?.();
     const stat = await handle.stat({ bigint: true });
     const ident = { dev: stat.dev, ino: stat.ino };
     if (!stat.isFile()) return { kind: "not_read", why: "NOT_REGULAR", ident };
     // 열고 나서 fstat 전에 다른 인스턴스·호출처가 이름을 지우면 nlink가 0이다. 하드링크가 아니라 사라진 파일이므로
     // 거부하지 않고 gone으로 다룬다. 다른 인스턴스는 DB 커밋 뒤에만 지우므로 이 파일은 이미 처리됐거나 호출처가 회수했다.
-    if (stat.nlink === 0n) return { kind: "gone" };
+    // 같은 경로가 계속 nlink 0이면 파일시스템이 nlink를 0으로 잘못 보고하는 것이다. 호출자가 센다.
+    if (stat.nlink === 0n) return { kind: "gone", nlinkZero: true };
     if (stat.nlink !== 1n) return { kind: "not_read", why: "HARDLINK", ident };
 
     const limit = maxBytes + 1;

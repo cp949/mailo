@@ -38,7 +38,10 @@ describe("Worker 옵션 검증", () => {
       ...configRest
     } = fromConfig;
 
-    expect(rest).toEqual(configRest);
+    // `recordAttemptMaxMs`는 DB 시간제한에서 오는 값이라 설정에서 만든 쪽에만 있다(기본 연결 5초 + 쿼리 35초, N4).
+    const { recordAttemptMaxMs, ...configCommon } = configRest;
+    expect(recordAttemptMaxMs).toBe(40_000);
+    expect(rest).toEqual(configCommon);
     expect(rest.sweepIntervalMs).toBe(60_000);
     expect(rest.cleanupIntervalMs).toBe(60_000);
     expect({ ...retry, random: undefined }).toEqual({

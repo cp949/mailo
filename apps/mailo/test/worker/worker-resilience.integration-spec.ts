@@ -271,6 +271,49 @@ describe("PostgreSQL 통합: Worker DB 장애 대응", () => {
     expect(await status(id)).toBe("SENDING");
   });
 
+  it("기록 재시도는 마지막 시도가 최악 시간(연결 대기 + 쿼리 대기)까지 걸려도 lease 마감 안에 끝나는 시점까지만 한다 (N4, M1)", async () => {
+    const id = await mailJob();
+    const state = { failures: Number.MAX_SAFE_INTEGER };
+    const boundMs = 40_000; // 기본 연결 대기 5초 + 쿼리 대기 35초
+    let virtualNow = 0;
+    const attemptStarts: number[] = [];
+    const virtualClock: Clock = {
+      now: () => virtualNow,
+      sleep: async (ms, signal) => {
+        if (ms >= 10_000) return systemClock.sleep(ms, signal);
+        await new Promise((r) => setImmediate(r));
+        if (signal?.aborted) return;
+        if (ms < 100) return;
+        virtualNow += ms;
+        attemptStarts.push(virtualNow);
+      },
+    };
+    const worker = make(
+      flakyCompletePool(state),
+      { leaseSeconds: 120, recordAttemptMaxMs: boundMs },
+      { clock: virtualClock },
+    );
+    await worker.start();
+
+    await waitFor(async () =>
+      logs.some(
+        (l) =>
+          l.includes('"event":"complete_failed"') &&
+          l.includes('"retry":false'),
+      ),
+    );
+
+    // lease 120초의 마감은 110초다. 재시도 시작 시각 + 최악 시간이 마감을 넘지 않는다.
+    const deadlineMs = 110_000;
+    expect(attemptStarts.length).toBeGreaterThan(3);
+    expect(Math.max(...attemptStarts) + boundMs).toBeLessThan(deadlineMs);
+    // 마감 직전까지 재시도하며, 간격 상한(5초 + jitter)보다 더 일찍 멈추지 않는다.
+    expect(Math.max(...attemptStarts) + boundMs).toBeGreaterThan(
+      deadlineMs - 6_000,
+    );
+    expect(await status(id)).toBe("SENDING");
+  });
+
   // --- H2: 상태와 치명 오류 -----------------------------------------------------
 
   it("status()는 점유 루프가 한 바퀴 돌 때마다 lastPollAt을 갱신하고(큐가 비어 있어도) 상태 전이를 반영한다 (H2)", async () => {

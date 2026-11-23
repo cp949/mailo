@@ -58,6 +58,8 @@ export interface WorkerDeps {
   /** [0, 1) 난수. 재시도 jitter와 폴링 간격에 쓴다. 생략하면 Math.random이다. */
   random?: () => number;
   logger?: AppLogger;
+  /** 로그의 `instance`와 같은 값. 시도 기록(`mail_attempts.instance`)에 남겨 로그와 DB 행을 잇는다. 생략하면 NULL이다. */
+  instance?: string;
   /**
    * 점유 루프가 예상 못한 예외로 끝났을 때 한 번 부른다. 루프는 되살리지 않는다.
    * 호출자가 정상 종료 경로(`pause`·`stop`)를 거쳐 프로세스를 끝내 재시작을 유도한다.
@@ -342,6 +344,8 @@ export function createWorker(
    * 전송 결과를 기록한다. 기록에 실패하면 lease가 만료돼 중복 발송이 되므로 lease가 끝나기 전까지 backoff로 재시도한다.
    * 마감은 `claim` 호출 전 시각 + lease - 여유(단조 시계)다. lease가 5초 같이 짧으면 여유를 lease의 절반으로 줄인다.
    * 마감이 지났거나 drain 시간 초과로 전송을 끊었으면 포기한다. 첫 시도는 항상 한다.
+   * 재시도는 "다음 시도 시작 + 시도 하나의 최악 시간(`recordAttemptMaxMs`) < 마감"일 때만 한다(N4). 마감 직전에 시작한 시도가
+   * 응답 없는 연결에 걸려 lease를 넘기면 다른 인스턴스가 회수해 다시 발송하기 때문이다.
    */
   async function record(
     job: ClaimedJob,
@@ -357,7 +361,11 @@ export function createWorker(
       try {
         const result = await completeAttempt(
           pool,
-          { id: job.id, leaseToken: job.leaseToken },
+          {
+            id: job.id,
+            leaseToken: job.leaseToken,
+            ...(deps.instance !== undefined && { instance: deps.instance }),
+          },
           outcome,
           completeDeps,
         );
@@ -396,7 +404,8 @@ export function createWorker(
         );
         const delay = Math.round(base * (1 + 0.2 * (2 * random() - 1)));
         const retry =
-          !sendController.signal.aborted && clock.now() + delay < deadline;
+          !sendController.signal.aborted &&
+          clock.now() + delay + (options.recordAttemptMaxMs ?? 0) < deadline;
         log.error("complete_failed", {
           jobId: job.id,
           error: describeError(error),

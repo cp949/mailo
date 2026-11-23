@@ -141,12 +141,16 @@ describe("입력 파일 읽기 (ADR-0004 결정 5, RQ-002)", () => {
     const target = file("unlinked-after-open.json");
     writeFileSync(target, '{"x":1}');
 
-    const result = await readInboxFile(target, LIMIT, () => unlinkSync(target));
+    const result = await readInboxFile(target, LIMIT, {
+      afterOpen: () => unlinkSync(target),
+    });
 
-    expect(result).toEqual({ kind: "gone" });
+    // 호출자가 FUSE 같은 nlink 0 오보고를 세도록 원인을 표시한다(N5).
+    expect(result).toEqual({ kind: "gone", nlinkZero: true });
   });
 
   it("없는 파일은 gone이다", async () => {
+    // ENOENT에는 nlinkZero 표시가 없다.
     expect(await readInboxFile(file("nothing.json"), LIMIT)).toEqual({
       kind: "gone",
     });

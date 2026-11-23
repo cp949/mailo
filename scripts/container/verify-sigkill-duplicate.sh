@@ -11,7 +11,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 FILE_CHANNEL=0
-LEASE_SECONDS=45   # SMTP 타임아웃 10초 기준 최소값에 가깝다(connect·greeting·socket 합 30초 + 여유 10초가 lease 이하여야 기동한다)
+LEASE_SECONDS=45   # SMTP 타임아웃 10초 기준 최소값에 가깝다(connect·greeting·socket 합 30초 + 여유 10초가 lease 이하여야 기동한다. DB 시간제한은 common.sh가 줄여 준다)
 DATA_DELAY_MS=90000
 KILL_AFTER_RECEIVED_SECONDS=2
 verify_setup

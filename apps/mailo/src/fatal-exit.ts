@@ -1,3 +1,5 @@
+import type { AppLogger } from "./logging/index.js";
+
 /**
  * 점유 루프가 예외로 죽은 뒤의 종료 코드. 오케스트레이터가 비0 종료에 재시작하도록 한다(deployment.md).
  * sysexits의 EX_SOFTWARE(70)를 따랐다. 설정 오류(1)와 구분된다.
@@ -10,7 +12,8 @@ export interface FatalHandlerDeps {
   exit: (code: number) => void;
   /** `close`가 이 시간 안에 끝나지 않으면 강제로 종료한다(ms). drain 상한에 여유를 더한 값이다. */
   forceAfterMs: number;
-  log: (message: string) => void;
+  /** 앱 로거. `worker_fatal`을 한 줄 JSON으로 남긴다(`instance` 포함). */
+  logger: AppLogger;
 }
 
 /**
@@ -25,7 +28,10 @@ export function createFatalHandler(
   return (reason) => {
     if (closing) return;
     closing = true;
-    deps.log(`worker_fatal reason=${reason} exitCode=${EXIT_WORKER_CRASHED}`);
+    deps.logger.error("worker_fatal", {
+      reason,
+      exitCode: EXIT_WORKER_CRASHED,
+    });
     setTimeout(() => deps.exit(EXIT_WORKER_CRASHED), deps.forceAfterMs).unref();
     void deps
       .close()

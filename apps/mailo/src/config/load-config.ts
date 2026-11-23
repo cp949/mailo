@@ -513,12 +513,21 @@ function loadOpsToken(reader: EnvReader): string | undefined {
   return token;
 }
 
+/** 결과 기록의 마감 여유(ms). lease 만료 전에 기록을 끝내기 위해 worker가 같은 값을 쓴다(`worker.ts`의 `COMPLETE_LEASE_MARGIN_MS`). */
+const DB_RECORD_LEASE_MARGIN_MS = 10_000;
+
 /**
  * DB 시간제한(H1). 서버 쪽 `statement_timeout`이 먼저 쿼리를 취소해 연결이 살아남게 하고,
  * 서버 응답이 오지 않는 단절은 클라이언트 `query_timeout`이 끊는다. 그래서 `queryMs`가 더 길어야 한다.
  * 기본값은 모두 추정이다. 가장 오래 걸리는 정상 쿼리는 500건 배치 sweep·삭제이고 수 초 이하로 가정했다.
+ * 결과 기록 시도 하나는 연결 대기(`connectMs`) 뒤 응답 없는 쿼리를 `queryMs`까지 기다릴 수 있다. 이 합이 lease에서 기록 마감 여유
+ * (10초, worker의 `COMPLETE_LEASE_MARGIN_MS`)를 뺀 값보다 작아야 마감 직전에 시작한 시도가 lease 안에 끝난다(N4, N6).
  */
-function loadDatabaseTimeouts(reader: EnvReader): DatabaseTimeouts {
+function loadDatabaseTimeouts(
+  reader: EnvReader,
+  leaseSeconds: number,
+  connectMs: number,
+): DatabaseTimeouts {
   const range = { min: 1000, max: 3_600_000 };
   const statementMs = reader.int(
     "MAILO_DB_STATEMENT_TIMEOUT_MS",
@@ -535,6 +544,13 @@ function loadDatabaseTimeouts(reader: EnvReader): DatabaseTimeouts {
   if (queryMs <= statementMs) {
     reader.issue(
       "MAILO_DB_QUERY_TIMEOUT_MS는 MAILO_DB_STATEMENT_TIMEOUT_MS보다 커야 한다",
+    );
+  }
+  const attemptBoundMs = connectMs + queryMs;
+  const budgetMs = leaseSeconds * 1000 - DB_RECORD_LEASE_MARGIN_MS;
+  if (attemptBoundMs >= budgetMs) {
+    reader.issue(
+      "MAILO_DB_QUERY_TIMEOUT_MS와 MAILO_DB_CONNECT_TIMEOUT_MS의 합은 MAILO_LEASE_SECONDS에서 10초를 뺀 값보다 작아야 한다",
     );
   }
   return { statementMs, lockMs, idleInTransactionMs, queryMs };
@@ -670,7 +686,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     worker.retention.recordRetentionSeconds,
   );
 
-  const dbTimeouts = loadDatabaseTimeouts(reader);
+  const connectTimeoutMs = reader.int("MAILO_DB_CONNECT_TIMEOUT_MS", 5000, {
+    min: 100,
+    max: 60_000,
+  });
+  const dbTimeouts = loadDatabaseTimeouts(
+    reader,
+    worker.lease.seconds,
+    connectTimeoutMs,
+  );
   const poolMax = reader.int("MAILO_DB_POOL_MAX", 10, { min: 1, max: 200 });
   // 전송이 끝난 작업의 결과 기록은 커넥션 1개가 필요하다. 풀이 모자라면 기록이 대기하다 lease가 만료되어 중복 발송이 된다.
   if (poolMax < worker.concurrency + POOL_RESERVE_CONNECTIONS) {
@@ -697,10 +721,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       url: new Secret(databaseUrl ?? ""),
       ssl: databaseSsl,
       poolMax,
-      connectTimeoutMs: reader.int("MAILO_DB_CONNECT_TIMEOUT_MS", 5000, {
-        min: 100,
-        max: 60_000,
-      }),
+      connectTimeoutMs,
       timeouts: dbTimeouts,
     },
     http: { maxRequestBytes },

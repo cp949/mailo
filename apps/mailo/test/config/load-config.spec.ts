@@ -654,6 +654,24 @@ describe("DB 시간제한·풀 크기·운영자 토큰 (H1·M1·H2)", () => {
     expect(message).toContain("MAILO_DB_STATEMENT_TIMEOUT_MS");
   });
 
+  it("query 시간제한 + 연결 시간제한이 lease - 10초 이상이면 거부하고, 기본값은 통과한다(N6)", () => {
+    expect(() => loadConfig(env())).not.toThrow(); // 35초 + 5초 < 120초 - 10초
+
+    // 경계: lease 50초 = 40초 + 10초는 거부, 51초는 통과
+    const message = issuesOf({ MAILO_LEASE_SECONDS: "50" });
+    expect(message).toContain("MAILO_DB_QUERY_TIMEOUT_MS");
+    expect(message).toContain("MAILO_DB_CONNECT_TIMEOUT_MS");
+    expect(message).toContain("MAILO_LEASE_SECONDS");
+    expect(() => loadConfig(env({ MAILO_LEASE_SECONDS: "51" }))).not.toThrow();
+    // 쿼리 시간제한을 최댓값(3,600,000ms)으로 두면 기본 lease에서 거부한다.
+    expect(
+      issuesOf({
+        MAILO_DB_STATEMENT_TIMEOUT_MS: "30000",
+        MAILO_DB_QUERY_TIMEOUT_MS: "3600000",
+      }),
+    ).toContain("MAILO_LEASE_SECONDS");
+  });
+
   it.each([
     "MAILO_DB_STATEMENT_TIMEOUT_MS",
     "MAILO_DB_LOCK_TIMEOUT_MS",

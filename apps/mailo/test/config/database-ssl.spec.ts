@@ -6,6 +6,7 @@ import path from "node:path";
 import tls from "node:tls";
 import {
   ConfigError,
+  interpretDatabaseUrl,
   isLocalDatabaseHost,
   loadConfig,
   loadDatabaseOnly,
@@ -44,7 +45,7 @@ describe("DB 연결 암호화 설정(L7)", () => {
   });
 
   it("허용값은 disable, require, verify-ca, verify-full이고 그 밖은 변수 이름으로 거부한다", () => {
-    for (const mode of ["require", "verify-ca", "verify-full"])
+    for (const mode of ["require", "verify-full"])
       expect(
         loadDatabaseOnly({
           NODE_ENV: "development",
@@ -65,6 +66,38 @@ describe("DB 연결 암호화 설정(L7)", () => {
     ).toContain(
       "MAILO_DB_SSLMODE는 disable, require, verify-ca, verify-full 중 하나",
     );
+  });
+
+  it("verify-ca는 MAILO_DB_SSLROOTCERT_FILE 없이 기동을 거부하고 변수 이름만 알린다(N1)", () => {
+    const base = {
+      NODE_ENV: "development",
+      MAILO_DB_HOST: "db.example.com",
+      MAILO_DB_USER: "u",
+      MAILO_DB_NAME: "n",
+    };
+
+    const message = issues({ ...base, MAILO_DB_SSLMODE: "verify-ca" });
+
+    expect(message).toContain(
+      "MAILO_DB_SSLMODE=verify-ca는 MAILO_DB_SSLROOTCERT_FILE이 필요하다",
+    );
+    expect(message).toContain("verify-full");
+    // CA 파일이 있으면 기동하고, verify-full은 파일 없이도 기동한다.
+    const dir = mkdtempSync(path.join(tmpdir(), "mailo-ca-"));
+    try {
+      const file = path.join(dir, "ca.pem");
+      writeFileSync(file, "PEM");
+      expect(
+        loadDatabaseOnly({
+          ...base,
+          MAILO_DB_SSLMODE: "verify-ca",
+          MAILO_DB_SSLROOTCERT_FILE: file,
+        }).ssl,
+      ).toEqual({ mode: "verify-ca", ca: "PEM" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(issues({ ...base, MAILO_DB_SSLMODE: "verify-full" })).toBe("");
   });
 
   it("MAILO_DATABASE_URL과 MAILO_DB_SSLMODE를 함께 주면 조용히 무시하지 않고 거부한다", () => {
@@ -175,6 +208,104 @@ describe("DB 연결 암호화 설정(L7)", () => {
       ).toBe("");
     });
 
+    it("URL의 host 쿼리 매개변수가 호스트를 바꾸면 그 호스트로 판정한다(N2)", () => {
+      const url = (query: string) =>
+        `postgres://mailo:real-looking-password-not-the-public-sample@localhost:5432/mailo${query}`;
+
+      expect(
+        issues({
+          NODE_ENV: "production",
+          MAILO_DATABASE_URL: url("?host=db.prod.example.com"),
+        }),
+      ).toContain("연결 암호화가 꺼져 있다");
+      expect(
+        issues({
+          NODE_ENV: "production",
+          MAILO_DATABASE_URL: url("?host=db.prod.example.com&sslmode=disable"),
+        }),
+      ).toContain("연결 암호화가 꺼져 있다");
+      expect(
+        issues({
+          NODE_ENV: "production",
+          MAILO_DATABASE_URL: url(
+            "?host=db.prod.example.com&sslmode=verify-full",
+          ),
+        }),
+      ).toBe("");
+      // 반대로 host가 로컬이면 URL의 원격 호스트 이름과 무관하게 통과한다.
+      expect(
+        issues({
+          NODE_ENV: "production",
+          MAILO_DATABASE_URL:
+            "postgres://mailo:real-looking-password-not-the-public-sample@db.example.com/mailo?host=localhost",
+        }),
+      ).toBe("");
+    });
+
+    it("URL의 ssl=true만 있어도 pg가 암호화하므로 거부하지 않고, ssl=0은 거부한다(N2)", () => {
+      const url = (query: string) =>
+        `postgres://mailo:real-looking-password-not-the-public-sample@db.example.com:5432/mailo${query}`;
+
+      for (const query of ["?ssl=true", "?ssl=1", "?sslnegotiation=direct"])
+        expect([
+          query,
+          issues({ NODE_ENV: "production", MAILO_DATABASE_URL: url(query) }),
+        ]).toEqual([query, ""]);
+      for (const query of ["?ssl=0", "?ssl=", "?ssl=true&sslmode=disable"])
+        expect([
+          query,
+          issues({ NODE_ENV: "production", MAILO_DATABASE_URL: url(query) }),
+        ]).toEqual([query, expect.stringContaining("연결 암호화가 꺼져 있다")]);
+    });
+
+    it("host가 유닉스 소켓 경로(/ 시작)이면 로컬로 판정한다(N2)", () => {
+      expect(
+        issues({
+          NODE_ENV: "production",
+          MAILO_DATABASE_URL:
+            "postgres://mailo:real-looking-password-not-the-public-sample@db.example.com/mailo?host=/var/run/postgresql",
+        }),
+      ).toBe("");
+    });
+
+    it("암호화 여부는 pg가 계산한 ssl 값으로 판정한다: ssl=false·ssl=0·sslmode=disable의 결과를 pg와 같게 맞춘다(N2, pg 8.23.1)", () => {
+      const base = "postgres://u:p@db.example.com:5432/n";
+      const encrypted = (query: string) =>
+        interpretDatabaseUrl(base + query)?.encrypted;
+
+      // 암호화로 보지 않는다: ssl=0, 빈 값, sslmode=disable(ssl=true를 덮어쓴다)
+      for (const query of ["", "?ssl=0", "?ssl=", "?sslmode=disable"])
+        expect([query, encrypted(query)]).toEqual([query, false]);
+      expect(encrypted("?ssl=true&sslmode=disable")).toBe(false);
+      // 암호화로 본다: ssl=true·1, sslmode(disable 제외), sslnegotiation=direct
+      for (const query of [
+        "?ssl=true",
+        "?ssl=1",
+        "?sslmode=verify-full",
+        "?ssl=no-verify",
+        "?sslnegotiation=direct",
+      ])
+        expect([query, encrypted(query)]).toEqual([query, true]);
+      // `ssl=false`는 pg가 문자열 'false'를 거짓으로 바꾸지 않아 TLS를 요청한다(서버가 TLS를 거부하면 연결이 실패한다).
+      expect(encrypted("?ssl=false")).toBe(true);
+    });
+
+    it("호스트는 pg가 접속에 쓰는 값이다: ?host=가 우선하고 같은 이름이 여럿이면 마지막 값이다(N2, pg 8.23.1)", () => {
+      const base = "postgres://u:p@localhost:5432/n";
+
+      expect(interpretDatabaseUrl(base)?.host).toBe("localhost");
+      expect(
+        interpretDatabaseUrl(`${base}?host=db.prod.example.com`)?.host,
+      ).toBe("db.prod.example.com");
+      expect(
+        interpretDatabaseUrl(`${base}?host=/var/run/postgresql`)?.host,
+      ).toBe("/var/run/postgresql");
+      expect(
+        interpretDatabaseUrl(`${base}?host=a.example.com&host=b.example.com`)
+          ?.host,
+      ).toBe("b.example.com");
+    });
+
     it("development·test에서는 강제하지 않는다", () => {
       expect(
         issues({
@@ -221,6 +352,7 @@ describe("DB 연결 암호화의 pg ssl 옵션 매핑(L7)", () => {
   it("require는 검증하지 않고, verify-ca는 체인만, verify-full은 체인과 호스트 이름을 검증한다", () => {
     const require = toPgSsl({ mode: "require", ca: null })!;
     const verifyCa = toPgSsl({ mode: "verify-ca", ca: "PEM" })!;
+    expect(() => toPgSsl({ mode: "verify-ca", ca: null })).toThrow("CA(PEM)");
     const verifyFull = toPgSsl({ mode: "verify-full", ca: "PEM" })!;
 
     expect(require).toEqual({ rejectUnauthorized: false });

@@ -43,6 +43,8 @@ export interface IngestResult {
   settled: boolean;
   /** 등록·거부 기록은 커밋했지만 원본 삭제에 실패했다(errno 코드). 다음 폴링에서 같은 Key·같은 거부로 걸러진다. */
   deleteFailed?: string;
+  /** `gone`의 원인이 열린 뒤 nlink 0이다. 폴러가 같은 경로의 연속 횟수를 센다(`read-file.ts`). */
+  nlinkZero?: true;
 }
 
 export interface IngestDeps {
@@ -104,7 +106,12 @@ export async function ingestFile(
   fileName: string,
 ): Promise<IngestResult> {
   const read = await readInboxFile(path, deps.maxFileBytes);
-  if (read.kind === "gone") return { outcome: "gone", settled: true };
+  if (read.kind === "gone")
+    return {
+      outcome: "gone",
+      settled: true,
+      ...(read.nlinkZero && { nlinkZero: true as const }),
+    };
   if (read.kind === "unreadable")
     return { outcome: "unreadable", settled: false };
 

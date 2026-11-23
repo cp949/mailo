@@ -149,7 +149,7 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
    - pg는 `query_timeout`이 지나도 연결을 닫지 않는다. `withTransaction`은 이 오류나 ROLLBACK 실패 때 연결을 풀에 돌려주지 않고 버린다(`pool.query`는 pg-pool이 버린다). 응답 없는 연결에 ROLLBACK을 보내면 같은 시간만큼 더 기다리기 때문이다.
    - 마이그레이션 CLI는 `statement_timeout` 없이 `lock_timeout` 10초만 건다. 인스턴스 사이의 advisory lock 대기는 `lock_timeout = 0`으로 예외를 둔다. 정리 쿼리는 500건 배치라 30초 안에 끝난다고 가정했다(미측정). [정정됨: 구현 중 확정 10. 배치는 1,000건이다.]
    - **`pause()` 상한.** 진행 중인 점유 호출을 drain 상한과 `Promise.race`로 묶는다. 상한이 지나면 `pause_timeout` 경고를 남기고 넘어간다. 그 뒤 늦게 돌아온 점유는 처리하지 않는다(`claim_after_drain_timeout`). 점유 호출이 끝나지 않았으면 `stop()`도 미완료(`drained: false`)로 보고 전송 취소 신호를 올린다. DB 풀 닫기는 5초까지만 기다린다.
-   - **결과 기록 재시도.** lease 마감(점유 호출 전 단조 시각 + lease − 10초, lease가 20초 이하이면 여유를 lease의 절반으로)까지 200ms에서 시작해 2배씩 늘리는 backoff(간격 5초 상한, ±20%)로 재시도한다. 첫 시도는 항상 한다. 마감이 지났거나 종료로 전송을 끊었으면 포기하고 lease 회수에 맡긴다. 시각은 단조 시계이고 작업 시각은 계속 DB `now()`다(결정 10).
+   - **결과 기록 재시도.** [보완됨: 구현 중 확정 11. 마지막 시도의 최악 시간을 마감 판정에 더한다.] lease 마감(점유 호출 전 단조 시각 + lease − 10초, lease가 20초 이하이면 여유를 lease의 절반으로)까지 200ms에서 시작해 2배씩 늘리는 backoff(간격 5초 상한, ±20%)로 재시도한다. 첫 시도는 항상 한다. 마감이 지났거나 종료로 전송을 끊었으면 포기하고 lease 회수에 맡긴다. 시각은 단조 시계이고 작업 시각은 계속 DB `now()`다(결정 10).
    - **풀 크기.** 기동 때 `MAILO_DB_POOL_MAX` ≥ `MAILO_WORKER_CONCURRENCY` + 4를 검사한다. 4는 점유, 주기 작업, HTTP·헬스·파일 폴러 몫의 추정이다. 기본값(풀 10, 동시 4)은 통과한다.
    - 검증: `test/db/pool-timeout.integration-spec.ts`, `test/worker/worker-resilience.integration-spec.ts`, `test/config/load-config.spec.ts`. 한계: 실제 RST 없는 네트워크 단절은 재현하지 않았다.
 9. **`stop_grace_period` 검사와 compose 변수(결정 12 보완, 구현 중 확정 6 정정, 2026-11-23 코드 리뷰, `src/config/load-config.ts`·`docker-compose.yml`).** 결정 문구는 바꾸지 않는다.
@@ -162,6 +162,13 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
     - **점유 앞단의 lease 복구는 잠금 없이 유지한다.** `claim` 안의 `recoverExpiredLeases`는 그대로다(결정 5: 점유가 먼저 회수한다). 복구가 다른 인스턴스의 정리 잠금에 막혀 지연되면 정체와 중복 발송으로 이어질 수 있어서다. 유지보수 루프의 호출만 `exclusive: true`로 잠금을 쓴다.
     - **기본값 단일 출처.** `defaultWorkerOptions`가 만든 기본값(점검 30초, 정리 10분)과 `loadConfig`의 기본값(60초)이 달랐다. 문서(구현 중 확정 3, `deployment.md`)는 60초다. 이제 기본값은 `loadConfig`가 읽는 값(`defaultWorkerConfig`)이 정하고 `defaultWorkerOptions`는 그것을 `workerOptionsFromConfig`로 바꾼 값이다. 점검·정리 주기 기본값이 테스트 기본값에서 60초로 바뀌었다(운영 값은 변하지 않았다). 설정의 타입은 `WorkerConfig`, Worker가 쓰는 옵션은 `WorkerOptions`로 이름을 나눴다. 계정 오류 사유 타입은 큐의 `AccountErrorReason` 하나다. 큐 모듈의 `defaultRetryPolicy`·`defaultBreakerConfig`는 큐 테스트용으로 남기고 `loadConfig` 기본값과 같다는 것을 단위 테스트로 고정했다(`test/worker/worker.spec.ts`).
     - 검증: `test/queue/maintenance.integration-spec.ts`(다른 연결이 잠금을 쥐면 0건, 풀리면 처리, 단계별 독립, 점유 앞단 복구는 영향 없음).
+
+11. **결과 기록 재시도의 마지막 시도 한계, DB 시간제한과 lease의 관계, 시도 기록의 instance(구현 중 확정 8 보완, 2026-11-23 2차 코드 리뷰, `src/worker/worker.ts`·`src/config/load-config.ts`·`migrations/0003_attempt_instance.sql`).** 결정 문구는 바꾸지 않는다.
+    - **문제.** 구현 중 확정 8의 기록 재시도는 "다음 시도 시작 < 마감(lease − 10초)"만 봤다. 시도 하나는 연결 대기(기본 5초) 뒤 응답 없는 쿼리를 `query_timeout`(기본 35초)까지 기다릴 수 있어서, 마감 직전에 시작한 시도가 lease를 넘기면 다른 인스턴스가 회수해 다시 발송할 수 있다(`lease_token` 때문에 이중 기록은 없다). `MAILO_DB_QUERY_TIMEOUT_MS`는 최대 3,600,000ms까지 받았고 lease와의 관계를 검사하지 않았다.
+    - **재시도 조건.** `다음 시도 시작 + recordAttemptMaxMs < 마감`이다. `recordAttemptMaxMs = 연결 대기 + query_timeout`(`toWorkerOptions`가 설정에서 만든다, 기본 40초). 기록 트랜잭션에 `SET LOCAL statement_timeout`을 두는 안은 택하지 않았다. 문장마다 걸리는 값이라 트랜잭션 전체 시간을 묶지 못하고, 서버 응답이 없는 단절은 서버 쪽 설정이 막지 못한다.
+    - **기동 검사.** `MAILO_DB_CONNECT_TIMEOUT_MS + MAILO_DB_QUERY_TIMEOUT_MS < MAILO_LEASE_SECONDS × 1000 − 10000`이 아니면 기동을 거부한다. 기본값(40초)은 lease 120초에서 통과하고 lease 50초 이하에서는 거부된다.
+    - **한계.** 한 트랜잭션의 여러 문장이 각각 `query_timeout` 가까이 걸리는 경우(느리지만 응답은 오는 DB)는 총 시간이 이 합을 넘을 수 있다. 응답 없는 연결은 첫 문장에서 걸리고 `withTransaction`이 그 연결을 버리므로 단절에는 이 계산이 맞다. 둘 다 실제 단절로 재현하지 않았고 가상 시계로 재시도 시작 시각의 상한만 확인했다(`worker-resilience.integration-spec.ts`).
+    - **시도 기록의 instance.** `mail_attempts.instance`(NULL 허용, 128자 이하 CHECK, `NOT VALID`)를 `0003`으로 추가했다. 결과를 기록하는 Worker가 로그의 `instance`(`MAILO_INSTANCE_ID`, 없으면 호스트 이름)와 같은 값을 쓴다. 로그의 `jobId`로 시도 행을 찾고 `instance`로 기록한 인스턴스를 확인한다. `mail_jobs`에는 `lease_owner`를 두지 않는다. 점유 상태는 `lease_token`만으로 다루고, lease 회수로 쓴 `LEASE_EXPIRED` 시도는 점유한 인스턴스를 알 수 없어 NULL이다. NULL 허용 컬럼 추가라 테이블을 다시 쓰지 않는다(PostgreSQL 11 이상). REST 응답에는 노출하지 않는다. 검증: `claim-complete.integration-spec.ts`, `worker.integration-spec.ts`.
 
 ## 검토한 대안
 

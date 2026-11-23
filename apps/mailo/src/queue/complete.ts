@@ -19,6 +19,9 @@ import type {
   RetryPolicy,
 } from "./types.js";
 
+/** `mail_attempts.instance`에 쓰는 최대 글자 수(migrations/0003의 CHECK와 같다). */
+const ATTEMPT_INSTANCE_MAX_CHARS = 128;
+
 export interface CompleteDeps {
   retry: RetryPolicy;
   breaker: BreakerConfig;
@@ -73,7 +76,12 @@ const JOB_COLUMNS = `id, caller_id, idempotency_key, attempts, account_trips,
  */
 export async function completeAttempt(
   pool: pg.Pool,
-  job: { id: string; leaseToken: string },
+  job: {
+    id: string;
+    leaseToken: string;
+    /** 결과를 기록하는 인스턴스. 로그의 `instance`와 같은 값이며 `mail_attempts.instance`에 쓴다. 128자까지만 쓴다. */
+    instance?: string;
+  },
   outcome: AttemptOutcome,
   deps: CompleteDeps,
 ): Promise<CompleteResult> {
@@ -86,7 +94,14 @@ export async function completeAttempt(
     );
     const row = locked.rows[0];
     if (!row) return { applied: false, reason: "LEASE_LOST" } as const;
-    return applyOutcome(client, row, job.leaseToken, outcome, deps);
+    return applyOutcome(
+      client,
+      row,
+      job.leaseToken,
+      outcome,
+      deps,
+      job.instance?.slice(0, ATTEMPT_INSTANCE_MAX_CHARS) ?? null,
+    );
   });
 }
 
@@ -100,6 +115,8 @@ async function applyOutcome(
   leaseToken: string,
   outcome: InternalOutcome,
   deps: CompleteDeps,
+  /** 시도를 기록하는 인스턴스. lease 회수는 점유한 인스턴스를 알 수 없어 null이다. */
+  instance: string | null = null,
 ): Promise<Extract<CompleteResult, { applied: true }>> {
   const dbNow = job.db_now;
   // 계정 상태 오류는 아래에서 차단기 상태를 본 뒤에 시도 횟수에 넣을지 정한다.
@@ -243,8 +260,8 @@ async function applyOutcome(
   await client.query(
     `INSERT INTO mail_attempts
        (job_id, classification, counted, stage, response_code, enhanced_code,
-        response_text, rejected_recipients, started_at, caller_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, COALESCE($9::timestamptz, now()), $10)`,
+        response_text, rejected_recipients, started_at, caller_id, instance)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, COALESCE($9::timestamptz, now()), $10, $11)`,
     [
       job.id,
       outcome.classification,
@@ -259,6 +276,8 @@ async function applyOutcome(
       job.leased_at,
       // 호출처별 할당 사용량 집계용 복사본(RQ-032, migrations/0002).
       job.caller_id,
+      // 로그의 `instance`와 행을 잇는다(migrations/0003). 수신자·본문 정보가 아니다.
+      instance,
     ],
   );
 

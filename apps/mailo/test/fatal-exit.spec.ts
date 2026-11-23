@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@jest/globals";
+import { createJsonLogger, silentLogger } from "../src/logging/index.js";
 import { EXIT_WORKER_CRASHED, createFatalHandler } from "../src/fatal-exit.js";
 
 describe("점유 루프 치명 오류 처리 (H2)", () => {
@@ -18,13 +19,17 @@ describe("점유 루프 치명 오류 처리 (H2)", () => {
         }),
       exit: (code) => events.push(`exit ${code}`),
       forceAfterMs: 10_000,
-      log: (m) => events.push(m),
+      logger: createJsonLogger((line) => events.push(line), {
+        instance: "mailo-test",
+        now: () => new Date("2026-01-01T00:00:00.000Z"),
+      }),
     });
 
     handler("poll_loop_crashed");
     await tick();
     expect(events).toEqual([
-      "worker_fatal reason=poll_loop_crashed exitCode=70",
+      // 평문이 아니라 앱 로거의 한 줄 JSON이다(N3).
+      '{"ts":"2026-01-01T00:00:00.000Z","instance":"mailo-test","level":"error","event":"worker_fatal","reason":"poll_loop_crashed","exitCode":70}',
       "close 시작",
     ]);
 
@@ -40,7 +45,7 @@ describe("점유 루프 치명 오류 처리 (H2)", () => {
       close: () => Promise.reject(new Error("close failed")),
       exit: (code) => codes.push(code),
       forceAfterMs: 10_000,
-      log: () => undefined,
+      logger: silentLogger,
     });
 
     handler("poll_loop_crashed");
@@ -55,7 +60,7 @@ describe("점유 루프 치명 오류 처리 (H2)", () => {
       close: () => new Promise<void>(() => undefined),
       exit: (code) => codes.push(code),
       forceAfterMs: 30,
-      log: () => undefined,
+      logger: silentLogger,
     });
 
     handler("poll_loop_crashed");
@@ -72,7 +77,7 @@ describe("점유 루프 치명 오류 처리 (H2)", () => {
       },
       exit: () => undefined,
       forceAfterMs: 10_000,
-      log: () => undefined,
+      logger: silentLogger,
     });
 
     handler("poll_loop_crashed");

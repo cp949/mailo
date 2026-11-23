@@ -135,6 +135,64 @@ describe("PostgreSQL 통합: 점유와 종료 전이(ADR-0002, RQ-014)", () => {
     ]);
   });
 
+  it("완료 기록은 instance를 mail_attempts에 남기고 128자로 자른다. 생략하면 NULL이고 lease 회수 시도도 NULL이다 (migrations/0003)", async () => {
+    const instanceOf = async (id: string) =>
+      (
+        await db.pool.query(
+          "SELECT instance FROM mail_attempts WHERE job_id = $1 ORDER BY id",
+          [id],
+        )
+      ).rows.map((r) => r.instance);
+
+    const a = await createJob(db.pool);
+    const [jobA] = await claim(db.pool, claimOpts);
+    await completeAttempt(
+      db.pool,
+      { id: a, leaseToken: jobA!.leaseToken, instance: "mailo-a" },
+      { classification: "SENT" },
+      deps,
+    );
+    expect(await instanceOf(a)).toEqual(["mailo-a"]);
+
+    const long = await createJob(db.pool);
+    const [jobLong] = await claim(db.pool, claimOpts);
+    await completeAttempt(
+      db.pool,
+      { id: long, leaseToken: jobLong!.leaseToken, instance: "h".repeat(200) },
+      { classification: "SENT" },
+      deps,
+    );
+    expect(await instanceOf(long)).toEqual(["h".repeat(128)]);
+
+    const none = await createJob(db.pool);
+    const [jobNone] = await claim(db.pool, claimOpts);
+    await completeAttempt(
+      db.pool,
+      { id: none, leaseToken: jobNone!.leaseToken },
+      { classification: "SENT" },
+      deps,
+    );
+    expect(await instanceOf(none)).toEqual([null]);
+
+    // lease 회수는 점유한 인스턴스를 알 수 없어 NULL이다.
+    const expired = await createJob(db.pool);
+    await claim(db.pool, claimOpts);
+    await db.pool.query(
+      "UPDATE mail_jobs SET lease_until = now() - interval '1 second' WHERE id = $1",
+      [expired],
+    );
+    await claim(db.pool, claimOpts);
+    expect(await instanceOf(expired)).toEqual([null]);
+
+    // CHECK 제약: 129자는 DB가 거부한다(코드를 우회한 쓰기).
+    await expect(
+      db.pool.query(
+        "INSERT INTO mail_attempts (job_id, classification, counted, started_at, instance) VALUES ($1, 'SENT', true, now(), $2)",
+        [a, "x".repeat(129)],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
   it("SENT 전이는 시도 이력과 JOB_SENT 이벤트를 쓰고 일부 거부 수신자를 담는다(ADR-0007 결정 7)", async () => {
     const id = await createJob(db.pool);
     const [job] = await claim(db.pool, claimOpts);

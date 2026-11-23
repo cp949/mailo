@@ -27,6 +27,7 @@ import {
 import { inspectDir, isPermissive, type DirKind } from "./dir-check.js";
 import { FileChannelStartError } from "./errors.js";
 import { isStale } from "./errno.js";
+import { NlinkZeroTracker } from "./nlink-zero-tracker.js";
 import { ingestFile, removeStaleTemp, type IngestDeps } from "./ingest.js";
 
 export interface FilePollerDeps {
@@ -55,6 +56,8 @@ export interface CallerPollSummary {
   rejected: number;
   rejectedRepeats: number;
   gone: number;
+  /** 열린 뒤 nlink 0이라 gone으로 본 파일 수. 다른 인스턴스의 삭제 경쟁이면 드물다. 매 폴링 계속 나오면 파일시스템 문제다. */
+  nlinkZero: number;
   /** 권한 때문에 열지 못한 파일. 거부하지 않고 남긴다. */
   unreadable: number;
   /** 등록·거부 기록은 커밋했지만 원본 삭제에 실패한 파일. 다음 폴링에서 같은 Key·같은 거부로 걸러진다. */
@@ -101,6 +104,9 @@ const MAX_CONSECUTIVE_ERRORS = 3;
 // 이름은 메모리에 모으므로 상한을 둔다. 읽을 수 없는 파일이 이 상한을 넘는 폴더는 운영자가 정리해야 한다.
 const LIST_LIMIT_FACTOR = 100;
 const LIST_LIMIT_MAX = 100_000;
+// 같은 파일이 이 횟수만큼 연속 폴링에서 열린 뒤 nlink 0이면 경고한다(ADR-0004 구현 중 확정 36). 다른 인스턴스와의 삭제 경쟁은
+// 다음 폴링에서 이름이 사라지므로 연속으로 나오지 않는다.
+const NLINK_ZERO_WARN_STREAK = 3;
 
 function emptySummary(callerId: string): CallerPollSummary {
   return {
@@ -110,6 +116,7 @@ function emptySummary(callerId: string): CallerPollSummary {
     rejected: 0,
     rejectedRepeats: 0,
     gone: 0,
+    nlinkZero: 0,
     unreadable: 0,
     deleteFailed: 0,
     tempDeleted: 0,
@@ -126,6 +133,7 @@ function hasActivity(s: CallerPollSummary): boolean {
       s.duplicates +
       s.rejected +
       s.rejectedRepeats +
+      s.nlinkZero +
       s.unreadable +
       s.deleteFailed +
       s.tempDeleted +
@@ -196,6 +204,17 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
   // 링크·비디렉터리와 넓은 권한도 상태가 바뀔 때(처음 발견할 때)만 로그를 남긴다. 키는 `종류:호출처`다.
   const unsafeDirs = new Set<string>();
   const permissiveDirs = new Set<string>();
+  // 열린 뒤 nlink 0으로 gone 처리된 경로의 연속 폴링 횟수. 파일 이름을 키로 쓰되 로그에는 내보내지 않는다(RQ-027).
+  const nlinkZeroStreaks = new NlinkZeroTracker(NLINK_ZERO_WARN_STREAK);
+
+  /** 같은 경로가 연속 폴링에서 nlink 0이면 파일시스템이 값을 잘못 보고하는 것이다. 한 번만 경고한다. */
+  function noteNlinkZero(callerId: string, path: string): void {
+    if (nlinkZeroStreaks.record(path))
+      log.warn("file_nlink_zero_repeated", {
+        callerId,
+        polls: NLINK_ZERO_WARN_STREAK,
+      });
+  }
 
   /**
    * 디렉터리가 링크가 아닌 디렉터리인지 확인한다(L3). 읽어도 되면 true다.
@@ -324,6 +343,14 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
       }
     }
 
+    // 이번 목록에 없는 경로는 사라진 파일이다. 연속 횟수를 버린다.
+    if (nlinkZeroStreaks.size > 0) {
+      nlinkZeroStreaks.prune(
+        dir,
+        new Set(names.map((name) => join(dir, name))),
+      );
+    }
+
     for (const name of temps) {
       if (stopController.signal.aborted) break;
       try {
@@ -354,13 +381,10 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
         break;
       }
       try {
-        const result = await ingestFile(
-          ingestDeps,
-          caller,
-          join(dir, name),
-          name,
-        );
+        const path = join(dir, name);
+        const result = await ingestFile(ingestDeps, caller, path, name);
         errorBudget.consecutive = 0;
+        if (result.outcome !== "gone") nlinkZeroStreaks.clear(path);
         if (result.settled) settled += 1;
         if (result.deleteFailed !== undefined) summary.deleteFailed += 1;
         switch (result.outcome) {
@@ -378,6 +402,10 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
             break;
           case "gone":
             summary.gone += 1;
+            if (result.nlinkZero) {
+              summary.nlinkZero += 1;
+              noteNlinkZero(caller.id, path);
+            } else nlinkZeroStreaks.clear(path);
             break;
           case "unreadable":
             summary.unreadable += 1;

@@ -137,9 +137,10 @@ SELECT job_id, started_at, finished_at FROM mail_attempts
 | `file_rejected` | info | 수집 거부 기록. `callerId`, `reasonCode`, `rejectionId`, `sizeBytes`, `sha256`(본문·파일 이름 없음). 파일 이름은 호출처가 정하므로 로그에 남기지 않는다. `rejectionId`로 `mail_intake_rejections.id`나 이벤트 피드의 `INTAKE_REJECTED`(`fileName` 포함)를 찾는다 |
 | `file_temp_delete_failed` | warn | 오래된 임시 파일 삭제 실패(`error`) |
 | `file_ingest_failed` | error | 한 파일 처리 중 오류(DB 오류 등, `error`). 같은 폴링에서 3번 연속이면 그 폴링을 접는다 |
+| `file_nlink_zero_repeated` | warn | 같은 파일이 연속 3번 폴링에서 열린 뒤 `st_nlink`가 0이라 건너뛰어졌다(경로당 한 번). 다른 인스턴스와의 삭제 경쟁이면 다음 폴링에 파일이 없으므로 연속으로 나오지 않는다. 일부 FUSE·SMB가 살아 있는 파일의 `st_nlink`를 0으로 보고하면 이 파일은 영구히 수집되지 않는다. `stat -c %h <파일>`로 확인하고, 0이면 파일시스템 설정(마운트 옵션)을 바꾸거나 NFS·로컬 볼륨을 쓴다. 요약 `file_poll`의 `nlinkZero`가 매 폴링 0보다 크면 같은 증상이다 |
 | `file_poll_failed`, `file_poll_crashed` | error | 폴링 단위 실패. 다음 간격에 다시 시도한다. `file_poll_failed`는 한 호출처의 폴더 목록을 읽지 못한 경우(권한 등)이고 다른 호출처 처리는 계속한다 |
 
-요약 `file_poll`의 필드: `registered`, `duplicates`, `rejected`, `rejectedRepeats`, `gone`, `unreadable`, `deleteFailed`, `tempDeleted`, `badNames`, `errors`, `capped`, `inboxMissing`. `capped`가 `true`면 배치 상한에 걸려 폴더에 처리하지 못한 파일이 남았을 수 있다. `badNames`는 UTF-8로 읽을 수 없는 이름의 파일 수다(수집하지 않는다).
+요약 `file_poll`의 필드: `registered`, `duplicates`, `rejected`, `rejectedRepeats`, `gone`, `nlinkZero`, `unreadable`, `deleteFailed`, `tempDeleted`, `badNames`, `errors`, `capped`, `inboxMissing`. `capped`가 `true`면 배치 상한에 걸려 폴더에 처리하지 못한 파일이 남았을 수 있다. `badNames`는 UTF-8로 읽을 수 없는 이름의 파일 수다(수집하지 않는다).
 
 ## 수집 거부 사유 코드별 조치
 
@@ -209,7 +210,7 @@ SELECT gid, prepared FROM pg_prepared_xacts;   -- 끝나지 않은 prepared tran
 - Worker는 `claim_failed`(error, `error`, `streak`)를 남기고 간격을 늘려(최대 30초) 다시 시도한다. DB가 돌아오면 자동 재개된다.
 - 풀의 유휴 연결 오류는 `{"event":"db_idle_client_error","name":...,"code":...}`로 남는다.
 - DB 시간제한 오류: SQLSTATE `57014`(`statement_timeout`), `55P03`(`lock_timeout`), `25P03`(`idle_in_transaction_session_timeout`으로 연결이 끊김), 메시지 `Query read timeout`(`query_timeout`). 값은 `MAILO_DB_*_TIMEOUT_MS`이고 기본값과 조정 기준은 `deployment.md` "DB 시간제한과 장애 동작"이다.
-- 점유 루프가 예외로 죽으면 `poll_loop_crashed`(error) 뒤 `worker_fatal reason=poll_loop_crashed exitCode=70`이 stderr에 남고, 종료 순서(pause → drain → 풀 닫기)를 거쳐 종료 코드 70으로 끝난다. 컨테이너는 재시작한다. 반복되면 `poll_loop_crashed`의 `error` 이름을 본다.
+- 점유 루프가 예외로 죽으면 `poll_loop_crashed`(error) 뒤 `worker_fatal`(error, 필드 `reason=poll_loop_crashed`, `exitCode=70`)이 표준 출력에 한 줄 JSON으로 남고, 종료 순서(pause → drain → 풀 닫기)를 거쳐 종료 코드 70으로 끝난다. 컨테이너는 재시작한다. 반복되면 `poll_loop_crashed`의 `error` 이름을 본다.
 - 파일 채널은 파일과 무관한 오류(`file_ingest_failed`)가 3번 연속이면 그 폴링을 접고 다음 간격에 다시 시도한다. 폴더 목록 읽기 실패(`file_poll_failed`)는 이 횟수에 세지 않는다(ADR-0004 구현 중 확정 29).
 
 ## 유지 작업 로그
