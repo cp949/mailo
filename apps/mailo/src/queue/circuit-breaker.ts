@@ -65,6 +65,28 @@ export async function getBreakerState(
   return toSnapshot(row);
 }
 
+/**
+ * 계정 여럿의 차단기 상태를 한 문장으로 읽는다(`GET /ops/accounts`, `/health/ready`, `/metrics`). 읽기 전용이고 행을 잠그지 않는다.
+ * 행이 없는 계정이 있으면 `getBreakerState`와 같이 던진다. 행은 Worker 기동이 만들고(`ensureBreakerRows`) 없으면 점유도 실패한다(fail-closed).
+ */
+export async function getBreakerStates(
+  db: Queryable,
+  accountIds: readonly string[],
+): Promise<Map<string, BreakerSnapshot>> {
+  const ids = [...new Set(accountIds)];
+  const result = new Map<string, BreakerSnapshot>();
+  if (ids.length === 0) return result;
+  const { rows } = await db.query<BreakerRow & { breaker_key: string }>(
+    `SELECT breaker_key, ${SNAPSHOT_COLUMNS} FROM mail_circuit_breaker WHERE breaker_key = ANY($1::text[])`,
+    [ids],
+  );
+  for (const row of rows) result.set(row.breaker_key, toSnapshot(row));
+  for (const id of ids)
+    if (!result.has(id))
+      throw new Error("차단기 행이 없다. 마이그레이션을 확인한다");
+  return result;
+}
+
 export interface AccountFailureResult {
   snapshot: BreakerSnapshot;
   /** 이 호출이 차단기를 open으로 바꿨는지(closed→open 또는 half_open→open) */

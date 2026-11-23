@@ -1,15 +1,22 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import type pg from "pg";
 import { CALLER_REGISTRY, type CallerRegistry } from "../callers/index.js";
+import { APP_CONFIG, type AppConfig } from "../config/index.js";
 import { PG_POOL, withTransaction } from "../db/index.js";
 import { problems } from "../http/index.js";
 import { APP_METRICS, noopMetrics, type AppMetrics } from "../metrics/index.js";
 import {
+  breakerView,
   cancelJobAsOperator,
   clearPause,
   findJobByIdForOperator,
+  getAccountQuotaUsage,
+  getBreakerStates,
+  getQueueBacklog,
   listPauses,
+  readSendControls,
   setPause,
+  type BreakerView,
   type JobView,
   type PauseRecord,
   type SendScope,
@@ -27,6 +34,19 @@ export interface PauseChange {
   inRegistry?: boolean;
 }
 
+/** `GET /ops/accounts`의 계정 한 건. host·user·`from`·비밀 변수 이름은 담지 않는다(RQ-027, ADR-0013 결정 6). */
+export interface AccountStatus {
+  accountId: string;
+  breaker: BreakerView;
+  paused: boolean;
+  sendQuota24h: { limit: number; used: number } | null;
+  queue: {
+    dueCount: number;
+    dueCountTruncated: boolean;
+    oldestDueAgeSeconds: number | null;
+  };
+}
+
 /**
  * 운영 REST의 동작(RQ-042~044, ADR-0011 결정 2·3·4·6). 상태를 바꾸는 동작은 한 트랜잭션에서
  * 상태 변경 → (바뀐 경우만) 감사 기록 순서로 쓴다. 어느 쪽이 실패해도 둘 다 롤백한다.
@@ -37,6 +57,7 @@ export class OpsService {
   constructor(
     @Inject(PG_POOL) private readonly pool: pg.Pool,
     @Inject(CALLER_REGISTRY) private readonly registry: CallerRegistry,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Optional()
     @Inject(APP_METRICS)
     private readonly metrics: AppMetrics = noopMetrics,
@@ -78,6 +99,45 @@ export class OpsService {
 
   pauses(): Promise<PauseRecord[]> {
     return listPauses(this.pool);
+  }
+
+  /**
+   * 구성한 계정마다 차단기·정지·24시간 사용량·대기 건수를 읽는다(RQ-060, ADR-0013 결정 5). 구성 순서다.
+   * 구성에서 빠진 계정은 내지 않는다. 그 계정의 정지 행은 `GET /ops/pauses`에 있다.
+   * 읽기뿐이고 행을 잠그지 않는다. 항목마다 따로 읽으므로 한 시점의 스냅샷은 아니다.
+   */
+  async accounts(): Promise<AccountStatus[]> {
+    const configured = this.config.smtpAccounts;
+    const ids = configured.map((a) => a.id);
+    const breakers = await getBreakerStates(this.pool, ids);
+    const controls = await readSendControls(this.pool);
+    const quotas = new Map(
+      configured.flatMap((a) =>
+        a.sendQuota24h === null ? [] : ([[a.id, a.sendQuota24h]] as const),
+      ),
+    );
+    const used = await getAccountQuotaUsage(this.pool, quotas);
+    const paused = new Set(controls.pausedAccountIds);
+    const result: AccountStatus[] = [];
+    for (const account of configured) {
+      const backlog = await getQueueBacklog(this.pool, [account.id]);
+      const limit = quotas.get(account.id);
+      result.push({
+        accountId: account.id,
+        breaker: breakerView(breakers.get(account.id)!),
+        paused: paused.has(account.id),
+        sendQuota24h:
+          limit === undefined
+            ? null
+            : { limit, used: used.get(account.id) ?? 0 },
+        queue: {
+          dueCount: backlog.dueCount,
+          dueCountTruncated: backlog.truncated,
+          oldestDueAgeSeconds: backlog.oldestDueAgeSeconds,
+        },
+      });
+    }
+    return result;
   }
 
   /**

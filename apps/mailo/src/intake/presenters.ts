@@ -122,6 +122,7 @@ export function presentOperatorJob(job: JobView) {
   return {
     jobId: job.id,
     callerId: job.callerId,
+    accountId: job.accountId,
     ...presentJobFields(job),
   };
 }

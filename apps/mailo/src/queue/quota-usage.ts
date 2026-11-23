@@ -54,3 +54,22 @@ export const ACCOUNT_QUOTA_USAGE_SQL = `SELECT
               + (SELECT count(*) FROM mail_jobs j
                   WHERE j.status = 'SENDING' AND j.account_id = $1::text)
             )::int AS used`;
+
+/**
+ * 계정별 24시간 사용량을 읽는다. `GET /ops/accounts`와 지표가 쓴다(RQ-060). 한도를 설정한 계정만 `quotas`에 넣는다.
+ * 계정마다 `ACCOUNT_QUOTA_USAGE_SQL` 한 문장이다. advisory lock을 잡지 않는다. 사용량은 한도를 넘을 수 있다(점유 중 수를 더한다).
+ */
+export async function getAccountQuotaUsage(
+  db: Queryable,
+  quotas: ReadonlyMap<string, number>,
+): Promise<Map<string, number>> {
+  const used = new Map<string, number>();
+  for (const [accountId, limit] of quotas) {
+    const { rows } = await db.query<{ used: number }>(ACCOUNT_QUOTA_USAGE_SQL, [
+      accountId,
+      limit,
+    ]);
+    used.set(accountId, rows[0]?.used ?? 0);
+  }
+  return used;
+}

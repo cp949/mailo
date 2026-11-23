@@ -19,7 +19,11 @@ import {
 import { parseJobId, presentOperatorJob } from "../intake/index.js";
 import type { PauseRecord, SendScope } from "../queue/index.js";
 import type { AuditEntry } from "./audit.js";
-import { OpsService, type PauseChange } from "./ops.service.js";
+import {
+  OpsService,
+  type AccountStatus,
+  type PauseChange,
+} from "./ops.service.js";
 import { parseAuditQuery, parseCallerId } from "./query-params.js";
 
 /** 운영 응답은 캐시하지 않는다. 정지 상태와 감사 기록은 최신 값이어야 한다. */
@@ -56,6 +60,20 @@ function presentChange(change: PauseChange) {
   };
 }
 
+function presentAccount(account: AccountStatus) {
+  return {
+    accountId: account.accountId,
+    breaker: {
+      state: account.breaker.state,
+      openUntil: account.breaker.openUntil?.toISOString() ?? null,
+      lastReason: account.breaker.lastReason,
+    },
+    paused: account.paused,
+    sendQuota24h: account.sendQuota24h,
+    queue: account.queue,
+  };
+}
+
 function presentAudit(entry: AuditEntry) {
   return {
     id: entry.id,
@@ -87,6 +105,13 @@ export class OpsController {
   async pauses(@Res() res: HttpResponse): Promise<void> {
     const pauses = await this.ops.pauses();
     sendJson(res, 200, { pauses: pauses.map(presentPauseRecord) }, NO_STORE);
+  }
+
+  @Get("accounts")
+  @UseGuards(OpsReadGuard)
+  async accounts(@Res() res: HttpResponse): Promise<void> {
+    const accounts = await this.ops.accounts();
+    sendJson(res, 200, { accounts: accounts.map(presentAccount) }, NO_STORE);
   }
 
   @Put("pauses/all")

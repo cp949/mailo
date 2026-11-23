@@ -16,7 +16,7 @@ export {
   type QueueBacklog,
   type QueueDepth,
 } from "./backlog.js";
-export { getCallerQuotaUsage } from "./quota-usage.js";
+export { getAccountQuotaUsage, getCallerQuotaUsage } from "./quota-usage.js";
 export {
   claim,
   type ClaimOptions,
@@ -57,9 +57,11 @@ export {
 export {
   ensureBreakerRows,
   getBreakerState,
+  getBreakerStates,
   recordAccountFailure,
   recordAccountOk,
 } from "./circuit-breaker.js";
+export { breakerView, lastReasonOf, type BreakerView } from "./breaker-view.js";
 export {
   breakerInitialWait,
   breakerWaitCap,

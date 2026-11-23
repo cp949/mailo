@@ -21,6 +21,8 @@ export interface JobView {
   id: string;
   /** 작업의 호출처. 호출처 응답에는 내지 않고 운영자 읽기(`/ops/jobs/{jobId}`)가 쓴다. */
   callerId: string;
+  /** 작업의 SMTP 계정 ID(ADR-0013 결정 2). 호출처 응답에는 내지 않고 운영자 읽기가 쓴다(결정 5·6). */
+  accountId: string;
   idempotencyKey: string;
   status: JobStatus;
   /** 등록한 우선순위 등급(RQ-037). 도입 전 작업은 `NORMAL`이다. DB 순위 숫자는 내보내지 않는다. */
@@ -45,6 +47,7 @@ export interface JobView {
 interface JobRow {
   id: string;
   caller_id: string;
+  account_id: string;
   idempotency_key: string;
   status: JobStatus;
   priority: number;
@@ -73,7 +76,7 @@ const UNCERTAIN_ATTEMPT = `(a.classification = 'LEASE_EXPIRED'
 
 // 마지막 오류는 SENT가 아닌 가장 최근 시도다. SENT 작업도 이전 시도의 오류를 보여 준다.
 const SELECT_JOB = `
-  SELECT j.id, j.caller_id, j.idempotency_key, j.status, j.priority, j.attempts, j.created_at, j.expires_at,
+  SELECT j.id, j.caller_id, j.account_id, j.idempotency_key, j.status, j.priority, j.attempts, j.created_at, j.expires_at,
          j.finished_at, j.failure_reason,
          le.classification AS le_classification, le.response_code AS le_response_code,
          le.enhanced_code AS le_enhanced_code, le.finished_at AS le_finished_at,
@@ -95,6 +98,7 @@ function toView(row: JobRow): JobView {
   return {
     id: row.id,
     callerId: row.caller_id,
+    accountId: row.account_id,
     idempotencyKey: row.idempotency_key,
     status: row.status,
     priority: priorityFromRank(row.priority),
