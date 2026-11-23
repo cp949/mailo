@@ -498,7 +498,7 @@ docker compose exec -e MAILO_CLI_TOKEN_FILE=/run/secrets/mailo_cli_token mailo n
 | ---- | ---- | ------------- |
 | `status` | 읽기 | `GET /health/ready`, `GET /ops/pauses`. 출력은 `{ready, pauses}` |
 | `queue stats` | 읽기 | `GET /health/ready`의 `queue` 값. 운영자 응답이 아니면 종료 코드 2 |
-| `jobs show <jobId>` | 읽기 | `GET /ops/jobs/{jobId}` |
+| `jobs show <jobId>` | 읽기 | `GET /ops/jobs/{jobId}`. 응답에 `outcomeUncertain`이 있다(`troubleshooting.md` "결과 불명 실패") |
 | `audit list [--limit N] [--before ID]` | 읽기 | `GET /ops/audit` |
 | `pause --all` 또는 `pause --caller <호출처 ID>` | 관리 | `PUT /ops/pauses/all`, `PUT /ops/pauses/callers/{callerId}` |
 | `resume --all` 또는 `resume --caller <호출처 ID>` | 관리 | `DELETE` 같은 경로 |

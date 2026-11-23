@@ -18,7 +18,7 @@ info:
     - 모든 오류 응답은 `application/problem+json`(RFC 9457)이다.
     - 오류 응답, 로그, 거부 기록에는 제목, text, html, 암호문과 요청 값을 넣지 않는다.
     - 첨부파일은 지원하지 않는다. 정의되지 않은 필드(`attachments` 포함)는 400이다.
-    - 호출처는 모르는 이벤트 `type`과 모르는 `Job.status`를 무시하거나 성공으로 처리하지 않고, 해당 작업을 `GET /jobs`로 확인할 때까지 미종결로 둔다. 모르는 응답 필드는 무시한다. 이 계약의 enum과 `additionalProperties`는 지금 닫혀 있지만 이후 버전이 값과 필드를 더할 수 있다. 규칙은 `docs/api/README.md`의 "호출처가 모르는 값을 만났을 때" 절이다.
+    - 호출처는 모르는 이벤트 `type`과 모르는 `Job.status`를 무시하거나 성공으로 처리하지 않고, 해당 작업을 `GET /jobs`로 확인할 때까지 미종결로 둔다. 모르는 응답 필드는 무시한다. 이 계약의 enum과 `additionalProperties`는 지금 닫혀 있지만 이후 버전이 값과 필드를 더할 수 있다. `outcomeUncertain`(ADR-0011 결정 5)이 이 규칙으로 더한 필드다. `Job`·`OpsJob`은 `additionalProperties: false`이므로 필드 추가는 응답 계약 변경이다. 규칙은 `docs/api/README.md`의 "호출처가 모르는 값을 만났을 때" 절이다.
 servers:
   - url: https://mailo.example.internal
     description: 운영 (호스트명은 자리표시자, 추정)
@@ -203,6 +203,8 @@ paths:
                   $ref: '#/components/examples/JobSent'
                 failed:
                   $ref: '#/components/examples/JobFailed'
+                failedOutcomeUncertain:
+                  $ref: '#/components/examples/JobFailedUncertain'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -615,6 +617,7 @@ paths:
                           smtpCode: 550
                           enhancedCode: 5.1.1
                           occurredAt: '2026-11-23T09:31:40Z'
+                        outcomeUncertain: false
                       - eventId: '1050'
                         type: JOB_EXPIRED
                         occurredAt: '2026-11-24T08:00:03Z'
@@ -631,6 +634,7 @@ paths:
                           smtpCode: 550
                           enhancedCode: 5.4.5
                           occurredAt: '2026-11-24T07:00:01Z'
+                        outcomeUncertain: true
                       - eventId: '1051'
                         type: JOB_CANCELED
                         occurredAt: '2026-11-24T08:01:10Z'
@@ -1167,6 +1171,7 @@ components:
         - canceledAt
         - canceledBy
         - lastError
+        - outcomeUncertain
         - rejectedRecipients
       additionalProperties: false
       properties:
@@ -1220,6 +1225,15 @@ components:
             - $ref: '#/components/schemas/LastError'
             - type: 'null'
           description: 시도에서 오류가 난 적이 없으면 `null`이다. `SENT` 작업도 이전 시도의 오류를 보여 줄 수 있다.
+        outcomeUncertain:
+          type: boolean
+          description: |
+            SMTP 서버가 메일을 수락했는지 알 수 없는 시도가 한 건이라도 있었으면 `true`다. 모든 상태에서 항상 있고 `true`·`false` 중 하나다.
+            `FAILED`·`EXPIRED`에서 `true`이면 메일이 이미 나갔을 수 있다. `SENT`에서 `true`이면 더 일찍 나갔을 수 있다. 중간 상태에서는 지금까지의 시도를 따른다.
+            `true`인 시도는 두 종류다. lease 만료로 회수된 시도(`lastError.category`가 `LEASE_EXPIRED`일 수 있다)와, DATA 단계에서 SMTP 응답 없이 끝난 일시 오류(타임아웃·연결 끊김)다.
+            SMTP 응답 코드가 있는 실패(수신 거부 `550` 등)와 DATA 이전 단계의 실패는 `false`다.
+            서버가 응답했지만 Mailo가 받지 못한 경우처럼 위 두 종류에 없는 불명은 잡지 못한다. 시도가 없는 작업은 `false`다. 취소된 작업은 취소 전 시도를 따른다. 시도 이력이 지워지는 보존 기간(30일) 뒤에는 작업 조회가 404다.
+            표시일 뿐 재시도 정책은 바꾸지 않는다. 운영자 재시도 API는 없다. 다시 보낼지는 호출처가 정하고, 보낸다면 새 `Idempotency-Key`로 등록한다. 같은 내용이 이미 수신자에게 갔을 수 있으므로 중복 수신 위험은 호출처가 판단한다.
         rejectedRecipients:
           type: array
           items:
@@ -1263,6 +1277,7 @@ components:
       description: |
         `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `JOB_CANCELED`. 작업의 종결 전이와 같은 트랜잭션에서 기록한다.
         주기 sweep의 `EXPIRED` 전이도 같다. `JOB_CANCELED`는 호출처가 직접 취소해도 쓴다. outbox를 이벤트로 닫는 호출처가 취소를 알아야 하기 때문이다.
+        `JOB_FAILED`·`JOB_EXPIRED`는 `outcomeUncertain`을 더한다(ADR-0011 결정 5). 이벤트 스키마는 `additionalProperties`를 닫지 않았지만 호출처 코드가 필드를 엄격히 검사하면 같은 계약 변경이다.
       allOf:
         - $ref: '#/components/schemas/EventBase'
         - type: object
@@ -1294,6 +1309,11 @@ components:
                 - $ref: '#/components/schemas/LastError'
                 - type: 'null'
               description: '`JOB_FAILED`와 `JOB_EXPIRED`에만 있다.'
+            outcomeUncertain:
+              type: boolean
+              description: |
+                `JOB_FAILED`와 `JOB_EXPIRED`에만 있고 이 두 종류에서는 항상 있다. `JOB_SENT`·`JOB_CANCELED`에는 없다.
+                `Job.outcomeUncertain`과 같은 판정이다. `true`이면 메일이 이미 나갔을 수 있다. 의미와 한계는 `Job.outcomeUncertain`을 따른다.
             rejectedRecipients:
               type: array
               items:
@@ -1780,6 +1800,7 @@ components:
         - canceledAt
         - canceledBy
         - lastError
+        - outcomeUncertain
       additionalProperties: false
       properties:
         callerId:
@@ -1809,6 +1830,8 @@ components:
           $ref: '#/components/schemas/Job/properties/canceledBy'
         lastError:
           $ref: '#/components/schemas/Job/properties/lastError'
+        outcomeUncertain:
+          $ref: '#/components/schemas/Job/properties/outcomeUncertain'
     AuditEntry:
       type: object
       required: [id, at, actor, action]
@@ -1883,6 +1906,7 @@ components:
         canceledAt: null
         canceledBy: null
         lastError: null
+        outcomeUncertain: false
         rejectedRecipients: []
     JobRetryWait:
       summary: 재시도 대기 중인 작업
@@ -1904,6 +1928,7 @@ components:
           smtpCode: 421
           enhancedCode: 4.7.0
           occurredAt: '2026-11-23T09:30:05Z'
+        outcomeUncertain: false
         rejectedRecipients: []
     JobSent:
       summary: 발송 완료(SMTP 수락). 일부 수신자가 거부됐다.
@@ -1925,6 +1950,7 @@ components:
           smtpCode: 421
           enhancedCode: 4.7.0
           occurredAt: '2026-11-23T09:30:05Z'
+        outcomeUncertain: false
         rejectedRecipients:
           - address: park@example.com
             smtpCode: 550
@@ -1945,6 +1971,7 @@ components:
         canceledAt: '2026-11-23T09:30:20Z'
         canceledBy: CALLER
         lastError: null
+        outcomeUncertain: false
         rejectedRecipients: []
     JobFailed:
       summary: 영구 오류로 실패
@@ -1966,6 +1993,29 @@ components:
           smtpCode: 550
           enhancedCode: 5.1.1
           occurredAt: '2026-11-23T09:31:40Z'
+        outcomeUncertain: false
+        rejectedRecipients: []
+    JobFailedUncertain:
+      summary: 결과 불명 실패. DATA 뒤 연결이 끊긴 시도가 있어 메일이 이미 나갔을 수 있다.
+      value:
+        jobId: 5d1f0b86-7c2e-4a39-9e84-0b6a2c7d4e15
+        idempotencyKey: outbox-8843
+        status: FAILED
+        priority: NORMAL
+        attempts: 5
+        createdAt: '2026-11-23T09:32:00Z'
+        expiresAt: '2026-11-24T09:32:00Z'
+        sentAt: null
+        failedAt: '2026-11-23T11:02:10Z'
+        failureReason: MAX_ATTEMPTS_EXCEEDED
+        canceledAt: null
+        canceledBy: null
+        lastError:
+          category: TRANSIENT
+          smtpCode: null
+          enhancedCode: null
+          occurredAt: '2026-11-23T11:02:10Z'
+        outcomeUncertain: true
         rejectedRecipients: []
     ProblemMalformed:
       summary: JSON 구문 오류

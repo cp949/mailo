@@ -372,13 +372,13 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 | 이벤트 `type` | 사용처 처리 |
 | ------------- | ----------- |
 | `JOB_SENT` | outbox 행을 `SENT`로 표시한다. `rejectedRecipients`가 있으면 일부 수신자가 거부된 것이므로 기록·알림 여부를 정한다 |
-| `JOB_FAILED` | `failureReason`(`PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`)과 `lastError`를 기록하고 알린다. 새 요청으로 다시 보낼지는 사용처가 정한다(새 Key) |
-| `JOB_EXPIRED` | `failureReason: EXPIRED`. 기본 만료 TTL은 24시간이다. 차단기 장애가 길면 대량으로 올 수 있다 |
+| `JOB_FAILED` | `failureReason`(`PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`)과 `lastError`를 기록하고 알린다. `outcomeUncertain`이 `true`이면 메일이 이미 나갔을 수 있다(아래 "결과 불명 실패"). 새 요청으로 다시 보낼지는 사용처가 정한다(새 Key) |
+| `JOB_EXPIRED` | `failureReason: EXPIRED`. 기본 만료 TTL은 24시간이다. 차단기 장애가 길면 대량으로 올 수 있다. 이전 시도에 결과 불명이 있었으면 `outcomeUncertain`이 `true`다 |
 | `JOB_CANCELED` | 취소 종결이다. 실패가 아니다. outbox 행을 취소 상태로 닫고 재시도하지 않는다. `canceledBy`(`CALLER`·`OPERATOR`)로 운영자가 취소한 것인지 구분한다. 호출처가 직접 취소해도 온다 |
 | `INTAKE_REJECTED` | 파일 수집 거부. `reasonCode`로 원인을 고쳐 새 파일로 다시 보낸다(`troubleshooting.md`). `idempotencyKey`가 있으면 outbox 행을 찾고, `null`이면 `fileName`으로 찾는다 |
 | 위에 없는 `type` | 건너뛰지 않는다. 이벤트를 기록하고 outbox 행을 "확인 필요"로 표시한 뒤 `GET /jobs`로 상태를 확인한다. cursor는 그 이벤트를 지나가므로 이 표시가 유일한 단서다 |
 
-- 이벤트 모양 예(JOB_SENT): `eventId`, `type`, `occurredAt`, `jobId`, `idempotencyKey`, `attempts`, `recipients{to,cc,bcc}`, `rejectedRecipients[]`. `INTAKE_REJECTED`는 `rejectionId`, `idempotencyKey`(없으면 `null`), `fileName`, `fileSize`, `sha256`, `reasonCode`다.
+- 이벤트 모양 예(JOB_SENT): `eventId`, `type`, `occurredAt`, `jobId`, `idempotencyKey`, `attempts`, `recipients{to,cc,bcc}`, `rejectedRecipients[]`. `JOB_FAILED`·`JOB_EXPIRED`는 `failureReason`, `lastError`, `outcomeUncertain`을 더한다. `INTAKE_REJECTED`는 `rejectionId`, `idempotencyKey`(없으면 `null`), `fileName`, `fileSize`, `sha256`, `reasonCode`다.
 - 이벤트는 기록 후 30일 보존한다. 30일 넘게 폴링하지 않으면 그 사이 이벤트를 놓친다. 응답 헤더 `Mailo-Cursor-Gap: true`가 이 유실을 알린다(아래 "공백 신호").
 - `GET /events`가 200이 아니면 같은 요청을 말없이 반복하지 않는다. 상태 코드를 기록하고 알린다. 401은 키를 고치기 전에 반복하지 않는다.
 - 응답의 모르는 필드와 헤더는 무시한다.
@@ -490,6 +490,18 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 **긴 TTL은 메일이 결국 나가게 할 뿐, 한도로 생긴 지연을 없애지 않는다.** 일일 한도(`550 5.4.5`)로 차단기가 열리면 TTL과 무관하게 차단이 풀릴 때까지 발송하지 않는다. 한도 차단이 하루를 넘는 것은 발송량과 계정 한도의 문제다. 발송량을 줄이거나 할당(`sendQuota24h`)을 조정하는 것이 해법이다.
 
 배포 순서: Mailo의 모든 인스턴스가 이 기능을 지원하는 버전이 된 뒤에 `ttlSeconds`를 보내기 시작한다. 이전 버전은 `ttlSeconds`를 정의되지 않은 필드로 거부한다(REST 400, 파일 거부). 롤백 절차는 `deployment.md` "요청별 만료 시간 도입 배포 순서"를 따른다.
+
+### 결과 불명 실패
+
+근거: RQ-048, ADR-0011 결정 5, `docs/api/README.md` "결과 불명 실패".
+
+`outcomeUncertain`은 SMTP 서버가 메일을 수락했는지 알 수 없는 시도가 한 건이라도 있었으면 `true`다. `GET /jobs`의 `Job`(모든 상태)과 `JOB_FAILED`·`JOB_EXPIRED` 이벤트에 있다. `FAILED`·`EXPIRED`에서 `true`이면 메일이 이미 나갔을 수 있다.
+
+- 운영자 재시도 API는 없다. 다시 보내는 책임은 사용처에 있다. 새 `Idempotency-Key`(새 outbox 행)로 등록한다. 같은 Key로 보내면 `FAILED` 작업이 돌아올 뿐 다시 발송되지 않는다.
+- 같은 내용이 수신자에게 이미 갔을 수 있으므로 중복 수신 위험은 사용처가 판단한다. `Message-ID`가 작업마다 다르므로 새 Key로 보낸 메일은 수신 측이 같은 `Message-ID`로 중복을 걸러내는 완화가 듣지 않는다.
+- `true`가 아니어도 메일이 나가지 않았다는 보장은 아니다. 서버가 응답했지만 Mailo가 받지 못한 경우는 이 표시가 잡지 못한다(RQ-013).
+- 표시를 모르는 사용처도 안전하다. 모르는 응답 필드는 무시하는 규칙(`docs/api/README.md` "호출처가 모르는 값을 만났을 때")이 이미 있다. 샘플(`samples/spring-boot-relay/`)은 JSON을 `JsonNode`로 읽어 이 필드를 무시하고 이벤트 원본을 `mailo_event_log.payload`에 보관한다.
+- 작업은 종결 후 30일(기본)이 지나면 지워지고 그 뒤에는 값을 조회할 수 없다. 이벤트의 값은 이벤트 보존 기간(30일) 안에 읽는다.
 
 ### 작업 취소
 

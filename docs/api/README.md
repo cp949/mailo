@@ -60,8 +60,25 @@
 - 발송은 at-least-once다. SMTP 수락 직후 장애가 나면 같은 메일이 두 번 갈 수 있다(RQ-013).
 - `SENT`는 SMTP 서버의 수락이다. 받은편지함 도착이 아니고, 일부 수신자가 거부됐을 수 있다. `rejectedRecipients`를 확인한다.
 - 이벤트는 `GET /events`를 약 30초(추정) 간격으로 폴링해 받는다. cursor를 저장하고 `eventId`로 멱등하게 처리한다.
+- `FAILED`·`EXPIRED`이고 `outcomeUncertain`이 `true`이면 메일이 이미 나갔을 수 있다. 다시 보내려면 새 Key(새 outbox 행)로 등록한다. 같은 내용이 수신자에게 이미 갔을 수 있어 중복 수신 위험은 호출처가 판단한다(아래 "결과 불명 실패"). 운영자가 대신 재시도하는 API는 없다.
 - 호출처가 취소한 작업은 `CANCELED`이고 `JOB_CANCELED` 이벤트가 온다. 실패가 아니므로 재시도하지 않는다. 같은 Key로 다시 보내면 취소된 작업이 돌아오므로 다시 보내려면 새 Key를 쓴다(아래 "작업 취소").
 - 파일 채널 호출처는 `GET /jobs?idempotencyKey=`가 404이면 이벤트 피드에서 같은 Key의 `INTAKE_REJECTED`를 찾는다.
+
+## 결과 불명 실패
+
+`Job.outcomeUncertain`과 `JOB_FAILED`·`JOB_EXPIRED` 이벤트의 `outcomeUncertain`은 SMTP 서버가 메일을 수락했는지 알 수 없는 시도가 한 건이라도 있었는지를 알린다(RQ-048, ADR-0011 결정 5).
+
+| 값 | 의미 |
+| -- | ---- |
+| `true` | lease 만료로 회수된 시도(`lastError.category` `LEASE_EXPIRED`일 수 있다)나, DATA 단계에서 SMTP 응답 없이 끝난 일시 오류(타임아웃·연결 끊김)가 있었다. `FAILED`·`EXPIRED`이면 메일이 이미 나갔을 수 있고 `SENT`이면 더 일찍 나갔을 수 있다 |
+| `false` | 그런 시도가 없다. SMTP 응답 코드가 있는 실패(수신 거부 `550` 등)와 DATA 이전 단계의 실패는 여기에 든다. 시도가 없는 작업도 `false`다. 취소된 작업은 취소 전 시도를 따른다 |
+
+- `Job`에서는 모든 상태에 항상 있다. 이벤트에서는 `JOB_FAILED`·`JOB_EXPIRED`에만 있고 이 둘에는 항상 있다. `JOB_SENT`·`JOB_CANCELED`에는 없다. 같은 작업의 이벤트 값과 `GET /jobs` 값은 같다.
+- 서버가 응답했지만 Mailo가 받지 못한 경우처럼 두 조건에 없는 불명은 잡지 못한다. `false`가 "메일이 나가지 않았다"를 보장하지 않는다. at-least-once 한계(RQ-013)는 그대로다.
+- 표시만 한다. 재시도 정책은 바뀌지 않는다(ADR-0001 결정 5, ADR-0007 결정 3).
+- 운영자 재시도 API는 없다. 호출처는 Key로 결과를 매칭하고, 본문은 종결 뒤 기본 1일에 지워지며, 암호문은 작업 ID가 AAD라 새 작업으로 복사할 수 없다. 다시 보내는 책임은 호출처에 있다.
+- 호출처 지침(ADR-0011 결정 5): 다시 보낼 때는 새 `Idempotency-Key`로 등록한다. 같은 내용이 수신자에게 이미 갔을 수 있으므로 중복 수신 위험은 호출처가 판단한다.
+- 이 필드는 `openapi.yaml`의 `Job`·`OpsJob`(`additionalProperties: false`)에 더한 것이라 계약 변경이다. 모르는 필드는 무시해야 한다(위 "호출처가 모르는 값을 만났을 때"). 보존 기간(종결 후 30일)이 지나 작업이 지워지면 값은 조회할 수 없다.
 
 ## 작업 취소
 
@@ -104,7 +121,7 @@
 | `GET /ops/pauses` | 읽기 | 정지 목록 |
 | `PUT`·`DELETE /ops/pauses/all` | 관리 | 전체 정지·재개 |
 | `PUT`·`DELETE /ops/pauses/callers/{callerId}` | 관리 | 호출처 정지·재개 |
-| `GET /ops/jobs/{jobId}` | 읽기 | 작업 조회(모든 호출처, Key·`rejectedRecipients` 없음, `callerId` 있음) |
+| `GET /ops/jobs/{jobId}` | 읽기 | 작업 조회(모든 호출처, Key·`rejectedRecipients` 없음, `callerId`·`outcomeUncertain` 있음) |
 | `POST /ops/jobs/{jobId}/cancel` | 관리 | 작업 취소(`canceledBy: OPERATOR`) |
 | `GET /ops/audit` | 읽기 | 감사 목록(`limit`, `before`) |
 
@@ -126,6 +143,7 @@
    - 조회가 404이면 보존 기간(종결 후 30일)이 지난 것이다. 그 뒤의 처리는 호출처가 정한다.
 3. 모르는 응답 필드와 모르는 응답 헤더는 무시한다. 오류를 내거나 요청을 거부하지 않는다.
    - `openapi.yaml`의 `Job`, `Event`, `EventPage`, `ReadyResponse` 스키마는 지금 `additionalProperties: false`이다. 현재 응답의 모양일 뿐이고 이후 버전이 필드를 더하지 않는다는 약속이 아니다.
+   - 더해진 필드의 예: `outcomeUncertain`(`Job`의 모든 응답과 `JOB_FAILED`·`JOB_EXPIRED` 이벤트). 모르는 호출처는 무시해도 안전하다. 이 필드는 판단을 돕는 표시이고 상태 해석을 바꾸지 않는다.
 
 `GET /events`가 200이 아니면 같은 요청을 말없이 반복하지 않는다. 상태 코드를 기록하고 알린다. 401은 자격 문제이므로 고치기 전에 반복하지 않는다.
 
@@ -152,11 +170,12 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 응답.
 
 - 등록(202, 200)과 조회는 같은 `Job` 스키마를 쓰고 `Location: /jobs/{jobId}`를 반환한다. 본문과 수신자는 포함하지 않는다.
-- `Job` 필드: `jobId`, `idempotencyKey`, `status`, `priority`, `attempts`, `createdAt`, `expiresAt`, `sentAt`, `failedAt`, `failureReason`, `canceledAt`, `canceledBy`, `lastError`, `rejectedRecipients`. `CANCELED`에서 `sentAt`·`failedAt`·`failureReason`은 `null`이고 `canceledAt`·`canceledBy`가 값을 가진다. 다른 상태에서 `canceledAt`·`canceledBy`는 `null`이다.
+- `Job` 필드: `jobId`, `idempotencyKey`, `status`, `priority`, `attempts`, `createdAt`, `expiresAt`, `sentAt`, `failedAt`, `failureReason`, `canceledAt`, `canceledBy`, `lastError`, `outcomeUncertain`, `rejectedRecipients`. `CANCELED`에서 `sentAt`·`failedAt`·`failureReason`은 `null`이고 `canceledAt`·`canceledBy`가 값을 가진다. 다른 상태에서 `canceledAt`·`canceledBy`는 `null`이다.
 - `attempts`는 차단기를 연 계정 상태 오류 시도를 뺀 횟수다. 차단기가 `closed`로 남은 계정 상태 오류는 포함한다(ADR-0007 구현 중 확정 8).
 - `failureReason`은 `PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`, `EXPIRED`다.
 - `lastError`는 `category`(`TRANSIENT`, `PERMANENT`, `ACCOUNT`, `LEASE_EXPIRED`), `smtpCode`, `enhancedCode`, `occurredAt`이다. SMTP 응답 텍스트는 API에 노출하지 않는다.
 - `rejectedRecipients`는 `address`, `smtpCode`, `enhancedCode`다. 응답 텍스트는 없다.
+- `outcomeUncertain`은 불리언이고 모든 상태에서 항상 있다(위 "결과 불명 실패").
 - 오류 `type`은 `urn:mailo:problem:<이름>` 11종이다. `forbidden`(403)은 읽기 토큰으로 `/ops`의 변경 endpoint를 호출한 경우다. `cursor-expired`(410)는 `GET /events?onGap=error`에서만 나온다. `job-not-cancelable`(409)은 `jobStatus`(작업의 현재 상태)를 더한다. RFC 9457의 `status`(HTTP 상태 코드)와 이름이 겹치지 않게 했다. 401은 `WWW-Authenticate: Bearer`를 반환한다.
 - 예상하지 못한 서버 오류(DB 장애 포함)는 모두 503(`service-unavailable`)이다. 500은 쓰지 않는다. 호출처는 같은 Key로 재시도한다(ADR-0005 결정 5).
 - `priority`(선택, `LOW`·`NORMAL`·`HIGH`·`URGENT`, 대소문자 구분, 생략은 `NORMAL`)가 그 밖의 값이면 `/priority` `INVALID_FORMAT`이다. 암호화 평문 안의 `priority`는 `/content` `UNKNOWN_FIELD`다(RQ-033).
@@ -171,7 +190,7 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 이벤트 피드.
 
 - 응답은 `{events, nextCursor, hasMore}`다. 이벤트가 없으면 `nextCursor`는 요청의 `after`이고, `after`도 없었으면 `null`이다. `hasMore`를 추가했다.
-- 이벤트 종류는 `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `JOB_CANCELED`, `INTAKE_REJECTED`다. `JOB_CANCELED`는 `canceledBy`(`CALLER`·`OPERATOR`)를 더하고 `failureReason`·`lastError`·`rejectedRecipients`는 없다.
+- 이벤트 종류는 `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `JOB_CANCELED`, `INTAKE_REJECTED`다. `JOB_CANCELED`는 `canceledBy`(`CALLER`·`OPERATOR`)를 더하고 `failureReason`·`lastError`·`rejectedRecipients`는 없다. `JOB_FAILED`·`JOB_EXPIRED`는 `outcomeUncertain`을 더한다.
 - `type` 필터는 반복해서 여러 종류를 받는다. cursor는 필터와 무관하므로 필터 조합마다 따로 저장한다.
 - 공백 신호(ADR-0011 결정 9): `after`가 있고 그 cursor 뒤에서 보존 기간이 지나 삭제된 이벤트가 있으면 응답 헤더 `Mailo-Cursor-Gap: true`가 붙는다. 상태는 200이고 본문은 같다. 헤더를 받으면 응답의 이벤트를 처리하고, 종결되지 않은 outbox 행을 `GET /jobs?idempotencyKey=`로 확인한다. 쿼리 `onGap=error`를 보내면 공백일 때 410(`cursor-expired`)이다. 410을 받으면 `after` 없이 다시 읽고 같은 확인을 한다. 410을 처리하지 못하는 호출처는 `onGap`을 보내지 않는다. 헤더를 모르는 호출처는 지금처럼 공백을 알지 못한다. 한계는 `openapi.yaml`의 `GET /events` 설명에 있다.
 - `limit`은 기본 100, 최대 500이다. cursor는 최대 256자다.

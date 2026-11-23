@@ -35,6 +35,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | `URGENT`·`HIGH`가 늦게 나가거나 `LOW`가 만료된다 | "등급별 적체" |
 | 작업이 예상보다 일찍 또는 늦게 `EXPIRED`가 된다, `ttlSeconds`가 400이다 | "만료 시각" |
 | 호출처가 취소했는데 메일이 나갔다, 취소 요청이 409다 | "작업 취소" |
+| 실패한 작업의 메일이 이미 나갔는지 모르겠다, `outcomeUncertain`이 `true`다 | "결과 불명 실패" |
 | 작업이 `SENDING`에 오래 머문다 | lease 만료(`lease_recovered`, `LEASE_EXPIRED`), 프로세스 재시작 |
 | 같은 메일이 두 번 갔다 | `LEASE_EXPIRED` 시도, `drain_timeout`, `lease_lost` |
 | 입력 폴더의 파일이 남는다 | `file_poll`의 `unreadable`·`deleteFailed`, `file_inbox_missing` |
@@ -375,6 +376,37 @@ SELECT scope_type, scope_id, paused_at, paused_by FROM mail_send_controls ORDER 
 
 기동 거부: 관리 토큰 설정이 잘못되면 `설정이 올바르지 않다:` 아래에 변수 이름과 사유가 나온다(`MAILO_OPS_ADMIN_NAMES`의 형식·개수, `MAILO_OPS_ADMIN_TOKEN_<이름>` 없음·규칙 위반, 토큰끼리 같은 값). 토큰이 호출처 API 키와 같으면 같은 형식으로 `호출처 API 키와 같은 값이다`가 나온다. 값은 출력하지 않는다. 해석은 `key-management.md` "운영 토큰".
 
+## 결과 불명 실패
+
+근거: RQ-048, ADR-0011 결정 5.
+
+의미: `outcomeUncertain: true`는 SMTP 서버가 메일을 수락했는지 알 수 없는 시도가 한 건이라도 있었다는 뜻이다. 판정은 `mail_attempts`에서 한다. 새 컬럼은 없다.
+
+| 시도 | 조건 | 뜻 |
+| ---- | ---- | -- |
+| `LEASE_EXPIRED` | `classification = 'LEASE_EXPIRED'` | lease 만료 회수는 전송 결과를 모른다("lease 만료") |
+| DATA 단계 응답 없음 | `classification = 'TRANSIENT' AND stage = 'DATA' AND response_code IS NULL` | 타임아웃·연결 끊김이다. 서버가 수락했을 수 있다(ADR-0007 결정 3) |
+
+`false`인 경우: 시도가 없다, SMTP 응답 코드가 있다(수신 거부 `550`, 일시 오류 `451` 등), DATA 이전 단계(`CONN`·`TLS`·`AUTH`·`MAIL_FROM`·`RCPT`)다, Mailo 내부 오류(`stage = 'WORKER'`)다.
+
+```sql
+-- 결과 불명 시도가 있는 작업. API의 outcomeUncertain과 같은 조건이다
+SELECT j.id, j.caller_id, j.status, j.attempts, j.finished_at
+  FROM mail_jobs j
+ WHERE EXISTS (SELECT 1 FROM mail_attempts a
+                WHERE a.job_id = j.id
+                  AND (a.classification = 'LEASE_EXPIRED'
+                       OR (a.classification = 'TRANSIENT' AND a.stage = 'DATA' AND a.response_code IS NULL)))
+ ORDER BY j.created_at DESC LIMIT 20;
+```
+
+해석:
+
+- 호출처 문의의 답: `GET /jobs/{jobId}`(호출처 키) 또는 `GET /ops/jobs/{jobId}`·`jobs show <jobId>`(운영 토큰)의 `outcomeUncertain`을 본다. `/ops` 응답에는 Key·수신자·본문·SMTP 응답 텍스트가 없다. 이벤트의 값과 작업 조회의 값은 같다.
+- `true`가 많으면 SMTP 응답 지연이나 연결 끊김이 반복된 것이다. DATA 단계 타임아웃(`MAILO_SMTP_TIMEOUT_SECONDS`, 기본 30초)과 "lease 만료"의 원인 목록을 본다.
+- 운영자가 대신 다시 보내는 방법은 없다. 호출처가 새 Key로 다시 제출한다(`caller-onboarding.md` "결과 불명 실패"). 본문은 종결 뒤 기본 1일에 지워지므로 운영자가 복원할 수 없다.
+- 한계: 서버가 응답했지만 Mailo가 받지 못한 경우처럼 위 두 조건 밖의 불명은 잡지 못한다. 시도 이력은 작업과 함께 보존 기간(기본 30일) 뒤에 지워져 조회가 404다.
+
 ## 작업 취소
 
 근거: RQ-040·041, ADR-0011 결정 4.
@@ -440,6 +472,7 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 ## 검증하지 않은 것
 
 - "발송 정지"의 SQL은 스키마와 대조했고 통합 테스트(`test/queue/send-controls.integration-spec.ts`, `test/http/ops.integration-spec.ts`)가 동작을 확인한다. 점유 쿼리 비용 수치는 로컬 단일 측정이고 다중 인스턴스·운영 크기에서는 측정하지 않았다.
+- "결과 불명 실패"의 판정은 통합 테스트(`test/queue/outcome-uncertain.integration-spec.ts`, `test/http/rest-outcome-uncertain.integration-spec.ts`, `test/e2e/mail-flow.integration-spec.ts`)가 확인한다. 위 SQL은 같은 조건이고 운영 환경에서 실행해 확인하지 않았다. 서버가 응답했지만 Mailo가 받지 못한 경우는 재현하지 않았다.
 - "작업 취소"의 SQL은 스키마와 대조했고 실행해 결과를 확인하지 않았다. 취소 동작 자체는 통합 테스트(`test/queue/cancel.integration-spec.ts`, `test/http/rest-cancel.integration-spec.ts`)가 확인한다.
 - 위 신호와 SQL을 운영 환경에서 실행해 결과를 확인하지 않았다. "등급별 적체"의 SQL은 로컬 PostgreSQL 17의 테스트 schema에서 실행해 문법과 결과 열을 확인했다(2026-11-23). 로그 이벤트 이름과 필드는 코드와 통합 테스트(차단기, 할당, 파일 폴러)로 확인했다. `breaker_not_closed`는 `worker/worker.integration-spec.ts`가 단언한다.
 - "이벤트 피드 공백"의 SQL은 통합 테스트(`test/events/event-purges.integration-spec.ts`, `test/http/rest-event-gap.integration-spec.ts`)가 동작을 확인한다. 30일이 실제로 지난 경우는 DB 시각을 당겨 만든 테스트 데이터로만 확인했다.

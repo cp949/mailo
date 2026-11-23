@@ -165,6 +165,10 @@ check "S3 사유" PERMANENT_ERROR "$(sq "SELECT last_error FROM mail_outbox WHER
 check "S3 이벤트 기록 type" JOB_FAILED "$(sq "SELECT type FROM mailo_event_log WHERE outbox_id='$OB3'")"
 check "S3 이벤트 기록 smtpCode" 550 "$(sq "SELECT payload->'lastError'->>'smtpCode' FROM mailo_event_log WHERE outbox_id='$OB3'")"
 check "S3 SMTP 수신 메일 수" 0 "$(smtp_count nobody@reject.example)"
+# outcomeUncertain(RQ-048, ADR-0011 결정 5): 샘플은 모르는 응답 필드를 무시하고 이벤트 원본을 payload에 보관한다.
+check "S3 이벤트 payload의 outcomeUncertain(응답 코드가 명확한 실패는 false)" false "$(sq "SELECT payload->>'outcomeUncertain' FROM mailo_event_log WHERE outbox_id='$OB3'")"
+check "S3 서버 Job 응답의 outcomeUncertain" false "$(curl -s -m 10 -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:$MAILO_PORT/jobs?idempotencyKey=$OB3" | jq -r .outcomeUncertain)"
+check "S1 JOB_SENT 이벤트 payload에는 outcomeUncertain이 없다" "" "$(sq "SELECT payload->>'outcomeUncertain' FROM mailo_event_log WHERE outbox_id='$OB1' AND type='JOB_SENT'")"
 
 log "S3a 확인 필요(NEEDS_CHECK) 행을 GET /jobs로 확인(ADR-0011 구현 순서 1)"
 sq "UPDATE mail_outbox SET status='NEEDS_CHECK', last_error='UNKNOWN_EVENT_TYPE' WHERE id='$OB3'" >/dev/null
