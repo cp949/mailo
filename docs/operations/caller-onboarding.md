@@ -13,6 +13,7 @@
 - 파일 채널만 쓰는 호출처도 REST API 키가 필요하다. 결과는 Key 조회와 이벤트 피드로만 확인한다.
 - 우선순위(`priority`)는 선택이다. 생략하면 `NORMAL`이다. `URGENT`는 즉시 전송을 뜻하지 않는다("우선순위").
 - 만료 시간(`ttlSeconds`)은 선택이다. 생략하면 Mailo 기본 TTL(기본 24시간)이다. 긴 TTL은 한도 지연을 없애지 않는다("요청별 만료 시간").
+- 나가기 전의 작업은 취소할 수 있다(`POST /jobs/{jobId}/cancel`, 파일 채널 호출처는 `POST /jobs/cancel?idempotencyKey=`). 취소 API를 쓰기 전에 사용처가 `CANCELED`·`JOB_CANCELED`와 모르는 값을 처리하는지 확인한다("작업 취소").
 
 ## 1. 등록 전에 정할 것
 
@@ -259,7 +260,8 @@ Content-Type: application/json
 | 네트워크 오류, 타임아웃, 5xx(503 포함) | 등록 여부 불명 또는 일시 장애 | 같은 Key·같은 내용으로 재시도 |
 | 400, 413, 415 | 요청 오류 | 재시도하지 않는다. 실패로 기록하고 알린다 |
 | 401 | 자격 오류 | 재시도하지 않는다. 알린다 |
-| 409 | 같은 Key에 다른 내용 | 재시도하지 않는다. 영구 실패로 기록하고 운영 알림. Key를 재사용하는 호출처 버그를 의심한다 |
+| 409 `idempotency-conflict` | 같은 Key에 다른 내용 | 재시도하지 않는다. 영구 실패로 기록하고 운영 알림. Key를 재사용하는 호출처 버그를 의심한다 |
+| 409 `job-not-cancelable` | 취소 요청에만 온다. 작업이 `SENDING`이거나 종결 상태다 | 재시도하지 않는다. 응답의 `jobStatus`와 이후 이벤트로 결과를 확인한다 |
 | 429 | 쓰지 않는다 | 등록 단계에 쿼터가 없다 |
 
 ## 7. Spring Boot 사용처: outbox + relay
@@ -363,6 +365,7 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 | `JOB_SENT` | outbox 행을 `SENT`로 표시한다. `rejectedRecipients`가 있으면 일부 수신자가 거부된 것이므로 기록·알림 여부를 정한다 |
 | `JOB_FAILED` | `failureReason`(`PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`)과 `lastError`를 기록하고 알린다. 새 요청으로 다시 보낼지는 사용처가 정한다(새 Key) |
 | `JOB_EXPIRED` | `failureReason: EXPIRED`. 기본 만료 TTL은 24시간이다. 차단기 장애가 길면 대량으로 올 수 있다 |
+| `JOB_CANCELED` | 취소 종결이다. 실패가 아니다. outbox 행을 취소 상태로 닫고 재시도하지 않는다. `canceledBy`(`CALLER`·`OPERATOR`)로 운영자가 취소한 것인지 구분한다. 호출처가 직접 취소해도 온다 |
 | `INTAKE_REJECTED` | 파일 수집 거부. `reasonCode`로 원인을 고쳐 새 파일로 다시 보낸다(`troubleshooting.md`). `idempotencyKey`가 있으면 outbox 행을 찾고, `null`이면 `fileName`으로 찾는다 |
 | 위에 없는 `type` | 건너뛰지 않는다. 이벤트를 기록하고 outbox 행을 "확인 필요"로 표시한 뒤 `GET /jobs`로 상태를 확인한다. cursor는 그 이벤트를 지나가므로 이 표시가 유일한 단서다 |
 
@@ -466,6 +469,39 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 
 배포 순서: Mailo의 모든 인스턴스가 이 기능을 지원하는 버전이 된 뒤에 `ttlSeconds`를 보내기 시작한다. 이전 버전은 `ttlSeconds`를 정의되지 않은 필드로 거부한다(REST 400, 파일 거부). 롤백 절차는 `deployment.md` "요청별 만료 시간 도입 배포 순서"를 따른다.
 
+### 작업 취소
+
+근거: RQ-040·041, ADR-0011 결정 4·10, `docs/api/README.md` "작업 취소".
+
+나가기 전의 작업(`PENDING`, `RETRY_WAIT`)만 취소한다. 호출처 API 키로 자기 작업을 취소한다. 운영자가 취소하는 경로는 이 문서의 범위가 아니다.
+
+| 요청 | 용도 |
+| ---- | ---- |
+| `POST /jobs/{jobId}/cancel` | REST로 등록해 `jobId`를 받은 호출처 |
+| `POST /jobs/cancel?idempotencyKey=<Key>` | 파일 채널 호출처처럼 `jobId`를 모르는 호출처 |
+
+- 취소하면 200과 `status: CANCELED`인 `Job`이 온다. 이미 취소된 작업에 다시 요청해도 같은 200이다(멱등). relay 재시도로 같은 취소를 여러 번 보내도 된다.
+- `SENDING`, `SENT`, `FAILED`, `EXPIRED`이면 409 `job-not-cancelable`이다. `jobStatus`가 현재 상태다. 전송 중인 작업은 중단하지 않으므로 취소 요청이 늦으면 메일이 나갈 수 있다.
+- 없는 작업과 다른 호출처의 작업은 구분하지 않고 404다.
+- 취소하면 Mailo가 본문을 즉시 지운다. 되돌릴 수 없다. 같은 Key로 같은 내용을 `POST /jobs`로 다시 보내면 200과 `CANCELED` 작업이 오고 메일은 나가지 않는다. 다시 보내려면 새 Key(새 outbox 행)를 쓴다.
+- 이벤트 `JOB_CANCELED`가 피드에 한 건 온다. outbox를 이벤트로 닫는 사용처는 이 이벤트를 종결로 처리한다. `JOB_FAILED`로 보지 않는다.
+- 조회 응답 `Job`은 `canceledAt`, `canceledBy`를 가진다. `CANCELED`에서 `sentAt`·`failedAt`·`failureReason`은 `null`이다.
+
+**취소 API를 쓰기 전 선행 조건.** 사용처가 `docs/api/README.md` "호출처가 모르는 값을 만났을 때"의 세 규칙을 지켜야 한다. 이 규칙을 지키지 않는 사용처는 `CANCELED`·`JOB_CANCELED`를 모르는 값으로 보고 outbox 행을 종결하지 못하거나 성공으로 처리할 수 있다. 샘플(`samples/spring-boot-relay/`)은 두 값을 종결로 처리한다. 이 저장소 밖의 사용처가 규칙을 지키는지는 확인하지 않았다.
+
+배포 순서와 롤링 중 주의:
+
+1. 사용처가 위 선행 조건을 만족하는 것을 확인한다.
+2. 마이그레이션 `0006`·`0007`을 적용하고 모든 Mailo 인스턴스를 새 버전으로 바꾼다(`deployment.md` "작업 취소 도입 배포 순서").
+3. 그 뒤에 사용처가 취소 API를 쓰기 시작한다.
+
+롤링 중(구·신 인스턴스 혼용) 구버전 인스턴스는 다음처럼 동작한다(코드를 읽어 확인했다).
+
+- `CANCELED` 작업을 조회하면 `status: "CANCELED"`를 그대로 내보낸다. `sentAt`·`failedAt`·`failureReason`은 `null`이다.
+- `GET /events?type=JOB_CANCELED`는 400이다. 필터 없이 읽는 구성(권장)은 영향이 없다.
+- 이벤트 피드에서 `JOB_CANCELED`는 `failureReason: CANCELED_BY_CALLER` 같은 저장 값이 붙은 실패형 이벤트로 나갈 수 있다. 사용처는 `type`으로 분기해야 한다. `failureReason`으로 취소를 판정하지 않는다.
+- 구버전 인스턴스에 취소 요청이 가면 `POST /jobs/{jobId}/cancel` 경로가 없어 404다. 롤링이 끝나기 전에는 취소 API를 쓰지 않는다.
+
 ### 한계
 
 - 발송은 at-least-once다. SMTP 수락 직후 장애가 나면 같은 메일이 두 번 갈 수 있다(RQ-013). 완화로 `Message-ID`를 작업 ID에서 유도한 고정값으로 쓴다. Gmail이 같은 `Message-ID`를 중복으로 버리는지는 확인하지 못했다(ADR-0007 결정 8).
@@ -480,6 +516,7 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 4. 파일: 규약대로 파일을 넣는다. 다음 폴링(기본 30초 이내)에 `file_poll` 로그의 `registered`가 1이고 파일이 사라진다. 이어 `GET /jobs?idempotencyKey=`가 200이다.
 5. 권한: 호출처 계정으로 자기 폴더 목록 조회와 다른 호출처 폴더 접근이 거부되는지 확인한다.
 6. 이벤트: 발송 뒤 `GET /events`에 `JOB_SENT`가 나온다.
+7. 취소(취소 API를 쓰는 호출처): 모르는 값 규칙 준수를 확인한 뒤, 차단기가 `open`이거나 `RETRY_WAIT`인 테스트 작업을 `POST /jobs/{jobId}/cancel`로 취소해 200과 `CANCELED`, 이벤트 `JOB_CANCELED`가 오는지 본다.
 
 ## 검증하지 않은 것
 
@@ -489,5 +526,6 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 - 호출처가 Linux가 아닌 환경에서의 파일 쓰기.
 - 실제 Gmail·Workspace SMTP.
 - 모르는 이벤트 종류·`Job.status`를 서버가 실제로 보낼 때의 샘플 동작. 서버가 아직 보내지 않아 샘플 단위 테스트의 대역으로만 확인했다(`samples/spring-boot-relay/README.md`).
+- 작업 취소 도입의 롤링 배포·롤백 실행. 구버전 인스턴스의 동작은 코드를 읽어 적었다. 이 저장소 밖 사용처가 모르는 값 규칙을 지키는지도 확인하지 않았다.
 - 요청별 만료 시간의 롤링 배포·롤백. 만료 동작은 통합 테스트(`test/e2e/job-ttl.integration-spec.ts`)로 확인했다.
 - 우선순위의 효과를 실제 부하(여러 인스턴스, 장시간 적체)에서 측정하지 않았다. 점유 순서는 통합 테스트(`test/queue/claim-priority.integration-spec.ts`, `test/worker/worker-priority.integration-spec.ts`)로 확인했다.

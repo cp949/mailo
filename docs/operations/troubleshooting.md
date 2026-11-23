@@ -33,6 +33,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | 작업이 `PENDING`·`RETRY_WAIT`에 머문다 | 차단기, 호출처 할당, `claim_failed` |
 | `URGENT`·`HIGH`가 늦게 나가거나 `LOW`가 만료된다 | "등급별 적체" |
 | 작업이 예상보다 일찍 또는 늦게 `EXPIRED`가 된다, `ttlSeconds`가 400이다 | "만료 시각" |
+| 호출처가 취소했는데 메일이 나갔다, 취소 요청이 409다 | "작업 취소" |
 | 작업이 `SENDING`에 오래 머문다 | lease 만료(`lease_recovered`, `LEASE_EXPIRED`), 프로세스 재시작 |
 | 같은 메일이 두 번 갔다 | `LEASE_EXPIRED` 시도, `drain_timeout`, `lease_lost` |
 | 입력 폴더의 파일이 남는다 | `file_poll`의 `unreadable`·`deleteFailed`, `file_inbox_missing` |
@@ -286,6 +287,32 @@ SELECT id, caller_id, idempotency_key, status, failure_reason,
 | `MAILO_JOB_EXPIRY_SECONDS는 MAILO_JOB_EXPIRY_MAX_SECONDS 이하여야 한다` | 기본 TTL이 상한보다 크다 | 상한을 기본 TTL 이상으로 올리거나 상한 변수를 지운다 |
 | `MAILO_JOB_EXPIRY_MAX_SECONDS은 1 이상 31536000 이하의 정수여야 한다` | 범위 밖이거나 정수가 아니다 | 정수 초로 적는다 |
 
+## 작업 취소
+
+근거: RQ-040·041, ADR-0011 결정 4.
+
+신호: `job_canceled`(info, `jobId`, `callerId`, `canceledBy`)는 호출처가 작업을 취소한 요청마다 한 번 남는다. 이미 취소된 작업에 다시 요청한 경우는 남지 않는다. `Idempotency-Key`와 수신자는 로그에 없다.
+
+```sql
+-- 취소한 작업과 사유. failure_reason은 CANCELED_BY_CALLER 또는 CANCELED_BY_OPERATOR다
+SELECT id, caller_id, idempotency_key, attempts, failure_reason, finished_at, body_deleted_at
+  FROM mail_jobs WHERE status = 'CANCELED' ORDER BY finished_at DESC LIMIT 20;
+-- 취소 이벤트(호출처 피드). 작업 1건당 정확히 1건이다
+SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
+  FROM mail_events e WHERE e.type = 'JOB_CANCELED' ORDER BY e.id DESC LIMIT 20;
+```
+
+해석:
+
+- 취소는 `PENDING`·`RETRY_WAIT`만 바꾼다. 취소 요청이 점유(`SENDING`)보다 늦으면 409 `job-not-cancelable`이고 `jobStatus`가 `SENDING`이다. 이 경우 메일은 나갈 수 있다. 결과는 `SENT`·`FAILED` 이벤트로 확인한다. 취소와 점유는 작업 행 잠금으로 직렬화되므로 한 작업이 취소되면서 동시에 발송되는 경우는 없다.
+- 취소된 작업은 점유·만료 sweep·본문 정리 대상이 아니다. 본문은 취소 때 바로 지워지고(`body_deleted_at`) 행·Key·지문은 종결 후 보존 기간(기본 30일)까지 남는다.
+- 취소 이벤트가 피드에 없으면 호출처의 cursor와 `type` 필터를 먼저 본다. `type` 필터를 쓰는 호출처는 `JOB_CANCELED`를 필터에 넣었는지 확인한다. 필터가 없으면 모든 종류가 온다.
+- 호출처가 `CANCELED`·`JOB_CANCELED`를 모르는 값으로 만나 outbox 행이 종결되지 않으면 사용처의 모르는 값 처리 문제다(`docs/api/README.md` "호출처가 모르는 값을 만났을 때"). 같은 Key의 `GET /jobs?idempotencyKey=`로 `status`를 확인한다.
+- 같은 Key로 다시 보냈는데 메일이 나가지 않는다: 그 Key의 작업이 `CANCELED`다. 같은 내용 재전송은 200과 `CANCELED` 작업을 돌려준다. 새 Key로 다시 보낸다.
+- 롤링 배포 중에는 구버전 인스턴스가 `CANCELED`를 그대로 내보내고 `GET /events?type=JOB_CANCELED`를 400으로 거부한다(`deployment.md` "작업 취소 도입 배포 순서").
+
+이벤트 쓰기 실패 등 DB 오류로 취소 요청이 503이면 전이도 롤백되어 `PENDING`·`RETRY_WAIT` 그대로다. 같은 요청을 다시 보내면 된다.
+
 ## 호출처 할당 초과
 
 신호: `caller_quota_exceeded`(warn, `callerId`, `limit`)는 할당을 넘긴 호출처가 새로 생겼을 때 한 번, `caller_quota_recovered`(info, `callerId`)는 풀렸을 때 한 번 남는다. 폴링마다 반복되지 않는다.
@@ -323,6 +350,7 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 
 ## 검증하지 않은 것
 
+- "작업 취소"의 SQL은 스키마와 대조했고 실행해 결과를 확인하지 않았다. 취소 동작 자체는 통합 테스트(`test/queue/cancel.integration-spec.ts`, `test/http/rest-cancel.integration-spec.ts`)가 확인한다.
 - 위 신호와 SQL을 운영 환경에서 실행해 결과를 확인하지 않았다. "등급별 적체"의 SQL은 로컬 PostgreSQL 17의 테스트 schema에서 실행해 문법과 결과 열을 확인했다(2026-11-23). 로그 이벤트 이름과 필드는 코드와 통합 테스트(차단기, 할당, 파일 폴러)로 확인했다. `breaker_not_closed`는 `worker/worker.integration-spec.ts`가 단언한다.
 - 실제 Gmail의 응답 코드·텍스트로 `lastReason` 분류를 대조하지 않았다(ADR-0007 구현 중 확정 2).
 - 긴 트랜잭션의 원인 목록(`pg_dump`, prepared transaction)은 일반 지식이며 Mailo 피드로 재현하지 않았다.

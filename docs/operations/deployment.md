@@ -110,7 +110,7 @@ services:
   - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX CONCURRENTLY`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다).
   - 실행기는 표식 파일을 실행한 뒤 기록 전에 현재 schema의 `INVALID` 인덱스(`pg_index.indisvalid = false`)를 조회한다. 있으면 기록하지 않고 인덱스 이름을 담은 오류로 실패한다. `IF NOT EXISTS`는 같은 이름의 `INVALID` 인덱스가 있으면 건너뛰고 성공하기 때문이다. 같은 schema에서 수동 `CREATE INDEX CONCURRENTLY`가 진행 중이어도 실패한다.
   - 같은 실행에서 앞서 적용한 파일은 이미 커밋돼 있다. 표식 파일이 실패해도 앞 파일은 롤백되지 않는다.
-  - 현재 파일 중 `0005_job_priority_claim_index.sql`만 표식 파일이다. 나머지(`0001`~`0004`)는 트랜잭션 실행이다.
+  - 현재 파일 중 `0005_job_priority_claim_index.sql`만 표식 파일이다. 나머지(`0001`~`0004`, `0006`, `0007`)는 트랜잭션 실행이다.
   - `0005`의 확인·복구 절차는 `troubleshooting.md` "등급별 적체"다.
 - 잠금 대기: 기본(트랜잭션) 실행은 풀에 `lock_timeout`이 걸려 있으면 그 값(CLI는 10초)을 쓰고, 없으면(0) 10초를 `SET LOCAL`로 건다. 표식 파일은 같은 값을 세션 `SET`으로 걸고 끝나면 `RESET`한다. 마이그레이션이 다른 쿼리를 막는 잠금을 10초 넘게 기다리면 실패한다(`55P03`). 인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
 
@@ -187,6 +187,31 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 ```txt
 위험도: 낮음 (스키마 변경 없음. 미확인 요청에서 ttlSeconds를 빼면 지문 충돌)
 롤백: 호출처 전송을 끊은 뒤 앱만 이전 버전으로 되돌린다
+```
+
+### 작업 취소 도입 배포 순서
+
+근거: RQ-040·041, ADR-0011 결정 4·10.
+
+새 환경 변수는 없다. 마이그레이션 `0006`(`mail_jobs`의 `mail_jobs_status_check`·`mail_jobs_terminal_state`)과 `0007`(`mail_events`의 `mail_events_type_check`)이 `CANCELED`·`JOB_CANCELED`를 허용하게 바꾼다. 둘 다 `DROP CONSTRAINT` 뒤 같은 이름의 `ADD CONSTRAINT ... NOT VALID`다. 제약은 미검증(`convalidated = false`) 상태로 남는다. 새 조건은 옛 조건에 새 값을 더한 것이라 기존 행은 모두 만족하므로 `VALIDATE CONSTRAINT`는 하지 않는다.
+
+1. 호출처(사용처)가 모르는 값 규칙을 지키는지 확인한다(`docs/api/README.md` "호출처가 모르는 값을 만났을 때", `caller-onboarding.md` "작업 취소"). 이 확인이 끝나기 전에는 취소 API를 쓰지 않는다.
+2. 마이그레이션 전에 `pg_dump`를 받는다("백업과 복구"). `0006`·`0007`을 적용한다(기동 때 자동 또는 `mailo-migrate`). 파일마다 트랜잭션이고 `ALTER TABLE`이 `mail_jobs`·`mail_events`에 각각 `ACCESS EXCLUSIVE` 잠금을 잡는다. 두 테이블을 한 파일에서 잠그지 않으려고 파일을 나눴다. 이미 도는 긴 쿼리가 있으면 잠금을 기다리고 `lock_timeout`(기본 10초)을 넘기면 그 파일만 롤백되며 실행기가 실패한다. 다시 실행한다. 대용량 테이블·동시 쓰기 중의 대기 시간은 측정하지 않았다.
+3. 모든 Mailo 인스턴스를 새 버전으로 바꾼다. 구버전은 새 상태·이벤트 종류를 쓰지 않으므로 마이그레이션 직후에도 영향이 없다.
+4. 호출처가 취소 API를 쓰기 시작한다.
+
+롤링 중(구·신 혼용)에는 취소 API를 쓰지 않는다. 구버전 인스턴스는 `POST /jobs/{jobId}/cancel` 경로가 없어 404를 낸다. 취소로 `CANCELED`가 된 작업을 구버전 인스턴스가 조회·이벤트로 내보내면 `status: "CANCELED"`를 그대로 보이고, 구버전의 `GET /events?type=JOB_CANCELED`는 400이다(코드를 읽어 확인했고 실행하지 않았다). 구버전은 `CANCELED` 행을 점유·만료·결과 기록 대상으로 읽지 않는다.
+
+롤백:
+
+1. 호출처의 취소 API 사용을 먼저 멈춘다.
+2. 이전 버전으로 인스턴스를 바꾼다.
+3. 마이그레이션은 되돌리지 않는다. `CANCELED` 행과 `JOB_CANCELED` 이벤트가 남으면 옛 `CHECK`를 복원하지 못한다. 새 제약은 옛 값도 모두 허용하므로 이전 버전은 그대로 동작한다. 이전 버전은 `CANCELED` 작업을 조회·이벤트로 그대로 내보낸다. 호출처가 이를 모르는 값으로 처리하는지는 호출처 책임이다.
+4. 롤백 중 남은 `CANCELED` 작업은 보존 기간(종결 후 30일)이 지나면 다른 종결 작업과 같이 삭제된다.
+
+```txt
+위험도: 중간 (ACCESS EXCLUSIVE 잠금 대기, 되돌릴 수 없는 CHECK 교체)
+롤백: 취소 API 사용 중지 후 앱만 이전 버전으로 되돌린다. 스키마는 되돌리지 않는다(되돌리려면 pg_dump 복원)
 ```
 
 ## 환경 변수
@@ -412,7 +437,7 @@ secrets:
 - 앞의 네 필드는 모든 줄에 있다: `ts`(ISO 8601 UTC), `instance`(`MAILO_INSTANCE_ID`, 없으면 호스트 이름 = 컨테이너 ID), `level`(`debug`·`info`·`warn`·`error`), `event`. 나머지는 이벤트마다 다르다. 호출자 필드가 이 네 값을 덮어쓰지 않는다.
 - `event: "http_request"`: 응답이 끝날 때 한 줄. 필드는 `requestId`, `method`, `route`(라우트 패턴, 예 `/jobs/:jobId`), `status`, `callerId`(인증 전에는 `null`), `durationMs`뿐이다. 쿼리 문자열, 경로 값, `Idempotency-Key`, 헤더, 본문은 없다(RQ-027). `requestId`는 오류 응답 본문의 `instance`(`urn:uuid:…`)와 같다.
 - `event: "nest_log"`: Nest 프레임워크와 `Logger`로 쓴 문자열 로그. `message`, `context`(클래스·모듈 이름), 오류 수준이면 Nest가 넘긴 `stack`이 있다. `stack`의 첫 줄에는 예외 메시지가 들어 있을 수 있다(이전 텍스트 출력과 같은 정보다).
-- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`(앱 계층), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
+- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
 - 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패는 `event: "startup_failed"`(필드 `error`는 예외 이름·코드, 설정 오류는 변수 이름만 담은 `message`)로 남는다. 설정을 읽기 전의 실패는 `instance`가 호스트 이름이다(`MAILO_INSTANCE_ID`를 아직 읽지 못했다).
 - 본문·제목·수신자 주소·SMTP 인증 정보·키는 어느 필드에도 넣지 않는다. 예외는 이름과 코드(`Error:57014`)만 쓴다(RQ-027). 이 규칙은 canary 문자열 테스트로 확인한다.
 - 로그 수집기가 인스턴스를 구분하려면 `instance`를 쓴다. 로그와 DB 행의 연결: 결과를 기록한 시도의 `instance`가 `mail_attempts.instance` 컬럼에 같은 값으로 남는다(128자까지). 로그의 `jobId`(`job_completed` 등)로 시도 행을 찾고 `instance`로 기록한 인스턴스를 확인한다. lease 회수로 쓴 `LEASE_EXPIRED` 시도, 0003 적용 전 행, 롤링 배포 중 이전 버전이 쓴 행은 NULL이다(점유한 인스턴스를 DB에 쓰지 않는다: lease는 `lease_token`으로만 다룬다). REST 응답에는 노출하지 않는다. 컨테이너를 다시 만들면 호스트 이름이 바뀌므로 고정 이름이 필요하면 `MAILO_INSTANCE_ID`를 준다.
@@ -484,6 +509,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 
 - 컨테이너 기동, 재생성, 재시작 후 자동 복구(RQ-025·026의 미충족 조건).
 - 실제 SIGTERM을 받은 컨테이너의 종료 시간(`pause` 먼저 호출하는 새 종료 순서 포함).
+- 작업 취소 도입(`0006`·`0007`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기 시간(대용량·쓰기 부하). 구버전의 동작은 코드를 읽어 적었다.
 - 요청별 만료 시간 도입의 롤링 배포·롤백 실행, 긴 `MAILO_JOB_EXPIRY_MAX_SECONDS`에서의 대기 건수와 점유 지연.
 - 마이그레이션의 대용량 DB 적용 시간. `0005`(`CREATE INDEX CONCURRENTLY`)를 쓰기 부하 중에 적용한 시간도 측정하지 않았다.
 - 백업·복구 절차.
