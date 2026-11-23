@@ -17,6 +17,7 @@ import {
   readdirSync,
   renameSync,
   symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
   writeSync,
@@ -464,6 +465,25 @@ describe("파일 채널 폴러 (RQ-002, ADR-0004)", () => {
       expect(existsSync(outside)).toBe(true);
     });
 
+    it("link로 게시한 파일은 unlink 전에 폴링되면 거부된다(ADR-0004 구현 중 확정 30: 결정 3의 link 권고와 결정 5의 nlink 충돌)", async () => {
+      const tmp = h.dropTemp(
+        "alpha",
+        ".published.tmp",
+        json(fileRequest({ idempotencyKey: "via-link" })),
+      );
+      linkSync(tmp, path.join(h.inbox("alpha"), "published.json"));
+
+      // link 직후, 호출처가 임시 이름을 unlink하기 전에 폴링한다
+      await h.makePoller().pollOnce();
+      unlinkSync(tmp);
+
+      expect(await jobs()).toEqual([]);
+      expect(await rejections()).toMatchObject([
+        { file_name: "published.json", reason_code: "MALFORMED" },
+      ]);
+      expect(files("alpha")).toEqual([]);
+    });
+
     it("정확히 상한 크기인 파일은 수집하고 1바이트 넘는 파일은 SIZE_EXCEEDED로 거부한다", async () => {
       const limit = 4096;
       h.cleanup();
@@ -891,6 +911,84 @@ describe("파일 채널 폴러 (RQ-002, ADR-0004)", () => {
       expect(third.more).toBe(false);
       expect(files("alpha")).toEqual([]);
       expect(await jobs()).toHaveLength(6);
+    });
+
+    (asRoot ? it.skip : it)(
+      "읽을 수 없는 호출처 폴더가 연속 3곳이어도 뒤쪽 호출처를 수집한다(ADR-0004 구현 중 확정 8)",
+      async () => {
+        h.cleanup();
+        h = createFileHarness(pool, { extraFileCallers: ["gamma"] });
+        // 폴링 순서: alpha, beta, signed, gamma. 앞의 셋은 opendir가 EACCES다.
+        for (const id of ["alpha", "beta", "signed"])
+          chmodSync(h.inbox(id), 0o000);
+        h.drop("gamma", "g.json", json(fileRequest({ idempotencyKey: "g-0" })));
+
+        const summary = await h.makePoller().pollOnce();
+        for (const id of ["alpha", "beta", "signed"])
+          chmodSync(h.inbox(id), 0o755);
+
+        expect(await jobs()).toEqual([
+          { caller_id: "gamma", idempotency_key: "g-0", status: "PENDING" },
+        ]);
+        expect(total(summary, "registered")).toBe(1);
+        expect(
+          h.logs.filter((l) => l.includes("file_poll_failed")),
+        ).toHaveLength(3);
+      },
+    );
+
+    it("읽을 수 없는 파일이 배치 상한을 채워도 뒤의 정상 파일을 수집한다(ADR-0004 구현 중 확정 8)", async () => {
+      h.cleanup();
+      h = createFileHarness(pool, { config: { batchPerCaller: 2 } });
+      // 읽기 불가 파일은 `unreadable`로 남는다. 디렉터리 순서와 무관하게 정상 파일 3건이 모두 처리돼야 한다.
+      for (let i = 0; i < 4; i += 1) {
+        const file = h.drop(
+          "alpha",
+          `noperm-${i}.json`,
+          json(fileRequest({ idempotencyKey: `noperm-${i}` })),
+        );
+        if (!asRoot) chmodSync(file, 0o000);
+      }
+      for (let i = 0; i < 3; i += 1)
+        h.drop(
+          "alpha",
+          `ok-${i}.json`,
+          json(fileRequest({ idempotencyKey: `ok-${i}` })),
+        );
+      const poller = h.makePoller();
+
+      const first = await poller.pollOnce();
+      const second = await poller.pollOnce();
+      for (const name of files("alpha").filter((n) => n.startsWith("noperm")))
+        chmodSync(path.join(h.inbox("alpha"), name), 0o644);
+
+      if (!asRoot) {
+        expect(total(first, "registered")).toBe(2);
+        expect(total(second, "registered")).toBe(1);
+        expect((await jobs()).map((j) => j.idempotency_key)).toEqual([
+          "ok-0",
+          "ok-1",
+          "ok-2",
+        ]);
+      }
+    });
+
+    it("임시 점 파일이 배치 상한보다 많아도 뒤쪽의 오래된 임시 파일을 지운다", async () => {
+      h.cleanup();
+      h = createFileHarness(pool, { config: { batchPerCaller: 2 } });
+      const longAgo = new Date(Date.now() - 2 * 3600 * 1000);
+      const fresh: string[] = [];
+      for (let i = 0; i < 4; i += 1)
+        fresh.push(h.dropTemp("alpha", `.fresh-${i}.tmp`, "partial"));
+      for (let i = 0; i < 3; i += 1) {
+        const old = h.dropTemp("alpha", `.old-${i}.tmp`, "partial");
+        utimesSync(old, longAgo, longAgo);
+      }
+
+      const summary = await h.makePoller().pollOnce();
+
+      expect(total(summary, "tempDeleted")).toBe(3);
+      expect(files("alpha")).toEqual(fresh.map((f) => path.basename(f)).sort());
     });
 
     it("시작할 때 root가 없거나 디렉터리가 아니면 FileChannelStartError로 실패한다", async () => {

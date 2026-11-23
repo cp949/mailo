@@ -118,7 +118,7 @@ SELECT job_id, started_at, finished_at FROM mail_attempts
 | NFSv4.1 클라이언트가 만든 파일 + umask 077 | 호출처 호스트를 `vers=4.2`로 mount한다(`nfs.md`) |
 | Mailo UID가 ACL의 사용자와 다르다 | 폴더 ACL의 `user:<Mailo UID>`를 실제 Mailo UID(컨테이너 `user`)와 맞춘다 |
 
-- 읽지 못하는 파일이 한 호출처의 배치 상한(기본 100개) 이상 쌓이면 그 호출처의 뒤쪽 파일이 처리되지 않는다. 다른 호출처에는 영향이 없다(ADR-0004 구현 중 확정 8).
+- 읽지 못하는 파일은 배치 슬롯을 쓰지 않는다. 한 폴링은 이름을 `batchPerCaller`의 100배(최대 100000)까지 모아 순회하므로 읽지 못하는 파일 뒤의 정상 파일도 처리된다. 읽지 못하는 파일이 이 한도(기본 10000개)를 넘으면 한도 밖 파일은 처리되지 않으므로 원인을 고친다. 폴링마다 읽지 못하는 파일을 다시 열어 보는 비용이 든다. 다른 호출처에는 영향이 없다(ADR-0004 구현 중 확정 8, 29).
 - 삭제하지 못한 파일은 `file_delete_failed`(`callerId`, `code`)와 요약의 `deleteFailed`로 보인다. 등록·거부는 이미 커밋됐고 파일이 남아 다시 수집돼도 같은 Key·같은 `(caller_id, 파일 이름, sha256)`로 걸러진다. 폴더 쓰기 권한(Mailo 소유 폴더인지)을 확인한다.
 
 파일 채널 관련 그 밖의 로그:
@@ -133,7 +133,7 @@ SELECT job_id, started_at, finished_at FROM mail_attempts
 | `file_rejected` | info | 수집 거부 기록. `callerId`, `reasonCode`, `fileName`, `sizeBytes`, `sha256`(본문 없음) |
 | `file_temp_delete_failed` | warn | 오래된 임시 파일 삭제 실패(`error`) |
 | `file_ingest_failed` | error | 한 파일 처리 중 오류(DB 오류 등, `error`). 같은 폴링에서 3번 연속이면 그 폴링을 접는다 |
-| `file_poll_failed`, `file_poll_crashed` | error | 폴링 단위 실패. 다음 간격에 다시 시도한다 |
+| `file_poll_failed`, `file_poll_crashed` | error | 폴링 단위 실패. 다음 간격에 다시 시도한다. `file_poll_failed`는 한 호출처의 폴더 목록을 읽지 못한 경우(권한 등)이고 다른 호출처 처리는 계속한다 |
 
 요약 `file_poll`의 필드: `registered`, `duplicates`, `rejected`, `rejectedRepeats`, `gone`, `unreadable`, `deleteFailed`, `tempDeleted`, `badNames`, `errors`, `capped`, `inboxMissing`. `capped`가 `true`면 배치 상한에 걸려 폴더에 처리하지 못한 파일이 남았을 수 있다. `badNames`는 UTF-8로 읽을 수 없는 이름의 파일 수다(수집하지 않는다).
 
@@ -204,7 +204,7 @@ SELECT gid, prepared FROM pg_prepared_xacts;   -- 끝나지 않은 prepared tran
 - REST 등록·조회는 503(`service-unavailable`)이다. 사용처는 같은 Key로 재시도한다(ADR-0005 결정 5).
 - Worker는 `claim_failed`(error, `error`, `streak`)를 남기고 간격을 늘려(최대 30초) 다시 시도한다. DB가 돌아오면 자동 재개된다.
 - 풀의 유휴 연결 오류는 `idle client error name=... code=...`로 남는다.
-- 파일 채널은 파일과 무관한 오류가 3번 연속이면 그 폴링을 접고 다음 간격에 다시 시도한다(`file_ingest_failed`, `file_poll_failed`).
+- 파일 채널은 파일과 무관한 오류(`file_ingest_failed`)가 3번 연속이면 그 폴링을 접고 다음 간격에 다시 시도한다. 폴더 목록 읽기 실패(`file_poll_failed`)는 이 횟수에 세지 않는다(ADR-0004 구현 중 확정 29).
 
 ## 유지 작업 로그
 

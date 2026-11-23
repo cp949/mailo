@@ -17,7 +17,11 @@ import {
   type SmtpMessage,
   type SmtpSenderConfig,
 } from "../../src/smtp/index.js";
-import { startFakeSmtp, type FakeSmtp } from "../support/fake-smtp.js";
+import {
+  startFakeSmtp,
+  type FakeSmtp,
+  type Reply,
+} from "../support/fake-smtp.js";
 
 const JOB_ID = "22222222-2222-4222-8222-222222222222";
 
@@ -248,6 +252,34 @@ describe("취소와 입력 오류", () => {
   });
 });
 
+describe("수신자 전원 거부 (ADR-0007 결정 7)", () => {
+  const reply = (code: number, text: string): Reply => ({ code, text });
+
+  it("failure는 첫 거부 수신자가 아니라 결과를 정한 수신자의 응답이다", async () => {
+    fake.behavior.rcpt = (address) =>
+      address === "to1@example.com"
+        ? reply(550, "5.1.1 no such user")
+        : reply(550, "5.4.5 Daily user sending limit exceeded.");
+
+    const result = await createSmtpSender(config(fake)).send({
+      ...MESSAGE,
+      to: ["to1@example.com", "to2@example.com"],
+      cc: [],
+      bcc: [],
+    });
+
+    expect(result).toMatchObject({
+      kind: "ACCOUNT",
+      reason: "DAILY_LIMIT",
+      failure: {
+        stage: "RCPT",
+        responseCode: 550,
+        enhancedStatus: "5.4.5",
+      },
+    });
+  });
+});
+
 describe("타임아웃 검증 (ADR-0002 결정 11)", () => {
   const timeouts = {
     connectionMs: 10_000,
@@ -304,6 +336,12 @@ describe("응답 텍스트 정리와 단계 추적", () => {
   it("이메일 주소를 가리고 500자로 자른다", () => {
     expect(sanitizeResponseText("550 5.1.1 <a.b+c@example.com> unknown")).toBe(
       "550 5.1.1 <[address]> unknown",
+    );
+    expect(sanitizeResponseText("<o'brien@example.com> unknown")).toBe(
+      "<[address]> unknown",
+    );
+    expect(sanitizeResponseText("'a@example.com' unknown")).toBe(
+      "'[address]' unknown",
     );
     expect(sanitizeResponseText("x".repeat(600))!.length).toBe(503);
     expect(sanitizeResponseText(undefined)).toBeUndefined();

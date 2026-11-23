@@ -248,6 +248,36 @@ describe("Mailo JWE 개인키 목록 (RQ-022, ADR-0008 결정 5)", () => {
       );
     });
 
+    it("removedAt이 현재 시각보다 미래이면 보존 기간을 채워도 거부한다", () => {
+      const json = keysJson({
+        removed: [
+          {
+            kid: "mailo-2025-11",
+            retiredAt,
+            removedAt: removedAt(retiredAt, RETENTION),
+          },
+        ],
+      });
+      const beforeRemoval = new Date(
+        Date.parse(retiredAt) + (RETENTION - 1) * 1000,
+      );
+
+      expect(() =>
+        parseEnvelopeKeys(json, {
+          env: baseEnv(),
+          retentionSeconds: RETENTION,
+          now: beforeRemoval,
+        }),
+      ).toThrow("removed[0].removedAt이 현재 시각보다 미래다");
+      expect(
+        parseEnvelopeKeys(json, {
+          env: baseEnv(),
+          retentionSeconds: RETENTION,
+          now: new Date(Date.parse(retiredAt) + RETENTION * 1000),
+        }),
+      ).toHaveLength(2);
+    });
+
     it("keys에 남아 있는 kid의 삭제 기록과 형식이 틀린 기록을 거부한다", () => {
       const json = keysJson({
         removed: [

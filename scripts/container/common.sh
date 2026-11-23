@@ -24,6 +24,7 @@ verify_setup() {
   chmod 0644 "$WORK/callers.json"
   # 폴더 소유자는 컨테이너의 Mailo(UID 1000)와 같은 호스트 UID여야 한다. 아니면 호출처(호스트) 쓰기를 위해 777로 둔다.
   chmod 0777 "$WORK/files" "$WORK/files/inbox" "$WORK/files/inbox/alpha"
+  # compose는 NODE_ENV 기본값이 production이라 공개 샘플 키를 거부한다. 실행마다 일회용 키를 만든다(임시 디렉터리에만 남는다).
   cat > "$WORK/mailo.env" <<ENV
 MAILO_SMTP_HOST=172.29.89.10
 MAILO_SMTP_PORT=2525
@@ -31,9 +32,9 @@ MAILO_SMTP_USER=fake-user@example.invalid
 MAILO_SMTP_PASSWORD=fake-smtp-password
 MAILO_SMTP_FROM=no-reply@example.com
 MAILO_DB_ENCRYPTION_KEY_VERSION=1
-MAILO_DB_ENCRYPTION_KEY_V1=ZmFrZS1kYi1rZXktZm9yLWRldi1vbmx5LTAwMDAwMDA=
+MAILO_DB_ENCRYPTION_KEY_V1=$(openssl rand -base64 32)
 MAILO_FINGERPRINT_KEY_VERSION=1
-MAILO_FINGERPRINT_KEY_V1=ZmFrZS1maW5nZXJwcmludC1rZXktZGV2LW9ubHktMDA=
+MAILO_FINGERPRINT_KEY_V1=$(openssl rand -base64 32)
 MAILO_LEASE_SECONDS=${LEASE_SECONDS:-45}
 MAILO_SMTP_TIMEOUT_SECONDS=10
 NODE_EXTRA_CA_CERTS=/certs/cert.pem

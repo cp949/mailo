@@ -137,7 +137,7 @@ MAILO_UID=1000 MAILO_GID=1000 CALLERS="billing:10002 reports:10003" \
 - 최종 이름은 요청마다 고유해야 한다. outbox 행 ID(UUID)를 쓰면 이벤트의 `fileName`으로 요청을 찾을 수 있다. 같은 이름으로 `rename`하면 아직 수집되지 않은 파일을 경고 없이 덮어쓴다.
 - 다른 폴더나 다른 파일시스템에서 `rename`하지 않는다(`EXDEV`, 비원자적).
 - `rename` 뒤에 파일을 열어 두고 덧쓰지 않는다. 부분 내용이 노출될 수 있다.
-- 심볼릭 링크, 하드링크, 하위 디렉터리를 만들지 않는다. 읽지 않고 거부한다.
+- 심볼릭 링크, 하드링크, 하위 디렉터리를 만들지 않는다. 읽지 않고 거부한다. `link`로 최종 이름을 만든 뒤 임시 이름을 `unlink`하는 게시 방식도 쓰지 않는다. `link` 직후 `unlink` 전에 폴링되면 `nlink`가 2라서 `MALFORMED`로 거부되고 파일이 삭제된다(ADR-0004 구현 중 확정 30). 게시는 `rename`만 쓴다.
 - 파일 크기 상한은 기본 2 MiB(`MAILO_FILE_MAX_BYTES`)이다. JWS·JWE는 base64 때문에 평문의 약 1.8배가 된다. 상한을 넘으면 `SIZE_EXCEEDED`다.
 - 쓰기를 1시간(`MAILO_FILE_TEMP_MAX_AGE_SECONDS`) 넘게 멈춘 임시 파일은 Mailo가 지울 수 있다.
 - 호출처가 Linux가 아닌 환경(Windows, macOS 클라이언트)은 확인하지 않았다.

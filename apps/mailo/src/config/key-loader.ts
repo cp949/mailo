@@ -18,6 +18,24 @@ const MAX_VERSION = 2_147_483_647;
 const HEX_KEY = /^[0-9a-fA-F]{64}$/;
 const BASE64_KEY = /^[A-Za-z0-9+/_-]{43}={0,1}$/;
 
+// 저장소에 공개된 샘플 키(.env.example, docker-compose.volume-example.yml, scripts/container/common.sh). production에서는 거부한다.
+// 값은 base64 문자열이 아니라 원문 32바이트다. base64·hex 어느 표기로 들어와도 같은 바이트로 비교한다.
+const PUBLIC_SAMPLE_KEYS: readonly Buffer[] = [
+  Buffer.from("fake-db-key-for-dev-only-0000000", "utf8"),
+  Buffer.from("fake-fingerprint-key-dev-only-00", "utf8"),
+];
+
+/**
+ * 공개된 샘플 키이거나 같은 바이트가 반복된 키인지 본다. 반복 바이트 키(`Buffer.alloc(32, n)`)는 테스트 픽스처가 쓰는 형태다.
+ * 검사 대상 문자열을 오류 메시지에 넣지 않으므로 호출하는 쪽도 변수 이름만 적는다.
+ */
+function isPublicOrWeakKey(key: Buffer): boolean {
+  if (key.every((byte) => byte === key[0])) return true;
+  return PUBLIC_SAMPLE_KEYS.some(
+    (sample) => sample.length === key.length && timingSafeEqual(sample, key),
+  );
+}
+
 /** 32바이트 키 텍스트(base64·URL-safe base64·64자 hex)를 바이트로 바꾼다. 형식이 틀리면 undefined다. */
 export function decodeKey(text: string): Buffer | undefined {
   const trimmed = text.trim();
@@ -36,12 +54,22 @@ export function loadKeyRing(
     min: 1,
     max: MAX_VERSION,
   });
-  const pattern = new RegExp(`^${prefix}_V(\\d{1,10})(_FILE)?$`);
+  const pattern = new RegExp(`^${prefix}_V(\\d+)(_FILE)?$`);
   const versions = new Set<number>();
   for (const name of Object.keys(reader.env)) {
     const match = pattern.exec(name);
-    if (match && reader.raw(name) !== undefined) versions.add(Number(match[1]));
+    if (!match || reader.raw(name) === undefined) continue;
+    const digits = match[1]!;
+    // `_V01`은 `_V1`과 다른 변수라 읽히지 않고 조용히 무시된다. 오타를 알리려고 거부한다.
+    if (digits.length > 1 && digits.startsWith("0")) {
+      reader.issue(
+        `${name}의 버전 번호에 앞자리 0을 쓸 수 없다(${prefix}_V1처럼 쓴다)`,
+      );
+      continue;
+    }
+    versions.add(Number(digits));
   }
+  const production = reader.raw("NODE_ENV")?.trim() === "production";
 
   const keys = new Map<number, Buffer>();
   for (const version of [...versions].sort((a, b) => a - b)) {
@@ -55,6 +83,13 @@ export function loadKeyRing(
     const key = decodeKey(text);
     if (key === undefined) {
       reader.issue(`${name}은 32바이트 키(base64 또는 64자 hex)여야 한다`);
+      continue;
+    }
+    // 값은 오류에 싣지 않는다. 변수 이름과 사유만 적는다.
+    if (production && isPublicOrWeakKey(key)) {
+      reader.issue(
+        `${name}은 저장소에 공개된 샘플 키이거나 같은 바이트가 반복된 키라 production에서 쓸 수 없다(openssl rand -base64 32로 새로 만든다)`,
+      );
       continue;
     }
     keys.set(version, key);

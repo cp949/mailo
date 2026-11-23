@@ -88,6 +88,46 @@ describe("PostgreSQL 통합: 이벤트 피드(ADR-0006 결정 2·7, RQ-017)", ()
     );
   });
 
+  it.each([2, 3, 5])(
+    "한 트랜잭션의 id가 99에서 100으로 넘어가도 limit %i로 끝까지 읽으면 빠짐·중복이 없다(ADR-0006 결정 7)",
+    async (limit) => {
+      const job = await createJob(db.pool);
+      // id가 문자열 순(\"100\" < \"96\")과 숫자 순이 갈리는 구간에서 시작하게 한다
+      await db.pool.query(
+        "SELECT setval(pg_get_serial_sequence('mail_events', 'id'), 94)",
+      );
+      const client = await db.pool.connect();
+      try {
+        await client.query("BEGIN");
+        for (let i = 0; i < 20; i += 1) {
+          await recordJobEvent(client, event(job));
+        }
+        await client.query("COMMIT");
+      } finally {
+        client.release();
+      }
+
+      const seen: string[] = [];
+      let after: string | null = null;
+      for (let page = 0; page < 30; page += 1) {
+        const result: Awaited<ReturnType<typeof listEvents>> = await listEvents(
+          db.pool,
+          {
+            callerId: "caller-a",
+            after,
+            limit,
+          },
+        );
+        if (result.events.length === 0) break;
+        seen.push(...result.events.map((e) => e.id));
+        after = result.nextCursor;
+      }
+
+      const expected = Array.from({ length: 20 }, (_, i) => String(95 + i));
+      expect(seen).toEqual(expected);
+    },
+  );
+
   it("호출처는 자기 이벤트만 읽고 type으로 거를 수 있다", async () => {
     const mine = await createJob(db.pool);
     const theirs = await createJob(db.pool, { callerId: "caller-b" });

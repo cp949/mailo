@@ -25,6 +25,62 @@ const f = (
   responseText,
 });
 
+describe("classifySmtpFailure: 서버가 되풀이한 수신자 주소는 분류에 쓰지 않는다 (RQ-009, ADR-0007 결정 4)", () => {
+  it.each([
+    "daily-limit@example.com",
+    "starttls@example.com",
+    "rate-limited@example.com",
+    "authentication-required@example.com",
+  ])(
+    "수신자 주소 %s 안의 글자 때문에 550 5.1.1이 계정 오류로 바뀌지 않는다",
+    (address) => {
+      const r = classifySmtpFailure(
+        f(
+          "RCPT",
+          550,
+          "5.1.1",
+          `<${address}>: Recipient address rejected: User unknown`,
+        ),
+      );
+      expect(r).toMatchObject({ kind: "PERMANENT", rule: "PERMANENT_5XX" });
+    },
+  );
+
+  it("작은따옴표가 든 주소도 분류 입력에서 빠진다", () => {
+    const r = classifySmtpFailure(
+      f("RCPT", 550, "5.1.1", "<daily'limit@example.com>: User unknown"),
+    );
+    expect(r.kind).toBe("PERMANENT");
+  });
+
+  it("주소가 아닌 응답 텍스트의 한도 문구는 그대로 계정 오류로 분류한다", () => {
+    const r = classifySmtpFailure(
+      f("RCPT", 550, "5.7.1", "Daily SMTP relay sending limit exceeded."),
+    );
+    expect(r).toMatchObject({ kind: "ACCOUNT", reason: "DAILY_LIMIT" });
+  });
+});
+
+describe("classifySmtpFailure: 수신자 쪽 수신 속도 제한 (421 포함)", () => {
+  it.each([450, 421])(
+    "%i 4.2.1의 'receiving mail at a rate' 텍스트는 계정 오류가 아니라 TRANSIENT다",
+    (code) => {
+      const r = classifySmtpFailure(
+        f(
+          "RCPT",
+          code,
+          "4.2.1",
+          "The user you are trying to contact is receiving mail at a rate that prevents additional messages from being delivered.",
+        ),
+      );
+      expect(r).toMatchObject({
+        kind: "TRANSIENT",
+        rule: "RECIPIENT_THROTTLE_450_4_2_1",
+      });
+    },
+  );
+});
+
 describe("classifySmtpFailure: 한도 초과 (ADR-0007 결정 4)", () => {
   it.each(["MAIL_FROM", "RCPT", "DATA"] as const)(
     "550 5.4.5는 %s 단계에서도 일일 한도 계정 오류다 (5xx이지만 PERMANENT가 아님)",
@@ -345,6 +401,39 @@ describe("resolveRecipientOutcome: 일부 수신자 거부 (ADR-0007 결정 7)",
       },
     ]);
     expect(r).toMatchObject({ kind: "ACCOUNT", reason: "DAILY_LIMIT" });
+  });
+
+  it("전원 거부의 판정 근거 수신자(basis)는 첫 거부가 아니라 결과를 정한 수신자다", () => {
+    const first = {
+      address: "a@example.com",
+      accepted: false,
+      responseCode: 550,
+      enhancedStatus: "5.1.1",
+    };
+    const limit = {
+      address: "b@example.com",
+      accepted: false,
+      responseCode: 550,
+      enhancedStatus: "5.4.5",
+    };
+    const transient = {
+      address: "c@example.com",
+      accepted: false,
+      responseCode: 452,
+      enhancedStatus: "4.2.2",
+    };
+
+    expect(resolveRecipientOutcome([first, limit])).toMatchObject({
+      kind: "ACCOUNT",
+      basis: limit,
+    });
+    expect(resolveRecipientOutcome([first, transient])).toMatchObject({
+      kind: "TRANSIENT",
+      basis: transient,
+    });
+    expect(
+      resolveRecipientOutcome([first, { ...first, address: "z@x.io" }]),
+    ).toMatchObject({ kind: "PERMANENT", basis: first });
   });
 
   it("수신자 결과가 비어 있으면 오류다", () => {

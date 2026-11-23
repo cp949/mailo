@@ -162,6 +162,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 
 - `file-channel/poller.integration-spec.ts`(실제 PostgreSQL + 임시 디렉터리): 정상 JSON(서명 none)·JWS·JWE 수집과 삭제, 점 임시 파일·비json(`.txt`, `.json.tmp`, `.JSON`) 무시, 일부만 쓴 임시 이름 파일은 rename 전에 수집하지 않음, 등록되지 않은 폴더와 `fileChannel: false` 호출처 폴더 무시, FIFO(`mkfifo`)가 폴러를 멈추지 않음, 심볼릭 링크·하드링크는 읽지 않고 거부하며 대상 파일은 그대로, 크기 상한 정확히 일치는 수집·1바이트 초과는 `SIZE_EXCEEDED`, rename 뒤 덧쓴 파일의 크기 초과, 사유별 거부 기록과 이벤트(형식 오류·Key 누락·Key 형식·`attachments`·입력 검증·CR/LF·서명 없음·서명 불일치·`iat`), 같은 Key의 다른 내용은 `FINGERPRINT_MISMATCH`, 등록 직후 삭제 전 종료(`beforeDelete` 훅이 던짐)와 재수집의 중복 걸러내기, 거부 기록 커밋 직후 종료와 재수집의 멱등, 같은 이름·같은 내용 재투입은 기록 1건, 두 폴러 동시 수집(30건, 건마다 1건 등록), 삭제 직전 파일 교체 시 새 파일을 지우지 않음.
 - 같은 파일의 canary 테스트: 형식 오류·검증 실패·서명 불일치·크기 초과·심볼릭 링크·JWE 변조·JWE `caller` 불일치 파일의 본문 canary가 로그, 거부 기록, 이벤트, 작업 행, 이벤트 피드에 없다.
+- `file-channel/poller.integration-spec.ts`(코드 리뷰 반영, ADR-0004 구현 중 확정 29·30): 읽을 수 없는 호출처 폴더 3곳 뒤의 호출처 수집, 읽을 수 없는 파일이 배치 상한을 채워도 뒤 정상 파일 수집, 상한보다 많은 임시 점 파일 정리, `link` 게시 파일이 `unlink` 전에 폴링되면 거부됨(재현).
 - `file-channel/read-file.spec.ts`: open 플래그·`fstat` 판정·상한 + 1바이트 읽기와 sha256 정책.
 - `e2e/file-flow.integration-spec.ts`: 파일 → 폴러 → Worker → 로컬 smtp-server → `GET /jobs?idempotencyKey=`·`GET /events`(`JOB_SENT`), 거부 파일의 `INTAKE_REJECTED`와 Key 조회 404, REST와 파일의 같은 Key는 한 작업, 앱 종료 때 폴러 정지, root가 없으면 기동 실패.
 - 구현 세부와 추정과 다른 점: ADR-0004 "구현 중 확정".
@@ -588,7 +589,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 
 **판정 근거:**
 
-- `events/events.integration-spec.ts`: 미커밋 트랜잭션 때문에 커밋 순서가 뒤바뀐 이벤트를 건너뛰지 않음, 호출처 격리와 `type` 필터, 잘못된 cursor 거부, 수집 거부의 멱등 기록과 이벤트.
+- `events/events.integration-spec.ts`: 미커밋 트랜잭션 때문에 커밋 순서가 뒤바뀐 이벤트를 건너뛰지 않음, 한 트랜잭션의 `id`가 99에서 100으로 넘어가는 이벤트를 limit 2·3·5로 끝까지 읽어도 빠짐·중복이 없음(정렬이 문자열 순이면 건너뛴다), 호출처 격리와 `type` 필터, 잘못된 cursor 거부, 수집 거부의 멱등 기록과 이벤트.
 - `queue/maintenance.integration-spec.ts`: sweep의 `EXPIRED` 전이와 이벤트가 같은 트랜잭션이라 이벤트 쓰기 실패 시 전이도 롤백. `queue/claim-complete.integration-spec.ts`, `queue/circuit-breaker.integration-spec.ts`: 종결 전이와 이벤트.
 - `events/events.integration-spec.ts`: 피드 지연 계산(이벤트 없음 null, 최신 반환 이벤트 기준, 다른 호출처 제외, 피드에 보이지 않는 미커밋 이벤트 제외). `http/rest-intake.integration-spec.ts`: `/health/ready`의 `eventFeed`(호출처별, 인증 없음은 생략). cursor 페이지 이어 읽기와 `hasMore`, 호출처 격리, 이벤트 모양. `db/migrator.integration-spec.ts`: 서버 버전 13 이상. `docker-compose.yml`은 `postgres:17-alpine`이다.
 - 피드 지연 메트릭은 인증된 `/health/ready`의 `eventFeed`로 구현했다. 로그·외부 메트릭 시스템으로는 내보내지 않는다. 해석은 `docs/operations/troubleshooting.md`의 "피드 지연 해석"이다.
@@ -816,6 +817,8 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 컨테이너 SIGTERM(2026-11-23, `scripts/container/verify-sigterm-file.sh`, 파일 1000개, 폴링 500ms, lease 45초): 폴러가 처리하는 도중(남은 파일 997개일 때) `docker compose stop mailo`를 보냈다. 종료 코드 0, 소요 0.4초, OOMKilled false였다. 로그 순서는 `file_poll`(registered 19) → `file_channel_stopped` → `worker_stopping inFlight 0` → `worker_stopped drained true`였다. 종료 뒤 DB 작업 19건 = 처리한 파일 19건(1000 − 남은 981), 남은 파일 중 DB에 등록된 것 0건, `SENDING` 0건이었다. 다시 띄우자 남은 파일이 수집돼 작업 1000건 모두 `SENT`, SMTP 수신 1000통(유일 `Message-ID` 1000개)이었다. 진행 중 전송이 있는 상태의 SIGTERM(전송 응답 지연 중 종료 대기)은 이 스크립트가 만들지 않았고 `worker/worker.integration-spec.ts`만 확인한다.
 - 컨테이너 기동(2026-11-23, 같은 스크립트와 `verify-sigkill-duplicate.sh`): 저장소 `Dockerfile`로 빌드한 이미지가 compose의 `MAILO_DB_*` 분리 변수(비밀번호 `p@ss/w:rd#1%2x`)로 PostgreSQL에 접속해 마이그레이션을 적용하고 healthcheck(`/health/live`)가 `healthy`가 됐다.
 
+- 개발·운영 구분(2026-11-23 코드 리뷰 반영): `NODE_ENV=production`이면 `.env.example` 등 저장소에 공개된 DB 본문 키·지문 키 샘플과 같은 바이트(같은 바이트가 반복된 키 포함)를 거부한다. `config/load-config.spec.ts`가 base64·hex 표기, 이전 버전 변수, 오류에 키 값이 없음, development·test 허용을 확인한다. `MAILO_DB_HOST`는 호스트 이름·IPv4·대괄호 IPv6만 받고 포트·경로가 섞이면 기동을 거부하며, `..._V01`처럼 앞자리 0이 있는 키 버전 변수도 거부한다(같은 파일). compose의 HTTP 포트는 기본 `127.0.0.1`에만 연다(`MAILO_PUBLISH_HOST`). `scripts/container/`는 이 변경으로 실행마다 일회용 키를 만들도록 고쳤으나 변경 뒤 다시 실행하지 않았다.
+
 ### RQ-026 영속 보관과 자동 복구
 
 - [ ] **진행 상태:** 진행 중 (1단계)
@@ -921,7 +924,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 **판정 근거:**
 
 - `docker-compose.yml` 읽기: 서비스는 `postgres`와 `mailo` 둘이다. 자동 검증은 없고 정적 확인이다.
-- 2단계에서 npm 의존성 `jose` 6.2.14를 추가했다. JWE·JWS 암호 형식을 직접 만들지 않기 위해서다(ADR-0008 구현 중 확정 8). 운영 의존성(Mailo, PostgreSQL)은 늘지 않았다.
+- 2단계에서 npm 의존성 `jose` 6.2.18를 추가했다. JWE·JWS 암호 형식을 직접 만들지 않기 위해서다(ADR-0008 구현 중 확정 8). 운영 의존성(Mailo, PostgreSQL)은 늘지 않았다.
 
 ### RQ-030 요청 입력 검증
 

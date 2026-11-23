@@ -102,6 +102,8 @@ export function createFileHarness(
   options: {
     env?: NodeJS.ProcessEnv;
     config?: Partial<Parameters<typeof createFilePoller>[0]["config"]>;
+    /** 서명 none·폴더 사용 호출처를 레지스트리 끝에 더한다(호출처 수가 많은 시나리오용). */
+    extraFileCallers?: readonly string[];
   } = {},
 ): FileHarness {
   const root = mkdtempSync(path.join(tmpdir(), "mailo-file-"));
@@ -150,6 +152,14 @@ export function createFileHarness(
           fileChannel: false,
           signature: { mode: "none" },
         },
+        ...(options.extraFileCallers ?? []).map((id) => ({
+          id,
+          apiKeyHashes: [
+            hashApiKey(`${id}-fake-api-key-0000000000000000000001`),
+          ],
+          fileChannel: true,
+          signature: { mode: "none" },
+        })),
       ],
     },
     { env },
@@ -217,7 +227,13 @@ export function createFileHarness(
     config,
     cleanup() {
       // 권한 테스트가 남긴 읽기 전용 폴더도 지울 수 있게 되돌린다.
-      for (const id of ["alpha", "beta", "signed", "restonly"]) {
+      for (const id of [
+        "alpha",
+        "beta",
+        "signed",
+        "restonly",
+        ...(options.extraFileCallers ?? []),
+      ]) {
         try {
           chmodSync(path.join(root, "inbox", id), 0o755);
         } catch {

@@ -354,6 +354,28 @@ describe("REST 통합: 등록·조회·이벤트·헬스 (RQ-001, 011, 015, 017,
       expect(await jobCount()).toBe(0);
     });
 
+    it.each([
+      "application/json; charset=utf8",
+      "application/json; charset=UTF8",
+      'application/json; charset="UTF-8"',
+    ])("Content-Type이 %s이면 utf-8과 같게 받아들인다", async (contentType) => {
+      const res = await postJob(app, {
+        key: `ct-utf8-${contentType.length}`,
+        headers: { "Content-Type": contentType },
+        body: plainMail(),
+      });
+
+      expect(res.status).toBe(202);
+    });
+
+    it("charset이 utf-8 계열이 아니면 415다", async () => {
+      const res = await postJob(app, {
+        headers: { "Content-Type": "application/json; charset=latin1" },
+      });
+
+      expect(res.status).toBe(415);
+    });
+
     it("JSON 구문 오류는 400 malformed-request다", async () => {
       const res = await postJob(app, { body: '{"to": [' });
 
@@ -561,6 +583,39 @@ describe("REST 통합: 등록·조회·이벤트·헬스 (RQ-001, 011, 015, 017,
       });
       expect(failedBody["failedAt"]).toEqual(expect.stringMatching(/Z$/));
     });
+
+    it("경로 디코딩에 실패하는 jobId(%)는 malformed-request가 아니라 validation-failed 400이다", async () => {
+      const res = await getJson(app, "/jobs/%");
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        type: string;
+        errors?: unknown[];
+      };
+      expect(body.type).toBe("urn:mailo:problem:validation-failed");
+      expect(body.errors).toEqual([
+        { parameter: "jobId", code: "INVALID_FORMAT" },
+      ]);
+    });
+
+    it.each([
+      ["id가 bigint 범위 밖", { txid: "1", id: "9223372036854775808" }],
+      ["txid가 xid8 범위 밖", { txid: "18446744073709551616", id: "1" }],
+    ])(
+      "범위를 벗어난 cursor(%s)는 503이 아니라 400 INVALID_FORMAT이다",
+      async (_name, cursor) => {
+        const after = Buffer.from(`${cursor.txid}:${cursor.id}`).toString(
+          "base64url",
+        );
+
+        const res = await getJson(app, `/events?after=${after}`);
+
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as { errors: unknown[] }).errors).toEqual([
+          { parameter: "after", code: "INVALID_FORMAT" },
+        ]);
+      },
+    );
 
     it("jobId 형식과 Key 파라미터가 잘못되면 400이다", async () => {
       const badId = await getJson(app, "/jobs/not-a-uuid");

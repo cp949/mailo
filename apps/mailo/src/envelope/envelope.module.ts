@@ -32,6 +32,7 @@ import { ENVELOPE_DEPS } from "./tokens.js";
                 env,
                 retentionSeconds:
                   config.worker.retention.recordRetentionSeconds,
+                now: new Date(),
               });
         return {
           limits: config.limits,

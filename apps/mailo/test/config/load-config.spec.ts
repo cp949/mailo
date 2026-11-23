@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -387,6 +388,83 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
       );
     });
 
+    // .env.example·docker-compose.volume-example.yml·scripts/container/common.sh에 공개된 샘플 키(RQ-025, key-management.md)
+    const PUBLIC_DB_KEY = "ZmFrZS1kYi1rZXktZm9yLWRldi1vbmx5LTAwMDAwMDA=";
+    const PUBLIC_FINGERPRINT_KEY =
+      "ZmFrZS1maW5nZXJwcmludC1rZXktZGV2LW9ubHktMDA=";
+
+    it.each([
+      ["DB 본문 키", "MAILO_DB_ENCRYPTION_KEY_V1", PUBLIC_DB_KEY],
+      ["지문 키", "MAILO_FINGERPRINT_KEY_V1", PUBLIC_FINGERPRINT_KEY],
+      [
+        "DB 본문 키(hex 표기)",
+        "MAILO_DB_ENCRYPTION_KEY_V1",
+        Buffer.from(PUBLIC_DB_KEY, "base64").toString("hex"),
+      ],
+      [
+        "반복 바이트 테스트 키",
+        "MAILO_DB_ENCRYPTION_KEY_V1",
+        Buffer.alloc(32, 11).toString("base64"),
+      ],
+    ])(
+      "production에서는 공개된 샘플 키를 거부한다: %s. 오류에 키 값이 없다",
+      (_label, variable, value) => {
+        const message = issuesOf({ NODE_ENV: "production", [variable]: value });
+
+        expect(message).toContain(variable);
+        expect(message).toContain("production");
+        expect(message).not.toContain(value);
+      },
+    );
+
+    it("production에서도 이전 버전에 공개 샘플 키가 남아 있으면 거부한다", () => {
+      const message = issuesOf({
+        NODE_ENV: "production",
+        MAILO_DB_ENCRYPTION_KEY_VERSION: "2",
+        MAILO_DB_ENCRYPTION_KEY_V1: PUBLIC_DB_KEY,
+        MAILO_DB_ENCRYPTION_KEY_V2: randomBytes(32).toString("base64"),
+      });
+
+      expect(message).toContain("MAILO_DB_ENCRYPTION_KEY_V1");
+    });
+
+    it("production에서 임의로 만든 키는 통과하고 development·test에서는 공개 샘플 키도 받는다", () => {
+      expect(() =>
+        loadConfig(
+          env({
+            NODE_ENV: "production",
+            MAILO_DB_ENCRYPTION_KEY_V1: randomBytes(32).toString("base64"),
+            MAILO_FINGERPRINT_KEY_V1: randomBytes(32).toString("base64"),
+          }),
+        ),
+      ).not.toThrow();
+      for (const nodeEnv of ["development", "test"]) {
+        expect(() =>
+          loadConfig(
+            env({
+              NODE_ENV: nodeEnv,
+              MAILO_DB_ENCRYPTION_KEY_V1: PUBLIC_DB_KEY,
+              MAILO_FINGERPRINT_KEY_V1: PUBLIC_FINGERPRINT_KEY,
+            }),
+          ),
+        ).not.toThrow();
+      }
+    });
+
+    it.each([
+      "MAILO_DB_ENCRYPTION_KEY_V01",
+      "MAILO_DB_ENCRYPTION_KEY_V01_FILE",
+    ])(
+      "버전 번호에 앞자리 0이 있는 변수 %s는 조용히 무시하지 않고 거부한다",
+      (name) => {
+        const message = issuesOf({ [name]: KEY_B });
+
+        expect(message).toContain(name);
+        expect(message).toContain("앞자리 0");
+        expect(message).not.toContain(KEY_B);
+      },
+    );
+
     it("DB 본문 키와 지문 키가 같은 키 바이트를 쓰면 거부한다(키 분리)", () => {
       expect(
         issuesOf({
@@ -451,6 +529,51 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    "db:5433",
+    "::1",
+    "bad host",
+    "db/x",
+    "db?x",
+    "db@x",
+    "[::1",
+    "[db]",
+  ])(
+    "MAILO_DB_HOST=%j처럼 호스트가 아닌 값은 placeholder로 접속하지 않고 기동을 거부한다",
+    (host) => {
+      let message = "";
+      try {
+        loadDatabaseUrlOnly({
+          MAILO_DB_HOST: host,
+          MAILO_DB_USER: "u",
+          MAILO_DB_NAME: "n",
+        });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+
+      expect(message).toContain("MAILO_DB_HOST");
+      expect(message).not.toContain(host);
+    },
+  );
+
+  it("MAILO_DB_HOST는 호스트 이름, IPv4, 대괄호 IPv6를 받고 URL의 호스트가 입력과 같다", () => {
+    const hostOf = (host: string) =>
+      new URL(
+        loadDatabaseUrlOnly({
+          MAILO_DB_HOST: host,
+          MAILO_DB_USER: "u",
+          MAILO_DB_NAME: "n",
+        }).reveal(),
+      ).hostname;
+
+    expect(hostOf("postgres")).toBe("postgres");
+    expect(hostOf("DB.internal")).toBe("DB.internal");
+    expect(hostOf("10.0.0.5")).toBe("10.0.0.5");
+    expect(hostOf("[::1]")).toBe("[::1]");
+    expect(hostOf("[2001:db8::5]")).toBe("[2001:db8::5]");
   });
 
   it("분리 변수에서 사용자·DB 이름이 없거나 URL과 함께 주면 변수 이름으로 거부한다(값은 싣지 않는다)", () => {

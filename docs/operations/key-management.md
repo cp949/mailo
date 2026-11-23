@@ -24,6 +24,7 @@ Mailo가 쓰는 키의 발급, 교체, 이전 키 보관, 기동 시 검증 오�
 
 - DB 본문 키와 지문 키는 서로 다른 값이어야 한다. 모든 버전 쌍에서 같은 바이트가 있으면 기동하지 않는다.
 - 키 형식(DB·지문·JWS): 32바이트를 base64(표준 또는 URL-safe, 패딩 유무 무관) 또는 64자 hex로 쓴다.
+- `NODE_ENV=production`이면 저장소에 공개된 샘플 키와 같은 바이트의 DB 본문 키·지문 키를 거부한다. 거부 대상: `.env.example`·`docker-compose.volume-example.yml`의 `MAILO_DB_ENCRYPTION_KEY_V1`(`fake-db-key-for-dev-only-0000000`의 base64)과 `MAILO_FINGERPRINT_KEY_V1`(`fake-fingerprint-key-dev-only-00`의 base64), 그리고 32바이트가 모두 같은 값인 키(테스트 픽스처가 `Buffer.alloc(32, n)`으로 만드는 형태). base64·hex 어느 표기로 줘도 같은 바이트로 비교한다. 이전 버전 변수(`_V1` 등)도 검사한다. 오류에는 변수 이름과 사유만 나오고 키 값은 나오지 않는다. `development`·`test`는 허용한다.
 - 이 키들은 시크릿 파일 마운트(`<변수>_FILE`)로 주는 것을 권장한다(`deployment.md` "시크릿 주입").
 - 모든 키 값은 로그·오류·이벤트에 나오지 않는다(RQ-027). 키를 코드·이미지·`.env.example`에 넣지 않는다.
 
@@ -36,7 +37,7 @@ openssl rand -base64 32          # 출력 한 줄이 키다. 파일에 저장한
 umask 077; openssl rand -base64 32 > mailo_db_key_v2
 ```
 
-변수 이름: `MAILO_DB_ENCRYPTION_KEY_V<n>_FILE`(경로) 또는 `MAILO_DB_ENCRYPTION_KEY_V<n>`(값). 현재 버전은 `MAILO_DB_ENCRYPTION_KEY_VERSION`(기본 1)이다.
+변수 이름: `MAILO_DB_ENCRYPTION_KEY_V<n>_FILE`(경로) 또는 `MAILO_DB_ENCRYPTION_KEY_V<n>`(값). 현재 버전은 `MAILO_DB_ENCRYPTION_KEY_VERSION`(기본 1)이다. `<n>`은 앞자리 0 없는 10진수다. `_V01`처럼 쓰면 `_V1`과 다른 변수라 읽히지 않으므로 기동을 거부한다.
 
 교체(버전 1에서 2로):
 
@@ -111,7 +112,7 @@ openssl rsa -in mailo-2026-12.private.pem -pubout -out mailo-2026-12.public.pem
 ]
 ```
 
-- `removedAt - retiredAt`이 보존 기간보다 짧으면 기동하지 않는다. `removed`에 올린 `kid`가 `keys`에도 있으면 기동하지 않는다.
+- `removedAt - retiredAt`이 보존 기간보다 짧거나 `removedAt`이 기동 시각보다 미래이면 기동하지 않는다. `removed`에 올린 `kid`가 `keys`에도 있으면 기동하지 않는다.
 - `removed`를 적지 않고 항목만 지우는 실수는 감지하지 못한다. 항상 `removed`에 기록한다(ADR-0008 구현 중 확정 4).
 - 이전 키를 보관하는 이유: 이전 `kid`로 암호화한 REST 요청이 relay 재시도 기간(7일 이하) 동안 사용처 outbox에 남을 수 있고, 입력 폴더의 파일은 Mailo가 내려가 있는 동안 쌓일 수 있다. 30일은 이 기간보다 보수적인 값이다.
 - `retiredAt`이 없는 항목이 하나 이상 있어야 한다. `retiredAt`이 있어도 Mailo는 그 키로 복호화한다.
@@ -197,6 +198,8 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 | `<변수>은 32바이트 키(base64 또는 64자 hex)여야 한다` | 키 길이·형식이 틀리다 | `openssl rand -base64 32`로 다시 만든다. base64 한 줄인지 본다(앞뒤 공백과 끝 개행은 무시된다) |
 | `<변수>_FILE이 가리키는 파일을 읽지 못했다(ENOENT)` | 경로가 없거나(`ENOENT`) 권한이 없다(`EACCES`) | 마운트 경로와 UID 1000의 읽기 권한을 확인한다 |
 | `<변수>_FILE이 가리키는 파일이 비어 있다` | 빈 파일 | 키를 채운다 |
+| `<변수>은 저장소에 공개된 샘플 키이거나 같은 바이트가 반복된 키라 production에서 쓸 수 없다(...)` | `NODE_ENV=production`인데 `.env.example`의 샘플 키나 반복 바이트 키를 썼다 | `openssl rand -base64 32`로 새로 만든다. 로컬 시험이면 `NODE_ENV=development`로 둔다 |
+| `<변수>의 버전 번호에 앞자리 0을 쓸 수 없다(..._V1처럼 쓴다)` | `..._V01`처럼 앞자리 0이 있는 변수 이름이다(`_V1`과 다른 변수) | 변수 이름을 `_V1`로 고친다 |
 | `DB 본문 암호화 키링와 지문 키링가 같은 키를 쓴다. 두 키는 서로 달라야 한다` | 두 키링이 같은 바이트를 가진다 | 한쪽을 새로 발급한다 |
 | `MAILO_JWS_IAT_MAX_AGE_SECONDS는 MAILO_RECORD_RETENTION_SECONDS에서 MAILO_JWS_IAT_SKEW_SECONDS를 뺀 값 이하여야 한다` | 허용 기간 + 오차가 Key 보존 기간을 넘는다 | 허용 기간을 줄이거나 보존 기간을 늘린다 |
 | `MAILO_ENVELOPE_KEYS_FILE을 읽지 못했다(<code>)`, `...이 올바른 JSON이 아니다` | 키 목록 파일 경로·형식 오류 | 경로, JSON 구문을 확인한다 |
@@ -206,6 +209,7 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 | `<변수>은 RSA 3072비트 키여야 한다` | 다른 길이의 RSA 키 | 3072비트로 다시 발급한다 |
 | `envelope keys: retiredAt이 없는 현재 키가 하나 이상 필요하다` | 모든 항목에 `retiredAt`이 있다 | 현재 키 항목에서 `retiredAt`을 뺀다 |
 | `envelope removed[<i>]: 교체 시각부터 Key 보존 기간(MAILO_RECORD_RETENTION_SECONDS)이 지나기 전에는 이전 키를 삭제할 수 없다` | `removedAt - retiredAt`이 보존 기간 미만이다 | 보존 기간이 지난 뒤에 삭제한다. 시각을 고쳐 적는 것은 기록을 허위로 만든다 |
+| `envelope removed[<i>].removedAt이 현재 시각보다 미래다` | `removedAt`이 기동 시각보다 뒤다(시각을 잘못 적었거나 아직 삭제하지 않았다) | 실제로 삭제한 시각을 적는다 |
 | `envelope removed[<i>].kid가 keys에도 있다` | 삭제 기록과 현재 항목이 겹친다 | 둘 중 하나를 고친다 |
 | `callers[<i>].signature.mode는 required 또는 none으로 명시해야 한다` | 서명 사용 여부가 없다(기본값 없음) | `required` 또는 `none`을 적는다 |
 | `callers[<i>].signature.keys는 키 1~2개의 배열이어야 한다` | `required`인데 키가 0개이거나 3개 이상 | 1~2개로 맞춘다 |

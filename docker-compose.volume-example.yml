@@ -52,7 +52,8 @@ services:
     # group 방식에서 Mailo가 호출처 파일을 읽는 근거다. acl 방식에서는 쓰지 않지만 두어도 해롭지 않다.
     group_add: ["2000"]
     environment:
-      NODE_ENV: production
+      # 샘플 키는 저장소에 공개돼 있어 production에서 거부된다. 이 예시는 가짜 값이라 development로 둔다. 운영은 키를 새로 만들고 production으로 바꾼다.
+      NODE_ENV: development
       MAILO_PORT: "3000"
       MAILO_DATABASE_URL: postgres://mailo:fake-volume-example-password@postgres:5432/mailo
       MAILO_CALLERS_FILE: /run/mailo/callers.json

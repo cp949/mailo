@@ -18,6 +18,8 @@
  * 텍스트에 들어갈 수 있다. 마스킹 방식은 ADR-0003 미결정).
  */
 
+import { EMAIL_LIKE } from "./email-pattern.js";
+
 export type SmtpStage = "CONN" | "TLS" | "AUTH" | "MAIL_FROM" | "RCPT" | "DATA";
 
 /** 서버 응답 없이 전송 계층에서 끊긴 경우. */
@@ -164,10 +166,10 @@ export const CLASSIFICATION_RULES: readonly Rule[] = [
   {
     id: "RECIPIENT_THROTTLE_450_4_2_1",
     source: "GOOGLE_DOC",
-    note: '450 4.2.1 "The user you are trying to contact is receiving email too quickly." 수신자 쪽 제한이므로 계정 한도 규칙보다 먼저 판정한다.',
+    note: '450·421 4.2.1 "The user you are trying to contact is receiving email too quickly." / "...receiving mail at a rate that prevents additional messages from being delivered." 수신자 쪽 제한이므로 계정 한도 규칙보다 먼저 판정한다.',
     when: (f) =>
       f.message &&
-      f.code === 450 &&
+      (f.code === 450 || f.code === 421) &&
       f.enhanced === "4.2.1" &&
       RECIPIENT_THROTTLE_TEXT.test(f.text),
     outcome: { kind: "TRANSIENT" },
@@ -313,7 +315,8 @@ function normalize(f: SmtpFailure): Normalized {
     message: isMessageStage(f.stage),
     code: f.responseCode,
     enhanced: f.enhancedStatus,
-    text: (f.responseText ?? "").toLowerCase(),
+    // 서버가 되풀이한 수신자 주소(`<daily-limit@example.com>`) 안의 글자가 텍스트 규칙에 맞지 않도록 주소를 뺀다.
+    text: (f.responseText ?? "").replace(EMAIL_LIKE, " ").toLowerCase(),
     transportFault: f.transportFault,
   };
 }
@@ -353,11 +356,20 @@ export interface RejectedRecipient {
   responseText?: string;
 }
 
+/**
+ * `basis`는 결과를 정한 수신자의 거부 응답이다. 호출하는 쪽이 failure(코드·enhanced·텍스트)를 이 응답으로 만든다.
+ * 첫 거부 수신자와 다를 수 있다.
+ */
 export type RecipientOutcome =
   | { kind: "SENT"; rejectedRecipients: RejectedRecipient[] }
-  | { kind: "ACCOUNT"; reason: AccountReason; rule: string }
-  | { kind: "TRANSIENT"; rule: string }
-  | { kind: "PERMANENT"; rule: string };
+  | {
+      kind: "ACCOUNT";
+      reason: AccountReason;
+      rule: string;
+      basis: RecipientResult;
+    }
+  | { kind: "TRANSIENT"; rule: string; basis: RecipientResult }
+  | { kind: "PERMANENT"; rule: string; basis: RecipientResult };
 
 /** 같은 ACCOUNT 사유가 여럿이면 대기가 긴 쪽을 택한다. */
 const REASON_RANK: Record<AccountReason, number> = {
@@ -402,8 +414,9 @@ export function resolveRecipientOutcome(
     };
   }
 
-  const classes = rejected.map((r) =>
-    classifySmtpFailure({
+  const classes = rejected.map((r) => ({
+    basis: r,
+    c: classifySmtpFailure({
       stage: "RCPT",
       ...(r.responseCode !== undefined && { responseCode: r.responseCode }),
       ...(r.enhancedStatus !== undefined && {
@@ -414,20 +427,31 @@ export function resolveRecipientOutcome(
         transportFault: r.transportFault,
       }),
     }),
-  );
+  }));
 
-  let account: Extract<Classification, { kind: "ACCOUNT" }> | undefined;
-  for (const c of classes) {
+  let account:
+    | {
+        c: Extract<Classification, { kind: "ACCOUNT" }>;
+        basis: RecipientResult;
+      }
+    | undefined;
+  for (const { c, basis } of classes) {
     if (
       c.kind === "ACCOUNT" &&
-      (!account || REASON_RANK[c.reason] > REASON_RANK[account.reason])
+      (!account || REASON_RANK[c.reason] > REASON_RANK[account.c.reason])
     ) {
-      account = c;
+      account = { c, basis };
     }
   }
-  if (account) return account;
+  if (account) return { ...account.c, basis: account.basis };
 
-  const transient = classes.find((c) => c.kind === "TRANSIENT");
-  if (transient) return { kind: "TRANSIENT", rule: transient.rule };
-  return { kind: "PERMANENT", rule: classes[0]!.rule };
+  const transient = classes.find(({ c }) => c.kind === "TRANSIENT");
+  if (transient)
+    return {
+      kind: "TRANSIENT",
+      rule: transient.c.rule,
+      basis: transient.basis,
+    };
+  const first = classes[0]!;
+  return { kind: "PERMANENT", rule: first.c.rule, basis: first.basis };
 }

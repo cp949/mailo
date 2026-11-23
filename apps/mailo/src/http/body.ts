@@ -1,7 +1,7 @@
 import type { HttpRequest, HttpResponse } from "./types.js";
 import { problems } from "./problem.js";
 
-/** 요청 `Content-Type`이 `application/json`(charset은 utf-8만)인지 확인한다. 아니면 415. */
+/** 요청 `Content-Type`이 `application/json`(charset은 utf-8·utf8만, 대소문자 무관)인지 확인한다. 아니면 415. */
 export function assertJsonContentType(req: HttpRequest): void {
   const header = req.headers["content-type"];
   if (typeof header !== "string") throw problems.unsupportedMediaType();
@@ -12,7 +12,9 @@ export function assertJsonContentType(req: HttpRequest): void {
     const [name, value] = param.split("=");
     if (
       name?.trim().toLowerCase() === "charset" &&
-      value?.trim().replace(/"/g, "").toLowerCase() !== "utf-8"
+      !["utf-8", "utf8"].includes(
+        value?.trim().replace(/"/g, "").toLowerCase() ?? "",
+      )
     ) {
       throw problems.unsupportedMediaType();
     }

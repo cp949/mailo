@@ -94,6 +94,11 @@ export interface FilePoller {
 
 // DB 장애처럼 파일과 무관한 오류가 이어지면 폴링을 접는다. 다음 간격에 다시 시도한다.
 const MAX_CONSECUTIVE_ERRORS = 3;
+// 한 폴링이 폴더에서 모으는 이름 수는 `batchPerCaller`의 이 배수(최대 LIST_LIMIT_MAX)까지다. 처리 대상은 정리된(settled) 파일이
+// `batchPerCaller`건이 될 때까지 순회하므로, 읽을 수 없는 파일이 앞 슬롯을 채워도 뒤 정상 파일이 굶지 않는다(ADR-0004 구현 중 확정 8).
+// 이름은 메모리에 모으므로 상한을 둔다. 읽을 수 없는 파일이 이 상한을 넘는 폴더는 운영자가 정리해야 한다.
+const LIST_LIMIT_FACTOR = 100;
+const LIST_LIMIT_MAX = 100_000;
 
 function emptySummary(callerId: string): CallerPollSummary {
   return {
@@ -179,6 +184,12 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
     const dir = join(config.root, "inbox", caller.id);
     const names: string[] = [];
     const temps: string[] = [];
+    const listLimit = Math.min(
+      config.batchPerCaller * LIST_LIMIT_FACTOR,
+      LIST_LIMIT_MAX,
+    );
+    // 이름 수집이 listLimit에서 잘렸는지. 잘리면 폴더에 아직 안 본 파일이 있다.
+    let listTruncated = false;
 
     // 폴더 목록을 읽는다. 폴더가 없으면 false다.
     async function list(): Promise<boolean> {
@@ -204,7 +215,7 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
         for await (const entry of handle) {
           const name = entry.name;
           if (name.startsWith(".")) {
-            if (temps.length < config.batchPerCaller) temps.push(name);
+            if (temps.length < listLimit) temps.push(name);
             continue;
           }
           if (!name.endsWith(".json") || entry.isDirectory()) continue;
@@ -213,8 +224,8 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
             summary.badNames += 1;
             continue;
           }
-          if (names.length >= config.batchPerCaller) {
-            summary.capped = true;
+          if (names.length >= listLimit) {
+            listTruncated = true;
             break;
           }
           names.push(name);
@@ -236,7 +247,7 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
         names.length = 0;
         temps.length = 0;
         summary.badNames = 0;
-        summary.capped = false;
+        listTruncated = false;
         if (attempt >= 2) {
           log.warn("file_inbox_stale", { callerId: caller.id });
           return summary;
@@ -265,8 +276,14 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
     }
 
     let settled = 0;
+    // 정리된 파일이 batchPerCaller건이 되면 멈춘다. 남은 이름이 있으면 다음 폴링 대상이다.
+    let batchFull = false;
     for (const name of names) {
       if (stopController.signal.aborted) break;
+      if (settled >= config.batchPerCaller) {
+        batchFull = true;
+        break;
+      }
       try {
         const result = await ingestFile(
           ingestDeps,
@@ -308,7 +325,8 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
         if (errorBudget.consecutive >= MAX_CONSECUTIVE_ERRORS) break;
       }
     }
-    summary.capped = summary.capped && settled > 0;
+    // 한 건도 정리하지 못했으면 바로 다시 폴링해도 소용없으므로 capped로 보지 않는다.
+    summary.capped = (batchFull || listTruncated) && settled > 0;
     return summary;
   }
 
@@ -325,13 +343,15 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
       try {
         const summary = await pollCaller(caller, errorBudget);
         if (summary.errors > 0) failed = true;
+        // 오류 예산은 DB 장애 판정용이다. 오류 없이 끝난 호출처는 앞 호출처의 연속 오류를 끊는다.
+        else errorBudget.consecutive = 0;
         summaries.push(summary);
         if (hasActivity(summary)) {
           log.info("file_poll", { ...summary });
         }
       } catch (error) {
+        // 폴더 목록 읽기 같은 파일시스템 오류다. 호출처별 구성 문제(권한 등)이므로 오류 예산에 넣지 않는다.
         failed = true;
-        errorBudget.consecutive += 1;
         log.error("file_poll_failed", {
           callerId: caller.id,
           error: describeError(error),

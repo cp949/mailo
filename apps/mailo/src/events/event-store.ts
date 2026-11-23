@@ -128,7 +128,8 @@ export async function listEvents(
         AND (txid, id) > ($2::xid8, $3::bigint)
         AND txid < pg_snapshot_xmin(pg_current_snapshot())
         AND ($4::text[] IS NULL OR type = ANY($4::text[]))
-      ORDER BY txid, id
+      -- 별칭 txid·id는 text라 그대로 쓰면 문자열 순이 된다. 원본 컬럼으로 숫자 순을 고정한다.
+      ORDER BY mail_events.txid, mail_events.id
       LIMIT $5`,
     [options.callerId, start.txid, start.id, typeFilter, limit],
   );

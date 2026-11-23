@@ -40,6 +40,7 @@ import {
   adaptNodemailerRejectedError,
   adaptNodemailerSendInfo,
 } from "./nodemailer-adapter.js";
+import { EMAIL_LIKE } from "./email-pattern.js";
 import { buildMessageId } from "./message-id.js";
 
 export type TlsMode = "STARTTLS" | "IMPLICIT";
@@ -266,7 +267,6 @@ function stageOfClientLine(line: string): SmtpStage {
 // 응답 텍스트 정리
 
 const MAX_RESPONSE_TEXT = 500;
-const EMAIL_LIKE = /[^\s<>"',;()[\]]+@[^\s<>"',;()[\]]+/g;
 
 /** 이메일 주소 형태를 가리고 500자로 자른다. */
 export function sanitizeResponseText(
@@ -361,11 +361,9 @@ function toDetail(failure: {
 /** 수신자 결과로 정한 작업 결과를 발송 결과로 바꾼다. 수신자 단계 응답은 RCPT 단계다. */
 function fromRecipientOutcome(
   outcome: Exclude<RecipientOutcome, { kind: "SENT" }>,
-  first:
-    | { responseCode?: number; enhancedStatus?: string; responseText?: string }
-    | undefined,
 ): SmtpSendResult {
-  const failure = toDetail({ stage: "RCPT", ...first });
+  // 판정에 쓴 수신자의 응답을 failure로 남긴다. 첫 거부 수신자의 응답과 다를 수 있다.
+  const failure = toDetail({ stage: "RCPT", ...outcome.basis });
   if (outcome.kind === "ACCOUNT") {
     return {
       kind: "ACCOUNT",
@@ -488,10 +486,7 @@ function resolveFailure(error: unknown, tracker: StageTracker): SmtpSendResult {
   const recipients = adaptNodemailerRejectedError(error);
   if (recipients) {
     const outcome = resolveRecipientOutcome(recipients);
-    if (outcome.kind !== "SENT") {
-      const first = recipients.find((r) => !r.accepted);
-      return fromRecipientOutcome(outcome, first);
-    }
+    if (outcome.kind !== "SENT") return fromRecipientOutcome(outcome);
   }
 
   const failure = adaptNodemailerError(error, {

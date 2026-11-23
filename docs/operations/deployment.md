@@ -17,9 +17,11 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 | 서비스 | 이미지 | 노출 | 비고 |
 | ------ | ------ | ---- | ---- |
 | `postgres` | `postgres:17-alpine` | `127.0.0.1:${MAILO_DB_PUBLISH_PORT:-5432}` | 볼륨 `postgres-data`, `pg_isready` healthcheck, `restart: unless-stopped` |
-| `mailo` | 저장소 `Dockerfile` 빌드(`node:24.20.0-alpine`) | `${MAILO_PUBLISH_PORT:-3000}:3000` (모든 인터페이스) | non-root(`node`, UID 1000), `restart: unless-stopped`, `stop_grace_period: 150s`, healthcheck(`/health/live`) |
+| `mailo` | 저장소 `Dockerfile` 빌드(`node:24.20.0-alpine`) | `${MAILO_PUBLISH_HOST:-127.0.0.1}:${MAILO_PUBLISH_PORT:-3000}:3000` (기본 같은 호스트만) | non-root(`node`, UID 1000), `restart: unless-stopped`, `stop_grace_period: 150s`, healthcheck(`/health/live`) |
 
 - `mailo`는 `.env`를 `env_file`로 읽는다. `.env`가 없으면 compose가 실패한다. `.env.example`을 복사해 만든다.
+- `NODE_ENV`는 `.env.example`에서 주석 처리돼 있어 복사한 `.env`로는 compose 기본값 `production`이 된다. production은 `.env.example`에 공개된 샘플 키(DB 본문 키·지문 키)를 거부하므로 키를 새로 만들어 넣어야 기동한다(`key-management.md`). 공개 샘플 키로 로컬 시험만 할 때는 `.env`에 `NODE_ENV=development`를 준다.
+- HTTP 포트는 기본 `127.0.0.1`에만 연다. TLS 프록시가 다른 호스트에 있거나 같은 호스트의 다른 인터페이스로 접근해야 하면 `.env`에 `MAILO_PUBLISH_HOST`(예: `0.0.0.0`, 인터페이스 주소)를 준다. Mailo는 TLS를 종단하지 않으므로 `0.0.0.0`으로 열 때는 프록시나 방화벽으로 접근을 제한한다.
 - compose의 `environment`가 `.env`보다 우선한다. 컨테이너에서 `NODE_ENV`(기본 `production`), `MAILO_PORT=3000`, `MAILO_DB_*`(아래), `MAILO_CALLERS_FILE=/run/mailo/callers.json`은 compose 값이 쓰인다.
 - compose는 접속 URL을 이어 붙이지 않고 `MAILO_DB_HOST=postgres`, `MAILO_DB_PORT`, `MAILO_DB_USER`(`POSTGRES_USER`), `MAILO_DB_PASSWORD`(`POSTGRES_PASSWORD`), `MAILO_DB_NAME`(`POSTGRES_DB`)를 준다. 앱이 이 값으로 URL을 조립하면서 사용자·비밀번호·DB 이름을 URL 인코딩하므로 `POSTGRES_PASSWORD`에 `@`, `/`, `:`, `#`, `%`를 써도 된다. 이유: 이어 붙이는 방식은 이 문자에서 URL이 깨지고 compose는 인코딩할 수 없다. compose는 `.env`의 호스트 실행용 `MAILO_DATABASE_URL`이 컨테이너에 새지 않도록 빈 값으로 덮는다. 두 방식을 함께 주면 기동을 거부한다.
 - compose 기본값 `POSTGRES_PASSWORD=mailo-dev-password`는 개발용 가짜 값이다. 운영은 반드시 다른 값을 준다.
@@ -31,7 +33,7 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 기동:
 
 ```sh
-cp .env.example .env              # 값을 실제 값으로 바꾼다
+cp .env.example .env              # 값을 실제 값으로 바꾼다(DB 본문 키·지문 키는 새로 만든다: key-management.md)
 cp callers.example.json callers.json   # 해시를 실제 호출처 키의 SHA-256으로 바꾼다
 docker compose up -d --build
 ```
@@ -64,10 +66,10 @@ docker compose up -d --build
 
 | 변수 | 기본값 | 범위·형식 | 설명 |
 | ---- | ------ | --------- | ---- |
-| `NODE_ENV` | `development` | `development`, `test`, `production` | compose 컨테이너는 `production` |
+| `NODE_ENV` | `development` | `development`, `test`, `production` | compose 컨테이너는 `.env`·셸에 값이 없으면 `production`. `production`이면 공개 샘플 키와 같은 바이트의 DB 본문 키·지문 키, 같은 바이트가 반복된 키를 거부한다(`key-management.md`) |
 | `MAILO_PORT` | 3000 | 1~65535 | listen 포트. 컨테이너 안은 3000 고정 |
 | `MAILO_DATABASE_URL` | 없음(`MAILO_DB_HOST`가 없으면 필수) | `postgres://` 또는 `postgresql://` URL | 시크릿(`_FILE` 지원). 비밀번호는 호출자가 URL 인코딩해야 한다. compose 컨테이너는 비운다 |
-| `MAILO_DB_HOST`, `MAILO_DB_PORT`, `MAILO_DB_USER`, `MAILO_DB_PASSWORD`, `MAILO_DB_NAME` | 포트 5432, 나머지 없음 | `MAILO_DB_HOST`를 주면 사용자·DB 이름 필수, 비밀번호 선택 | `MAILO_DATABASE_URL`의 대안. 앱이 URL 인코딩해 조립한다. `MAILO_DB_PASSWORD`는 `_FILE` 지원. `MAILO_DATABASE_URL`과 함께 주면 기동 거부 |
+| `MAILO_DB_HOST`, `MAILO_DB_PORT`, `MAILO_DB_USER`, `MAILO_DB_PASSWORD`, `MAILO_DB_NAME` | 포트 5432, 나머지 없음 | `MAILO_DB_HOST`를 주면 사용자·DB 이름 필수, 비밀번호 선택 | `MAILO_DATABASE_URL`의 대안. 앱이 URL 인코딩해 조립한다. `MAILO_DB_HOST`는 호스트 이름, IPv4, 대괄호 IPv6(`[::1]`)만 받는다. 포트·경로·공백이 있으면 기동 거부(포트는 `MAILO_DB_PORT`). `MAILO_DB_PASSWORD`는 `_FILE` 지원. `MAILO_DATABASE_URL`과 함께 주면 기동 거부 |
 | `MAILO_DB_POOL_MAX` | 10 | 1~200 | 커넥션 풀 최대 수 |
 | `MAILO_DB_CONNECT_TIMEOUT_MS` | 5000 | 100~60000 | 연결 대기 |
 | `MAILO_CALLERS_FILE` | 없음(필수) | 파일 경로 | 호출처 레지스트리 JSON. 기동 때 한 번 읽는다(핫 리로드 없음) |
@@ -157,7 +159,7 @@ docker compose up -d --build
 
 ### compose 전용(Mailo 설정 아님)
 
-`POSTGRES_USER`(`mailo`), `POSTGRES_PASSWORD`(`mailo-dev-password`), `POSTGRES_DB`(`mailo`), `MAILO_PUBLISH_PORT`(3000), `MAILO_DB_PUBLISH_PORT`(5432). 컨테이너 밖 Node가 읽는 `NODE_EXTRA_CA_CERTS`는 로컬 SMTP 서버 검증용 CA에 쓴다(AGENTS.md).
+`POSTGRES_USER`(`mailo`), `POSTGRES_PASSWORD`(`mailo-dev-password`), `POSTGRES_DB`(`mailo`), `MAILO_PUBLISH_HOST`(127.0.0.1), `MAILO_PUBLISH_PORT`(3000), `MAILO_DB_PUBLISH_PORT`(5432). 컨테이너 밖 Node가 읽는 `NODE_EXTRA_CA_CERTS`는 로컬 SMTP 서버 검증용 CA에 쓴다(AGENTS.md).
 
 ### 변수 사이의 제약
 

@@ -12,6 +12,10 @@ export interface EventCursor {
   id: string;
 }
 
+// PostgreSQL 범위: id는 bigint(2^63-1), txid는 xid8(2^64-1). 넘으면 쿼리가 오류를 내 503이 되므로 미리 거부한다.
+const MAX_ID = 9223372036854775807n;
+const MAX_TXID = 18446744073709551615n;
+
 // 앞자리 0이 없는 10진수만 허용한다. 같은 위치를 다른 문자열로 표현하지 못하게 한다.
 const DIGITS = /^(0|[1-9]\d{0,19})$/;
 
@@ -35,6 +39,9 @@ export function decodeCursor(raw: string): EventCursor {
     !DIGITS.test(txid) ||
     !DIGITS.test(id)
   ) {
+    throw new InvalidCursorError();
+  }
+  if (BigInt(txid) > MAX_TXID || BigInt(id) > MAX_ID) {
     throw new InvalidCursorError();
   }
   // base64url의 비정규 표기(남는 비트 값 차이)도 거부한다.

@@ -1,11 +1,12 @@
-node_modules
+**/node_modules
 dist
 coverage
 .turbo
 .git
-.env
-.env.*
-!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+**/.dev-keys
 docs
 _tmp
 _works

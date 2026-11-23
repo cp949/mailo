@@ -111,6 +111,19 @@ const REASON_WAIT: Record<
 const HOSTNAME = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 
 /**
+ * `MAILO_DB_HOST`를 URL의 호스트 부분으로 바꾼다. 호스트 이름, IPv4, 대괄호 IPv6(`[::1]`)만 받는다.
+ * `URL.hostname` 세터는 `db:5433`·`db/x`·`bad host`처럼 잘못된 값을 오류 없이 무시하고 이전 값을 남기므로
+ * 설정한 뒤 읽은 값이 입력과 같은지 확인한다. 다르면 undefined다.
+ */
+function databaseHostPart(host: string): string | undefined {
+  const bracketedIpv6 = /^\[[0-9A-Fa-f:.]+\]$/.test(host);
+  if (!bracketedIpv6 && !HOSTNAME.test(host)) return undefined;
+  const probe = new URL("postgres://placeholder");
+  probe.hostname = host;
+  return probe.hostname === host ? host : undefined;
+}
+
+/**
  * 분리된 변수(MAILO_DB_HOST 등)로 접속 URL을 조립한다. 사용자·비밀번호·DB 이름은 URL 인코딩된다.
  * 비밀번호에 `@`, `/`, `:`, `#`, `%`가 있어도 compose가 문자열로 이어 붙일 때처럼 깨지지 않는다.
  * 호스트를 받지 못하면 undefined. 오류는 변수 이름만 적는다.
@@ -123,13 +136,11 @@ function assembleDatabaseUrl(reader: EnvReader): string | undefined {
   const name = reader.requiredString("MAILO_DB_NAME");
   const password = reader.secret("MAILO_DB_PASSWORD");
   if (user === undefined || name === undefined) return undefined;
-  let hostPart: string;
-  try {
-    const probe = new URL("postgres://placeholder");
-    probe.hostname = host;
-    hostPart = probe.hostname;
-  } catch {
-    reader.issue("MAILO_DB_HOST가 올바른 호스트가 아니다");
+  const hostPart = databaseHostPart(host);
+  if (hostPart === undefined) {
+    reader.issue(
+      "MAILO_DB_HOST가 올바른 호스트가 아니다(호스트 이름, IPv4, 대괄호 IPv6만 받고 포트·경로는 넣지 않는다)",
+    );
     return undefined;
   }
   // URL.password 세터는 `%`를 인코딩하지 않아 직접 인코딩한다(pg는 사용자·비밀번호를 decodeURIComponent로 푼다).

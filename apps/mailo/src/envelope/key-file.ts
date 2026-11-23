@@ -19,7 +19,7 @@
  * - 교체는 새 `kid` 항목을 추가하고 이전 항목에 `retiredAt`(교체 시각)을 적는 것이다. 이전 항목은 지우지 않는다.
  * - 이전 키는 `retiredAt`부터 Key 보존 기간(`MAILO_RECORD_RETENTION_SECONDS`) 이상 보관한다. 이전 `kid`로 암호화한 REST 요청이
  *   relay 재시도 기간 동안 사용처 outbox에 남을 수 있기 때문이다.
- * - 항목을 지울 때는 `removed`에 `{kid, retiredAt, removedAt}`을 남긴다. `removedAt - retiredAt`이 보존 기간보다 짧으면 기동을 거부한다.
+ * - 항목을 지울 때는 `removed`에 `{kid, retiredAt, removedAt}`을 남긴다. `removedAt - retiredAt`이 보존 기간보다 짧거나 `removedAt`이 현재 시각보다 미래이면 기동을 거부한다.
  *   `removed`를 적지 않고 항목만 지우는 것은 감지하지 못한다. 운영 절차(3단계 문서)가 막아야 한다.
  * - `retiredAt`이 없는 항목이 하나 이상 있어야 한다(호출처가 쓰는 현재 키).
  *
@@ -59,6 +59,8 @@ export interface LoadEnvelopeKeysOptions {
   env: NodeJS.ProcessEnv;
   /** Key 보존 기간(초). 이전 키의 최소 보관 기간이다. */
   retentionSeconds: number;
+  /** 현재 시각. `removedAt`이 이보다 미래이면 거부한다. 기본은 호출 시점이다(테스트가 고정해 쓴다). */
+  now?: Date;
 }
 
 /** 파싱한 JSON을 검증하고 개인키를 읽는다. 문제를 모두 모아 `ConfigError`로 던진다. */
@@ -161,7 +163,13 @@ export function parseEnvelopeKeys(
     );
   }
 
-  checkRemoved(json["removed"], kids, options.retentionSeconds, reader);
+  checkRemoved(
+    json["removed"],
+    kids,
+    options.retentionSeconds,
+    options.now ?? new Date(),
+    reader,
+  );
   reader.finish();
   return entries;
 }
@@ -171,6 +179,7 @@ function checkRemoved(
   removed: unknown,
   keptKids: ReadonlySet<string>,
   retentionSeconds: number,
+  now: Date,
   reader: EnvReader,
 ): void {
   if (removed === undefined) return;
@@ -198,6 +207,9 @@ function checkRemoved(
       reader.issue(
         `${where}.retiredAt과 removedAt은 시간대가 있는 ISO 8601 시각이어야 한다`,
       );
+    } else if (removedAt.getTime() > now.getTime()) {
+      // 미래 시각이면 아직 삭제하지 않았거나 시각을 잘못 적은 것이다. 보존 기간 검사를 통과시키면 안 된다.
+      reader.issue(`${where}.removedAt이 현재 시각보다 미래다`);
     } else if (
       removedAt.getTime() - retiredAt.getTime() <
       retentionSeconds * 1000
