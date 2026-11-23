@@ -55,6 +55,8 @@ services:
     build:
       context: .
     # MAILO_* 설정 전체를 .env에서 받는다(.env.example 참고). 아래 environment가 같은 이름을 덮어쓴다.
+    # 운영 토큰(MAILO_OPS_TOKEN, MAILO_OPS_ADMIN_NAMES, MAILO_OPS_ADMIN_TOKEN_<이름>)도 이 경로로 받으므로 이름별 설정을 더하지 않는다.
+    # _FILE로 받는 토큰은 파일 마운트를 따로 연다(docs/operations/deployment.md "시크릿 주입").
     env_file:
       - .env
     environment:

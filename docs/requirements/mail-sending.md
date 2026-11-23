@@ -36,7 +36,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0008](../adr/0008-jwe-jws-envelope-and-db-encryption.md): JWE·JWS 형식, DB 본문 암호화, 본문 삭제.
 - [ADR-0009](../adr/0009-claim-priority.md): 우선순위 등급, 점유 경로(우선순위·대기 순서), 지문의 `policy.priority`, 배포·롤백 순서. ADR-0002 구현 중 확정 2의 점유 인덱스·순서를 이어받는다.
 - [ADR-0010](../adr/0010-per-request-job-ttl.md): 요청별 만료 시간 `ttlSeconds`, 허용 범위와 상한 설정, 지문의 `policy.ttlSeconds`, 만료 의미, 보존 기간 기동 검사, 배포 순서. ADR-0002 결정 7의 요청별 지정 미결정을 정한다.
-- [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 배포·롤백 순서. 구현 묶음 A(작업 취소, RQ-040·041)만 구현했고 나머지 결정(토큰 분리, 정지, 감사, `/ops`, CLI, 수신 도메인 허용 목록, 피드 공백 감지)은 구현 전이다.
+- [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 배포·롤백 순서. 구현 묶음 A(작업 취소, RQ-040·041)와 묶음 B(토큰 분리, 발송 정지, 감사, `/ops` REST, 관리 취소, RQ-042~044)를 구현했고 나머지 결정(CLI, 수신 도메인 허용 목록, 피드 공백 감지, 일괄 취소)은 구현 전이다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 
@@ -64,6 +64,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 6단계 묶음 B 운영 토큰·발송 정지·감사·`/ops` 반영 뒤): `pnpm test` 단위 622건(33개 파일), `pnpm test:integration` 통합 502건(32개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. 호출처 키 `/health/ready`의 응답 동등 비교에 새 필드 `sendPaused`가 없었기 때문이고(ADR-0011 구현 중 확정 17) 기대값에 필드를 더한 뒤 그 파일(58건)이 통과했다. 이 뒤 전체 통합을 다시 실행해 위 수치를 얻었다. Dockerfile·종료 순서·파일 채널 I/O는 바꾸지 않았고 `docker-compose.yml`은 주석만 더했다. `scripts/container/verify-sigterm-file.sh`를 1회 실행했다(컨테이너 안에서 `0001`~`0008`을 적용하고 기동한 뒤 SIGTERM 종료 코드 0, 재기동 뒤 1000통 중복·유실 없음, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `verify-sigkill-duplicate.sh`는 실행하지 않았다. `scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-042~044 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 A 작업 취소 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 405건(27개 파일, 실제 PostgreSQL 17), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 이 묶음은 단위 테스트를 더하지 않았다(취소는 PostgreSQL 통합 테스트가 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 102·실패 0(S15·S15b 신규, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). Dockerfile·compose·파일 채널 I/O를 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(RQ-040·041 판정 근거).
 - 검증 수치(2026-11-23 5단계 요청별 만료 시간 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 363건(25개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. Dockerfile·compose·파일 채널 I/O·봉투 형식·샘플을 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e를 실행하지 않았다(RQ-039 판정 근거).
 - 검증 수치(2026-11-23 개발용 Mailpit profile 반영 뒤): `pnpm test` 단위 568건(31개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck` 통과, `pnpm lint` 경고·오류 0건. 소스 변경이 없어 통합 테스트는 다시 실행하지 않았다. compose 변경이라 `scripts/container/verify-sigterm-file.sh`(1000건, 종료 코드 0, 재기동 뒤 중복·유실 없음)·`verify-sigkill-duplicate.sh`(같은 Message-ID 2통, 기대대로)를 실행했다. `--profile mailpit`으로 띄운 별도 compose 프로젝트에서 Mailo→Mailpit 1건 발송을 수동 확인했다(RQ-029 판정 근거).
@@ -86,7 +87,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 | 3단계 | NAS/NFS 통합 테스트, 사용처 연동 문서와 운영 문서 |
 | 4단계 | 발송 우선순위(RQ-033~038, ADR-0009) |
 | 5단계 | 요청별 만료 시간(RQ-039, ADR-0010) |
-| 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041)만 구현했다 |
+| 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041)와 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044)를 구현했다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -1354,7 +1355,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 
 ## 14. 운영 제어와 호출처 보호: 작업 취소
 
-결정은 [ADR-0011](../adr/0011-operations-control-and-caller-protection.md) 결정 4·10이다. 이 절은 호출처 API 키로 하는 취소만 다룬다. 관리 토큰 경로(`POST /ops/jobs/{jobId}/cancel`), 감사 기록, 호출처 단위 일괄 취소, 발송 정지, 수신 도메인 허용 목록, 이벤트 피드 공백 신호는 구현 전이고 구현할 때 이 절 뒤에 RQ를 추가한다.
+결정은 [ADR-0011](../adr/0011-operations-control-and-caller-protection.md) 결정 4·10이다. RQ-040·041은 호출처 API 키로 하는 취소만 다룬다. RQ-042~044가 운영 토큰·`/ops`, 발송 정지, 감사와 관리 취소를 다룬다. 호출처 단위 일괄 취소, 수신 도메인 허용 목록, 이벤트 피드 공백 신호, CLI는 구현 전이고 구현할 때 이 절 뒤에 RQ를 추가한다.
 
 ### RQ-040 호출처 작업 취소
 
@@ -1383,7 +1384,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
   - `Job` 응답에 `canceledAt`, `canceledBy`(`CALLER`·`OPERATOR`·`null`)를 더한다.
 - 로그: `job_canceled`(info)에 `jobId`, `callerId`, `canceledBy`만 남긴다. `Idempotency-Key`·수신자·본문은 남기지 않는다(RQ-027).
 - 후속 처리: `CANCELED` 작업은 점유·만료 sweep·본문 정리 대상이 아니다. 보존 기간이 지나면 작업과 이벤트를 함께 지운다.
-- 범위 밖(구현 전): 관리 토큰 취소와 감사, 호출처 단위 일괄 취소.
+- 관리 토큰 취소와 감사는 RQ-044가 다룬다. 호출처 단위 일괄 취소는 구현 전이다.
 
 **수용 조건:**
 
@@ -1438,6 +1439,117 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 샘플 e2e 스크립트 `samples/spring-boot-relay/verify/run-e2e.sh`의 S15·S15b(결과는 아래 "검증 수치"의 샘플 항목). 스크립트 검증이라 자동 테스트가 아니다.
 - API 계약 예시 8건을 일회성 스크립트(ajv 8, JSON Schema 2020-12)로 스키마에 대조했다(저장소에 없다). OpenAPI 전용 린터는 실행하지 않았다.
 - 남은 미검증: 롤링 배포·롤백 실행, 대용량 테이블·쓰기 부하 중 `ACCESS EXCLUSIVE` 잠금 대기, 저장소 밖 호출처, 샘플 외 호출처의 모르는 값 처리.
+
+### RQ-042 운영 토큰(읽기·관리)과 `/ops` 인증
+
+- [x] **진행 상태:** 검증 완료 (6단계 묶음 B)
+
+**요구사항:**
+
+- 운영 토큰은 두 종류다(ADR-0011 결정 1).
+  - 읽기 토큰은 기존 `MAILO_OPS_TOKEN`이다. 읽기 endpoint(`/health/ready`의 운영자 필드, `GET /ops/*`)만 연다. RQ-031의 "운영자 토큰"은 읽기 토큰으로 해석한다.
+  - 관리 토큰은 이름마다 하나다. `MAILO_OPS_ADMIN_NAMES`(쉼표 구분, 이름 `[a-z][a-z0-9]{0,31}`, 최대 8개)에 이름을 적고 이름마다 `MAILO_OPS_ADMIN_TOKEN_<이름 대문자>`(`_FILE` 우선)로 값을 받는다. 관리 토큰은 읽기 권한을 포함한다.
+- 토큰 값은 공백 없는 32자 이상이다. 비교는 상수 시간이다(해시끼리 `timingSafeEqual`, 일치 뒤에도 끝까지 비교한다).
+- 기동을 거부하는 경우: 이름 형식 위반·중복·9개 이상, 이름의 토큰 없음·규칙 위반, 토큰 값끼리 같음(읽기 포함), 호출처 API 키와 같음(레지스트리의 `authenticate`로 비교). 사유에는 변수 이름만 담고 값은 담지 않는다(RQ-027).
+- `MAILO_OPS_ADMIN_NAMES`가 없으면 관리 기능이 꺼진다. 관리 endpoint는 읽기 토큰에 403, 그 밖에 401이다.
+- 판정: 읽기 endpoint는 읽기·관리 토큰, 변경 endpoint는 관리 토큰만 받는다. 읽기 토큰으로 변경 endpoint를 부르면 403 `forbidden`, 호출처 키와 모르는 값과 자격 없음은 401이다. 모든 `/ops/*`는 호출처 키로 401이다. 업무 endpoint(`/jobs`, `/events`)에서는 두 토큰 모두 401이다.
+- `GET /ops/jobs/{jobId}`는 모든 호출처의 작업을 `Job`에서 `idempotencyKey`를 빼고 `callerId`를 더해 준다. 수신자·본문은 없다.
+- 토큰 값은 로그·감사·오류·응답에 쓰지 않는다. `/ops` 응답은 `Cache-Control: no-store`다.
+
+**수용 조건:**
+
+- [x] 이름 목록·토큰 변수(`_FILE` 우선)를 읽고 이름 형식·중복·개수·누락·길이·공백·토큰끼리 같음을 기동 거부한다. 값은 사유에 없다.
+- [x] 호출처 API 키와 같은 운영 토큰(읽기·관리)은 기동을 거부하고 값을 오류에 쓰지 않는다.
+- [x] Bearer 판정이 읽기(`role: read`)·관리(`role: admin`, 이름)·호출처·모르는 값·없음을 구분한다. 판정기를 넘기지 않는 업무 endpoint는 운영 토큰을 `invalid`로 본다.
+- [x] 읽기·관리·변경 endpoint마다 자격 없음·호출처 키·모르는 값 401, 읽기 토큰의 변경 403(상태·감사 불변)을 확인한다. 관리 토큰이 없는 앱과 운영 토큰이 없는 앱의 동작이 맞다.
+- [x] 두 토큰은 업무 endpoint에서 401이다.
+- [x] 응답·로그·감사 행·이벤트에 토큰 값이 없다(canary).
+
+**판정 근거:**
+
+- `config/ops-tokens.spec.ts`(단위): 이름·토큰 읽기, `_FILE` 우선, 이름 형식 위반 5종, 중복·9개, 8개 허용, 토큰 누락·짧음·공백, 토큰끼리·읽기와 같음, 이름 목록에 없는 변수 무시, 설정 객체 직렬화 비노출.
+- `callers/ops-bearer.spec.ts`(단위): 읽기·관리·호출처·invalid·absent 판정, 판정기 없음, 토큰 없는 설정.
+- `http/ops.integration-spec.ts`(PostgreSQL, 실제 앱) "권한" 절: 읽기·변경 endpoint 매트릭스, 관리 토큰 없는 앱·운영 토큰 없는 앱, 업무 endpoint 401, 호출처 키와 같은 토큰의 기동 거부. "로그와 시크릿 비노출" 절: 토큰·본문·제목·수신자·Key canary.
+- RED 확인(2026-11-24): `OpsModule`을 빼고 실행하면 `ops.integration-spec.ts` 58건 중 53건이 실패한다(`/ops` 404). 단위 두 파일은 구현 뒤에 작성해 실행했다(RED를 따로 확인하지 않았다).
+- 구현: `config/load-config.ts`의 `loadOps`, `callers/bearer-auth.ts`(`createOpsTokenMatcher`, `OpsReadGuard`, `OpsAdminGuard`), `callers/callers.module.ts`(호출처 키 비교), `http/problem.ts`(`forbidden`).
+- 남은 미검증: 실제 운영 시크릿 마운트(`_FILE`)를 쓰는 컨테이너 기동, 다중 인스턴스에서 토큰 교체 순서.
+
+### RQ-043 발송 정지(전체·호출처)
+
+- [ ] **진행 상태:** 진행 중 (6단계 묶음 B)
+
+**요구사항:**
+
+- 정지는 DB 테이블 `mail_send_controls`에 저장한다. 행이 있으면 정지다. 키는 `(scope_type, scope_id)`이고 컬럼은 `paused_at`(DB `now()`), `paused_by`(관리 토큰 이름)뿐이다. 자유 텍스트 컬럼은 없다. `account` 범위는 스키마에만 있고 이 버전은 쓰지 않는다(ADR-0011 결정 2).
+- `claim`은 차단기 행을 읽은 뒤 정지를 읽는다. 행을 잠그지 않는다. 잠금 순서(작업 행 → 차단기 행)를 바꾸지 않는다.
+  - 전체 정지면 일반 점유와 대표 작업(`half_open`·`open` 만료) 점유를 모두 하지 않고 차단기도 바꾸지 않는다.
+  - 호출처 정지는 `planQuotas` 전에 할당 맵에서 빼고 `caller_id <> ALL` 목록(`blocked`)에 합친다. 정지한 호출처에는 advisory lock과 사용량 쿼리를 쓰지 않는다. 할당이 없거나 할당 맵이 비어 있어도 정지는 적용된다.
+  - 다른 호출처는 영향이 없다. 정지는 차단기와 독립이다. 정지를 풀어도 차단기 상태는 바뀌지 않는다.
+- 정지 중에도 lease 복구, 결과 기록, 만료 sweep, 본문·기록 삭제, 등록(REST·파일)은 계속한다. 이미 `SENDING`인 작업의 전송은 끝까지 가고 결과를 기록한다. 정지 명령이 커밋되기 전에 정지를 읽은 `claim`이 있을 수 있어 정지 직후에도 최대 인스턴스 수 × `MAILO_WORKER_CONCURRENCY`건이 점유를 마친 채 남을 수 있다(코드 읽기에 따른 상한 추정, 측정하지 않았다).
+- 정지 중에도 `expiresAt`은 흐른다. 긴 정지는 `EXPIRED`를 만든다.
+- `/health/ready`의 200/503에는 반영하지 않는다(RQ-031). 호출처 키 응답에만 `sendPaused: { paused, scope: "all" | "caller" | null }`(자기 범위, `all` 우선, 호출처 ID·이름·시각 없음)을, 운영자 응답에만 `sendControls: { allPaused, pausedCallerCount }`(호출처 ID 없음)를 더한다. 인증 없는 응답은 바뀌지 않는다. 정지를 이벤트 피드로 알리지 않는다.
+- REST: `PUT`·`DELETE /ops/pauses/all`, `PUT`·`DELETE /ops/pauses/callers/{callerId}`(관리), `GET /ops/pauses`(읽기). 멱등이다. 이미 그 상태면 `changed: false`다. `callerId`는 레지스트리 ID 형식이어야 하고(틀리면 400) 레지스트리에 있는지는 확인하지 않는다(`inRegistry`로 알린다). 호출처 정지는 레지스트리 `enabled`가 아니라 DB `caller` 범위다.
+- Worker는 정지 상태가 바뀐 것을 관찰할 때 한 번 `send_paused`(warn)·`send_resumed`(info)를 남긴다(필드 `scope`, `callerId`). 폴링마다 반복하지 않는다.
+- 롤링 중(구·신 혼용)에는 정지 명령을 쓰지 않는다. 구버전은 정지를 읽지 않는다.
+
+**수용 조건:**
+
+- [x] 전체 정지 중 일반 점유가 0건이고 작업·시도 횟수·재시도 시각이 변하지 않는다. 해제하면 다음 점유에서 발송 대상이 된다.
+- [x] 차단기가 `open`(만료)·`half_open`(`probe_until` 경과)이어도 전체 정지 중에는 대표 작업을 점유하지 않고 차단기를 바꾸지 않는다. 호출처 정지는 대표 작업 후보에서도 그 호출처를 고르지 않는다.
+- [x] 호출처 정지는 다른 호출처에 영향이 없고 해제하면 점유된다. `all`과 `caller`는 따로 해제된다.
+- [x] 정지한 호출처는 할당 계산에서 빠진다(advisory lock·사용량 쿼리 없음, 할당 초과 알림 없음). 정지하지 않은 호출처는 같은 조건에서 계산한다.
+- [x] 정지 조회는 행을 잠그지 않고 차단기 조회 뒤, 작업 행 잠금 앞에서 읽는다. 시각은 DB `now()`다.
+- [x] 이미 `SENDING`인 작업은 정지 뒤에도 결과를 기록한다. 정지 중 실패한 작업은 `RETRY_WAIT`이고 해제 전에는 점유되지 않는다. lease 복구는 정지 중에도 돈다.
+- [x] 정지 중에도 등록은 202다. 실제 Worker는 정지 중 발송하지 않고 재개하면 발송한다. 호출처 정지는 다른 호출처의 발송을 막지 않는다.
+- [x] 호출처 키 `/health/ready`가 자기 범위의 `sendPaused`만 낸다. 운영자 응답은 `sendControls`만 내고 호출처 ID가 없다. 정지 중에도 200이고 `status`는 `UP`이다.
+- [x] `PUT`·`DELETE`는 멱등이고 `changed`·`pausedAt`·`pausedBy`·`inRegistry`가 맞다. 형식이 틀린 `callerId`는 400이다.
+- [x] `send_paused`·`send_resumed`가 상태가 바뀔 때만 한 번 남고 폴링마다 반복되지 않는다.
+- [x] 마이그레이션 `0008`이 `0001`~`0007` 위에서 적용되고 재실행해도 다시 적용되지 않는다. 기존 작업 행을 바꾸지 않는다.
+- [ ] 롤링 배포(구·신 혼용)와 롤백을 실행해 구버전이 정지를 무시하는 동작과 문서 절차를 확인한다.
+- [ ] 다중 인스턴스에서 정지 명령 직후 점유를 마친 작업 수가 추정 상한(인스턴스 수 × 동시 전송 수) 이내인지 확인한다.
+
+**판정 근거:**
+
+- `queue/send-controls.integration-spec.ts`(PostgreSQL 25건): 전체 정지(일반·probe 둘 다, `open`·`half_open`), 호출처 정지(격리, 해제, probe 후보), 쿼터 계산 제외(풀 래퍼가 보낸 SQL 대조), 잠금 순서와 `now()`, 진행 중 영향, 알림·조회.
+- `worker/worker-send-controls.integration-spec.ts`: Worker의 로그 한 번과 재개 발송, 호출처 정지의 격리.
+- `e2e/ops-pause.integration-spec.ts`: `/ops` 정지 → 실제 Worker → 로컬 SMTP. 정지 중 SMTP 0통과 재개 뒤 발송.
+- `http/ops.integration-spec.ts`: 정지·재개 REST, 호출처 정지, 목록, 헬스 요약, 정지 중 등록, 원자성.
+- `db/ops-controls.integration-spec.ts`: `0008` 적용·재실행, `CHECK` 제약.
+- RED 확인(2026-11-24): `claim.ts`를 정지 구현 전으로 되돌리면 `send-controls.integration-spec.ts` 25건 중 15건이 실패한다.
+- 점유 쿼리 비용(로컬 PostgreSQL 17, 임시 schema, 10만 건 대기, `EXPLAIN (ANALYZE)`, 단일 측정): 정지 조회는 `Seq Scan on mail_send_controls` 1행, 실행 0.009ms다. 정지가 없으면 점유 쿼리 계획은 바뀌지 않는다(`mail_jobs_priority_claim_idx` 인덱스 스캔). 정지한 호출처를 `caller_id <> ALL`로 빼도 같은 계획이다. 정지한 호출처가 대기 작업 전부를 가지면 순서 인덱스를 쓰지 못하고 `mail_jobs`를 전체 읽는다(실행 7.4~13.8ms, ADR-0007 구현 중 확정 10의 할당 초과와 같은 동작). 다중 인스턴스·운영 크기는 측정하지 않았다.
+- 구현: `queue/send-controls.ts`, `queue/claim.ts`, `worker/worker.ts`, `health/health.service.ts`, `ops/`, 마이그레이션 `0008`.
+- 남은 미검증: 롤링 배포·롤백 실행, 다중 인스턴스에서 정지 직후 점유 수, 정지 해제 직후의 SMTP 계정 한도 반응, 정지가 길 때의 점유 쿼리 비용(운영 크기).
+
+### RQ-044 관리 감사와 관리 취소
+
+- [x] **진행 상태:** 검증 완료 (6단계 묶음 B)
+
+**요구사항:**
+
+- 관리 작업은 DB 테이블 `mail_ops_audit`에 감사를 남긴다(ADR-0011 결정 6). 컬럼은 `id`(identity), `at`(DB `now()`), `actor`(관리 토큰 이름, 1~32자), `action`(`PAUSE`·`RESUME`·`CANCEL_JOB`), `scope_type`·`scope_id`(정지·재개), `job_id`(취소, 외래 키 없음)다. `CHECK`가 동작별 필드 조합을 강제한다. 자유 텍스트 컬럼은 없다.
+- 감사는 상태 변경과 같은 트랜잭션에 쓴다. 한쪽이 실패하면 둘 다 롤백한다. 상태를 바꾼 요청만 기록한다. `changed: false`인 멱등 재요청과 이미 `CANCELED`인 취소는 기록하지 않는다. 401·403은 감사하지 않는다. 호출처가 키로 직접 취소한 것은 감사 대상이 아니다.
+- `GET /ops/audit?limit=<1~200, 기본 50>&before=<id>`(읽기)는 최근 순서로 `{ entries, nextBefore }`를 준다. `id`는 문자열이다. 더 오래된 항목이 없으면 `nextBefore`는 `null`이다.
+- `POST /ops/jobs/{jobId}/cancel`(관리)은 호출처 범위 없이 `PENDING`·`RETRY_WAIT`을 `CANCELED`(`canceledBy: OPERATOR`)로 바꾸고 `JOB_CANCELED`를 쓴다. 응답은 `GET /ops/jobs/{jobId}`와 같은 모양이다. 이미 `CANCELED`면 200이고 이벤트·감사를 새로 쓰지 않는다. `SENDING`·종결이면 409 `job-not-cancelable`(`jobStatus`), 없으면 404, 형식이 틀리면 400이다.
+- 로그: `ops_pause_set`, `ops_pause_cleared`, `ops_job_canceled`(info)를 `actor`와 범위(`scope`, 호출처 정지면 `callerId`) 또는 `jobId`만 담아 남긴다. 멱등 재요청에는 남기지 않는다(ADR-0011 구현 중 확정 9).
+- 감사 보존은 자동 삭제 없이 DB 테이블이다. 삭제 정책은 새 결정으로 정한다.
+
+**수용 조건:**
+
+- [x] 정지·재개는 변경됐을 때만 감사 한 건을 쓴다(`PAUSE`·`RESUME`, 토큰 이름, 범위). 멱등 재요청은 쓰지 않는다.
+- [x] 감사 기록이 실패하면 정지·재개·취소가 롤백되고 503이다. 정지 변경이 실패하면 감사도 남지 않는다. 취소 이벤트 쓰기가 실패하면 감사도 남지 않는다.
+- [x] 관리 취소는 어느 호출처의 작업이든 취소하고 `OPERATOR`로 기록하며 본문을 지우고 피드에 `JOB_CANCELED`(운영자 이름 없음)를 한 건 쓰고 감사에 `CANCEL_JOB`과 작업 ID를 쓴다.
+- [x] 이미 `CANCELED`인 취소는 200이고 이벤트·감사가 늘지 않는다. `SENDING`·`SENT` 취소는 409이고 감사가 없다. 없는 작업은 404, 형식 오류는 400이다.
+- [x] 감사 목록이 최근 순서, `limit`·`before` 쪽 나눔, 마지막 쪽 `nextBefore` null, 입력 검증(400)을 지킨다.
+- [x] 로그가 `actor`와 범위·작업 ID 필드만 담고 멱등 재요청에는 남지 않는다.
+- [x] 감사 행·로그·응답에 토큰 값·본문·제목·수신자·Key가 없다(canary).
+- [x] 감사 테이블에 자유 텍스트 컬럼이 없고 `CHECK`가 동작별 필드 조합을 강제한다. 작업 행이 지워져도 감사가 남는다.
+
+**판정 근거:**
+
+- `http/ops.integration-spec.ts`(PostgreSQL, 실제 앱): 관리 취소(다른 호출처, `OPERATOR`, 피드, 멱등, 409·404·400), 작업 조회, 감사 목록(최근 순서, 쪽 나눔, 경계, 입력 검증 11종), 원자성 5종(`mail_ops_audit`·`mail_send_controls`·`mail_events`에 실패 트리거를 걸어 주입), 로그 필드 집합, canary.
+- `db/ops-controls.integration-spec.ts`: 감사 `CHECK` 조합 허용 3종·위반 9종, 외래 키 없음, 컬럼 목록.
+- 구현: `queue/cancel.ts`의 `cancelJobAsOperator`, `ops/`(`audit.ts`, `ops.service.ts`, `ops.controller.ts`), `intake/presenters.ts`의 `presentOperatorJob`, 마이그레이션 `0008`.
+- 남은 미검증: 감사 행 수 증가(운영 기간), 동시 정지·재개의 경합(`INSERT ... ON CONFLICT`의 동작은 한 연결에서만 확인했다).
 
 ## 확정한 항목
 

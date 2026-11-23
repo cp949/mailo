@@ -31,6 +31,8 @@ tags:
     description: 종결 이벤트 피드 (pull)
   - name: Health
     description: 생존·준비 상태. 인증 없이 호출할 수 있다.
+  - name: Ops
+    description: 운영 REST. 발송 정지·재개, 관리 취소, 정지·감사 조회. 호출처 API 키로는 호출할 수 없고 운영 토큰(읽기·관리)을 쓴다.
 security:
   - bearerAuth: []
 paths:
@@ -279,6 +281,260 @@ paths:
           $ref: '#/components/responses/JobNotCancelable'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /ops/pauses:
+    get:
+      tags: [Ops]
+      operationId: listPauses
+      summary: 발송 정지 목록
+      description: |
+        현재 걸려 있는 발송 정지를 정지 시각 순서로 반환한다(RQ-043, ADR-0011 결정 7). 읽기 토큰과 관리 토큰을 받는다.
+        정지가 없으면 빈 배열이다. 호출처 API 키는 401이다.
+      security:
+        - opsReadAuth: []
+      responses:
+        '200':
+          description: 정지 목록.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PauseList'
+              examples:
+                paused:
+                  value:
+                    pauses:
+                      - scope: { type: caller, id: billing }
+                        pausedAt: '2026-11-24T09:12:00Z'
+                        pausedBy: oncall
+                      - scope: { type: all }
+                        pausedAt: '2026-11-24T09:30:00Z'
+                        pausedBy: oncall
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /ops/pauses/all:
+    put:
+      tags: [Ops]
+      operationId: pauseAll
+      summary: 전체 발송 정지
+      description: |
+        모든 호출처의 점유를 멈춘다(RQ-043, ADR-0011 결정 2). 관리 토큰만 받는다. 요청 본문은 없다.
+
+        - 점유 경로 두 개(일반 점유와 차단기 대표 작업 점유)가 모두 멈춘다.
+        - 이미 `SENDING`인 작업의 전송은 끝까지 가고 결과도 기록한다. 정지 응답 직후에도 인스턴스 수 × 동시 전송 수(`MAILO_WORKER_CONCURRENCY`) 이하의 작업이 점유를 마친 상태로 남을 수 있다(정지 명령이 커밋되기 전에 정지를 읽은 점유).
+        - lease 복구, 결과 기록, 만료 sweep, 본문·기록 삭제와 등록(REST·파일)은 계속한다. 정지 중에도 `expiresAt`은 흐르므로 긴 정지는 `EXPIRED`를 만든다.
+        - 이미 정지 상태면 아무것도 바꾸지 않고 `changed: false`와 처음 정지의 시각·이름을 반환한다(멱등). 감사 기록은 상태를 바꾼 요청만 쓴다.
+        - 정지는 차단기와 독립이다. 정지를 풀어도 차단기 상태는 바뀌지 않는다.
+        - 롤링 배포 중(구·신 인스턴스 혼용)에는 쓰지 않는다. 구버전 인스턴스는 정지를 읽지 않는다.
+      security:
+        - opsAdminAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/PauseChanged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [Ops]
+      operationId: resumeAll
+      summary: 전체 발송 재개
+      description: |
+        전체 정지를 푼다. 관리 토큰만 받는다. 정지가 없으면 `changed: false`다(멱등, 감사 기록 없음).
+        호출처 정지(`/ops/pauses/callers/{callerId}`)는 이 요청이 풀지 않는다.
+      security:
+        - opsAdminAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/PauseChanged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /ops/pauses/callers/{callerId}:
+    put:
+      tags: [Ops]
+      operationId: pauseCaller
+      summary: 호출처 발송 정지
+      description: |
+        한 호출처의 작업만 점유에서 뺀다(RQ-043, ADR-0011 결정 3). 관리 토큰만 받는다. 다른 호출처는 영향이 없다.
+
+        - `callerId`는 호출처 ID 형식(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)이어야 한다. 틀리면 400이다.
+        - 레지스트리에 있는지 확인하지 않는다. 레지스트리에서 뺀 호출처의 남은 작업도 멈추기 위해서다. 응답의 `inRegistry`로 오타를 알아본다.
+        - 정지한 호출처의 등록은 계속 받는다. 작업은 `PENDING`에 쌓이고 `expiresAt`에 `EXPIRED`가 된다. 새 요청 자체를 막으려면 API 키를 폐기한다.
+        - 정지한 호출처는 호출처별 24시간 할당 계산에서도 빠진다.
+        - 멱등이다. 이미 정지면 `changed: false`다.
+      security:
+        - opsAdminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CallerIdPath'
+      responses:
+        '200':
+          $ref: '#/components/responses/PauseChanged'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [Ops]
+      operationId: resumeCaller
+      summary: 호출처 발송 재개
+      description: |
+        호출처 정지를 푼다. 관리 토큰만 받는다. 정지가 없으면 `changed: false`다(멱등, 감사 기록 없음).
+      security:
+        - opsAdminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CallerIdPath'
+      responses:
+        '200':
+          $ref: '#/components/responses/PauseChanged'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /ops/jobs/{jobId}:
+    get:
+      tags: [Ops]
+      operationId: getJobAsOperator
+      summary: 작업 조회(모든 호출처)
+      description: |
+        호출처 범위 없이 작업 ID로 조회한다(ADR-0011 결정 7). 읽기 토큰과 관리 토큰을 받는다.
+        `GET /jobs/{jobId}`의 `Job`에서 `idempotencyKey`를 빼고 `callerId`를 더했다. 호출처가 정한 Key는 운영자 읽기에도 주지 않는다. 수신자와 본문은 없다.
+        없거나 보존 기간이 지나 삭제된 작업은 404다.
+      security:
+        - opsReadAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: 작업.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /ops/jobs/{jobId}/cancel:
+    post:
+      tags: [Ops]
+      operationId: cancelJobAsOperator
+      summary: 작업 취소(모든 호출처)
+      description: |
+        호출처 범위 없이 대기 작업을 취소한다(RQ-044, ADR-0011 결정 4). 관리 토큰만 받는다. 요청 본문은 없다.
+        동작은 `POST /jobs/{jobId}/cancel`과 같고 `canceledBy`가 `OPERATOR`다. 호출처 피드에 `JOB_CANCELED`가 한 건 생긴다(운영자 이름은 없다).
+
+        - 새로 취소한 요청만 같은 트랜잭션에 감사 기록(`CANCEL_JOB`, 토큰 이름, 작업 ID)을 쓴다. 이미 `CANCELED`이면 200이고 이벤트·감사를 새로 쓰지 않는다(멱등).
+        - `SENDING`, `SENT`, `FAILED`, `EXPIRED`이면 409(`job-not-cancelable`)이고 `jobStatus`가 현재 상태다. 감사 기록은 없다.
+        - 호출처가 바라지 않은 `CANCELED`를 만들 수 있다. 호출처가 모르는 값 규칙을 지키는지 확인한 뒤 관리 토큰을 설정한다(`docs/operations/deployment.md`).
+      security:
+        - opsAdminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: 취소했거나 이미 `CANCELED`였다. 현재 작업을 반환한다.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/JobNotCancelable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /ops/audit:
+    get:
+      tags: [Ops]
+      operationId: listAudit
+      summary: 관리 작업 감사 목록
+      description: |
+        관리 토큰으로 상태를 바꾼 작업(`PAUSE`, `RESUME`, `CANCEL_JOB`)의 기록을 최근 순서로 반환한다(RQ-044, ADR-0011 결정 6·7). 읽기 토큰과 관리 토큰을 받는다.
+        항목은 토큰 이름, 동작, 범위, 작업 ID, 시각뿐이다. 사유·메모 같은 자유 텍스트는 없다. 수신자와 본문도 없다.
+        다음 쪽은 응답의 `nextBefore`를 `before`로 보낸다. 마지막 쪽은 `nextBefore`가 `null`이다.
+      security:
+        - opsReadAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: 한 번에 반환하는 최대 항목 수. 기본 50, 최대 200.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: before
+          in: query
+          required: false
+          description: 이전 응답의 `nextBefore`. 이 id보다 작은 항목을 반환한다. 양의 64비트 정수의 십진 문자열이다.
+          schema:
+            type: string
+            pattern: '^[1-9][0-9]{0,18}$'
+      responses:
+        '200':
+          description: 감사 항목.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditPage'
+              examples:
+                page:
+                  value:
+                    entries:
+                      - id: '12'
+                        at: '2026-11-24T09:35:00Z'
+                        actor: deploy
+                        action: CANCEL_JOB
+                        jobId: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e90
+                      - id: '11'
+                        at: '2026-11-24T09:30:00Z'
+                        actor: oncall
+                        action: PAUSE
+                        scope: { type: all }
+                    nextBefore: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /events:
     get:
       tags: [Events]
@@ -435,6 +691,7 @@ paths:
         | `circuitBreaker.state` | 반환 | 반환 |
         | `circuitBreaker.openUntil`, `circuitBreaker.lastReason` | 생략 | 반환 |
         | `eventFeed.latestEventAt`, `eventFeed.lagSeconds` | 생략 | 반환 |
+        | `sendPaused.paused`, `sendPaused.scope` | 생략 | 호출처 API 키일 때 반환 |
 
         `openUntil`과 `lastReason`은 계정 인증 실패나 일일 한도 소진 같은 SMTP 계정 상태를 드러낸다.
         외부 탐색에 쓰일 수 있어 인증을 요구한다. SMTP 응답 텍스트와 계정 정보는 어느 경우에도 반환하지 않는다.
@@ -445,8 +702,11 @@ paths:
         새 이벤트가 없는 동안에도 값이 커지므로 단독 장애 신호로 쓰지 않는다. DB의 긴 트랜잭션으로 피드가 멈춘 경우에도 커진다(ADR-0006 결정 7).
         다른 호출처의 이벤트는 반영하지 않는다.
 
-        운영자 토큰(서버가 `MAILO_OPS_TOKEN`을 설정했을 때)을 Bearer로 보내면 호출처 API 키로 받는 필드에 더해 `queue`, `worker`, `filePoller`를 반환한다(`eventFeed`는 호출처 전용이라 없다).
-        호출처 전체의 적체와 발송 루프 상태라서 호출처 API 키로는 반환하지 않는다. 발송 정지(Worker 정지, 적체)는 이 응답의 200/503에 반영하지 않는다.
+        `sendPaused`는 호출처 자신에게 해당하는 발송 정지 요약이다(RQ-043). 정지는 `/ops`의 관리 endpoint로 걸고 이 응답의 200/503에는 반영하지 않는다.
+        정지된 호출처의 작업은 `PENDING`에 쌓이고 `expiresAt`에 `EXPIRED`가 된다. 호출처는 이 값으로 정지를 알아본다. 이벤트 피드로는 알리지 않는다.
+
+        운영자 토큰(서버가 `MAILO_OPS_TOKEN` 또는 `MAILO_OPS_ADMIN_TOKEN_<이름>`을 설정했을 때)을 Bearer로 보내면 호출처 API 키로 받는 필드에 더해 `sendControls`, `queue`, `worker`, `filePoller`를 반환한다(`eventFeed`·`sendPaused`는 호출처 전용이라 없다).
+        읽기 토큰과 관리 토큰의 응답은 같다. 호출처 전체의 적체와 발송 루프 상태라서 호출처 API 키로는 반환하지 않는다. 발송 정지(Worker 정지, 적체)는 이 응답의 200/503에 반영하지 않는다.
         메일 본문, 수신자, 작업 ID, `caller_id`는 어느 필드에도 없다.
 
         `Authorization` 헤더를 보냈는데 자격이 틀리면 401이다. 공개 응답으로 낮춰 반환하지 않는다.
@@ -490,6 +750,25 @@ paths:
                     eventFeed:
                       latestEventAt: '2026-11-23T09:58:20Z'
                       lagSeconds: 100
+                    sendPaused:
+                      paused: false
+                      scope: null
+                callerPaused:
+                  summary: 유효한 Bearer(호출처 API 키), 이 호출처가 정지됨. 200이고 status는 UP이다.
+                  value:
+                    status: UP
+                    checks:
+                      database: UP
+                    circuitBreaker:
+                      state: closed
+                      openUntil: null
+                      lastReason: null
+                    eventFeed:
+                      latestEventAt: '2026-11-24T09:58:20Z'
+                      lagSeconds: 100
+                    sendPaused:
+                      paused: true
+                      scope: caller
                 operatorStalled:
                   summary: 운영자 토큰, 적체가 쌓이고 점유 루프가 멈춘 것으로 보이는 상태
                   value:
@@ -500,6 +779,9 @@ paths:
                       state: closed
                       openUntil: null
                       lastReason: null
+                    sendControls:
+                      allPaused: false
+                      pausedCallerCount: 0
                     queue:
                       dueCount: 412
                       dueCountTruncated: false
@@ -542,6 +824,20 @@ components:
         호출처별 API 키를 `Authorization: Bearer <키>`로 보낸다(RQ-028).
         호출처당 키 2개가 동시에 유효하다. `caller_id`는 키에서 얻으며 요청 본문에 쓰지 않는다.
         파일 채널만 쓰는 호출처도 조회와 이벤트 피드를 쓰려면 이 키가 필요하다.
+    opsReadAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: 운영 읽기 토큰 또는 관리 토큰 (공백 없는 32자 이상)
+      description: |
+        `/ops`의 읽기 endpoint용(ADR-0011 결정 1). 읽기 토큰(`MAILO_OPS_TOKEN`)과 관리 토큰(`MAILO_OPS_ADMIN_TOKEN_<이름>`)을 모두 받는다.
+        호출처 API 키와 모르는 값은 401이다. 업무 endpoint(`/jobs`, `/events`)에서는 어느 운영 토큰도 401이다.
+    opsAdminAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: 운영 관리 토큰 (공백 없는 32자 이상)
+      description: |
+        `/ops`의 변경 endpoint용. 관리 토큰만 받는다. 관리 토큰은 이름마다 하나이고 감사 기록의 `actor`가 된다.
+        읽기 토큰은 403(`forbidden`), 호출처 API 키와 모르는 값은 401이다. 서버에 관리 토큰이 하나도 설정되지 않았으면 이 endpoint는 읽기 토큰에 403, 그 밖에 401이다.
   headers:
     JobLocation:
       description: 작업 조회 경로. `/jobs/{jobId}` 형식이다.
@@ -549,6 +845,11 @@ components:
         type: string
         examples:
           - /jobs/3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e90
+    NoStore:
+      description: 운영 응답은 캐시하지 않는다. 항상 `no-store`다.
+      schema:
+        type: string
+        const: no-store
     WwwAuthenticate:
       description: 항상 `Bearer`다. 자격 없음, 형식 오류, 틀린 키를 구분해 알리지 않는다.
       schema:
@@ -581,6 +882,15 @@ components:
         type: string
         format: uuid
       example: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e90
+    CallerIdPath:
+      name: callerId
+      in: path
+      required: true
+      description: 호출처 ID. 레지스트리의 `id` 형식이다. 레지스트리에 있는지는 확인하지 않는다.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
+      example: billing
     EventsAfter:
       name: after
       in: query
@@ -1131,6 +1441,33 @@ components:
               type: [integer, 'null']
               minimum: 0
               description: 서버 현재 시각 − `latestEventAt`(초). 이벤트가 없으면 `null`이다.
+        sendPaused:
+          type: object
+          description: |
+            호출처 API 키가 있을 때만 반환한다(`eventFeed`와 같다). 그 호출처에 해당하는 발송 정지만 요약한다(RQ-043, ADR-0011 결정 2).
+            `all`과 `caller`가 함께 걸려 있으면 `scope`는 `all`이다. 정지가 없으면 `{ paused: false, scope: null }`이다.
+            호출처 ID, 운영자 이름, 시각은 담지 않는다. 운영자 토큰 응답에는 없다. 이 응답의 200/503에는 반영하지 않는다.
+          required: [paused, scope]
+          additionalProperties: false
+          properties:
+            paused:
+              type: boolean
+            scope:
+              type: [string, 'null']
+              enum: [all, caller, null]
+        sendControls:
+          type: object
+          description: |
+            운영자 토큰(읽기·관리)이 있을 때만 반환한다. 발송 정지 요약이다. 호출처 ID는 담지 않는다(`caller_id`는 어느 필드에도 없다).
+            정지한 호출처 목록은 `GET /ops/pauses`로 읽는다.
+          required: [allPaused, pausedCallerCount]
+          additionalProperties: false
+          properties:
+            allPaused:
+              type: boolean
+            pausedCallerCount:
+              type: integer
+              minimum: 0
         queue:
           type: object
           description: 운영자 토큰이 있을 때만 반환한다. 점유 대상 작업의 적체. 차단기가 `open`이거나 호출처 할당에 걸린 작업도 센다.
@@ -1294,6 +1631,7 @@ components:
             - urn:mailo:problem:malformed-request
             - urn:mailo:problem:validation-failed
             - urn:mailo:problem:unauthorized
+            - urn:mailo:problem:forbidden
             - urn:mailo:problem:not-found
             - urn:mailo:problem:idempotency-conflict
             - urn:mailo:problem:job-not-cancelable
@@ -1308,6 +1646,7 @@ components:
             | `malformed-request` | 400, JSON 구문 오류 |
             | `validation-failed` | 400, 스키마·입력 검증·헤더·파라미터 오류 |
             | `unauthorized` | 401 |
+            | `forbidden` | 403, 읽기 토큰으로 `/ops`의 변경 endpoint를 호출 |
             | `not-found` | 404 |
             | `idempotency-conflict` | 409 |
             | `job-not-cancelable` | 409, `SENDING`이거나 종결된 작업의 취소 |
@@ -1331,6 +1670,147 @@ components:
           items:
             $ref: '#/components/schemas/ValidationErrorItem'
           description: '`validation-failed`일 때만 있다.'
+    PauseScope:
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [all, caller]
+        id:
+          type: string
+          description: '`type`이 `caller`일 때만 있다. 호출처 ID.'
+      description: 발송 정지 범위. `account` 범위는 스키마에만 있고 이 API는 받지 않는다(ADR-0011 결정 2).
+    PauseChange:
+      type: object
+      required: [scope, paused, changed]
+      additionalProperties: false
+      properties:
+        scope:
+          $ref: '#/components/schemas/PauseScope'
+        paused:
+          type: boolean
+          description: 요청 처리 뒤의 정지 상태. PUT은 항상 `true`, DELETE는 항상 `false`다.
+        changed:
+          type: boolean
+          description: 이번 요청이 상태를 바꿨다. 이미 그 상태였으면 `false`이고 감사 기록을 쓰지 않았다.
+        pausedAt:
+          type: string
+          format: date-time
+          description: 정지 상태일 때만 있다. 처음 정지한 시각(DB 시각).
+        pausedBy:
+          type: string
+          description: 정지 상태일 때만 있다. 처음 정지한 관리 토큰 이름.
+        inRegistry:
+          type: boolean
+          description: '`scope.type`이 `caller`일 때만 있다. 호출처 ID가 레지스트리에 있다. `false`면 오타일 수 있다.'
+    PauseList:
+      type: object
+      required: [pauses]
+      additionalProperties: false
+      properties:
+        pauses:
+          type: array
+          items:
+            type: object
+            required: [scope, pausedAt, pausedBy]
+            additionalProperties: false
+            properties:
+              scope:
+                $ref: '#/components/schemas/PauseScope'
+              pausedAt:
+                type: string
+                format: date-time
+              pausedBy:
+                type: string
+    OpsJob:
+      type: object
+      description: |
+        운영자 읽기의 작업. `Job`에서 `idempotencyKey`를 빼고 `callerId`를 더했다. 나머지 필드는 `Job`의 같은 이름 필드와 같다.
+        호출처가 정한 Key는 운영자 읽기에도 주지 않는다. 본문과 수신자는 없다.
+      required:
+        - jobId
+        - callerId
+        - status
+        - priority
+        - attempts
+        - createdAt
+        - expiresAt
+        - sentAt
+        - failedAt
+        - failureReason
+        - canceledAt
+        - canceledBy
+        - lastError
+        - rejectedRecipients
+      additionalProperties: false
+      properties:
+        callerId:
+          type: string
+          description: 작업의 호출처.
+        jobId:
+          $ref: '#/components/schemas/Job/properties/jobId'
+        status:
+          $ref: '#/components/schemas/Job/properties/status'
+        priority:
+          $ref: '#/components/schemas/Job/properties/priority'
+        attempts:
+          $ref: '#/components/schemas/Job/properties/attempts'
+        createdAt:
+          $ref: '#/components/schemas/Job/properties/createdAt'
+        expiresAt:
+          $ref: '#/components/schemas/Job/properties/expiresAt'
+        sentAt:
+          $ref: '#/components/schemas/Job/properties/sentAt'
+        failedAt:
+          $ref: '#/components/schemas/Job/properties/failedAt'
+        failureReason:
+          $ref: '#/components/schemas/Job/properties/failureReason'
+        canceledAt:
+          $ref: '#/components/schemas/Job/properties/canceledAt'
+        canceledBy:
+          $ref: '#/components/schemas/Job/properties/canceledBy'
+        lastError:
+          $ref: '#/components/schemas/Job/properties/lastError'
+        rejectedRecipients:
+          $ref: '#/components/schemas/Job/properties/rejectedRecipients'
+    AuditEntry:
+      type: object
+      required: [id, at, actor, action]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: '^[0-9]+$'
+          description: 감사 행 ID. 64비트 정수라서 문자열이다. 클수록 최근이다.
+        at:
+          type: string
+          format: date-time
+        actor:
+          type: string
+          description: 관리 토큰 이름. 토큰 값이 아니다.
+        action:
+          type: string
+          enum: [PAUSE, RESUME, CANCEL_JOB]
+        scope:
+          $ref: '#/components/schemas/PauseScope'
+        jobId:
+          type: string
+          format: uuid
+          description: '`CANCEL_JOB`일 때만 있다.'
+    AuditPage:
+      type: object
+      required: [entries, nextBefore]
+      additionalProperties: false
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+        nextBefore:
+          type: [string, 'null']
+          description: 다음 쪽을 읽을 `before` 값. 더 오래된 항목이 없으면 `null`이다.
     JobNotCancelableProblem:
       allOf:
         - $ref: '#/components/schemas/Problem'
@@ -1548,6 +2028,45 @@ components:
                 status: 401
                 detail: 인증에 실패했다.
                 instance: urn:uuid:8f434346-648f-4b8e-a0d1-6e5a7c9b1d02
+    PauseChanged:
+      description: |
+        요청 처리 뒤의 정지 상태. 이미 그 상태였으면 `changed: false`이고 상태·감사 기록을 바꾸지 않는다(멱등).
+        정지·감사는 한 트랜잭션이다. 감사 기록이 실패하면 상태도 바뀌지 않고 503이다.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PauseChange'
+          examples:
+            paused:
+              value:
+                scope: { type: caller, id: billing }
+                paused: true
+                changed: true
+                pausedAt: '2026-11-24T09:12:00Z'
+                pausedBy: oncall
+                inRegistry: true
+            alreadyResumed:
+              value:
+                scope: { type: all }
+                paused: false
+                changed: false
+    Forbidden:
+      description: 읽기 토큰으로 변경 endpoint를 호출했다. 토큰은 유효하지만 관리 권한이 없다. 상태는 바뀌지 않는다.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            forbidden:
+              value:
+                type: urn:mailo:problem:forbidden
+                title: Forbidden
+                status: 403
+                detail: 이 토큰으로는 요청한 동작을 할 수 없다.
+                instance: urn:uuid:5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d
     NotFound:
       description: 존재하지 않거나 다른 호출처의 작업이거나 보존 기간이 지나 삭제됐다. 세 경우를 구분하지 않는다.
       content:

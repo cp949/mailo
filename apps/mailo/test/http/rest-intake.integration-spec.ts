@@ -988,6 +988,8 @@ describe("REST 통합: 등록·조회·이벤트·헬스 (RQ-001, 011, 015, 017,
         checks: { database: "UP" },
         circuitBreaker: { state: "closed", openUntil: null, lastReason: null },
         eventFeed: { latestEventAt: null, lagSeconds: null },
+        // 발송 정지 요약(RQ-043). 정지가 없으면 paused false, scope null이다.
+        sendPaused: { paused: false, scope: null },
       });
     });
 

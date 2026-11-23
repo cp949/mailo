@@ -13,7 +13,8 @@
 - 파일 채널만 쓰는 호출처도 조회와 이벤트 피드를 쓰려면 키가 필요하다(ADR-0006 결정 5).
 - 헬스 endpoint(`/health/live`, `/health/ready`)는 인증 없이 호출할 수 있다.
   - `/health/live`는 `Authorization` 헤더를 읽지 않는다. 헤더가 틀려도 200이다.
-  - `/health/ready`는 헤더가 없으면 공개 필드만 반환한다. 유효한 Bearer가 있으면 필드를 더하고, 틀린 헤더는 401이다. 운영자 토큰(`MAILO_OPS_TOKEN`)은 호출처 전체의 큐 적체와 Worker·파일 폴러 상태(`queue`, `worker`, `filePoller`)를 더한다. 호출처 API 키로는 반환하지 않는다. 필드 범위는 openapi.yaml의 `/health/ready` 설명을 따른다.
+  - `/health/ready`는 헤더가 없으면 공개 필드만 반환한다. 유효한 Bearer가 있으면 필드를 더하고, 틀린 헤더는 401이다. 운영자 토큰(읽기 토큰 `MAILO_OPS_TOKEN`, 관리 토큰)은 발송 정지 요약(`sendControls`)과 호출처 전체의 큐 적체·Worker·파일 폴러 상태(`queue`, `worker`, `filePoller`)를 더한다. 호출처 API 키로는 반환하지 않는다. 호출처 API 키는 자기 호출처의 발송 정지 요약(`sendPaused`)을 받는다. 필드 범위는 openapi.yaml의 `/health/ready` 설명을 따른다.
+- 운영자 토큰은 `/ops/*`와 `/health/ready`의 운영자 필드에만 쓴다. 업무 endpoint(`/jobs`, `/events`)에서는 401이다. 호출처 API 키는 `/ops/*`에서 401이다("운영 REST" 절).
 
 ## 오류 형식
 
@@ -83,6 +84,35 @@
 - outbox를 이벤트로 닫는 호출처는 `JOB_CANCELED`(`canceledBy`: `CALLER`·`OPERATOR`)를 종결로 처리한다. 호출처가 직접 취소해도 이 이벤트가 온다.
 - 롤링 배포 중 구버전 인스턴스는 `CANCELED`를 모르는 값 그대로 내보내고 `GET /events?type=JOB_CANCELED`를 400으로 거부한다. 호출처는 아래 "모르는 값" 규칙을 지킨 뒤에 취소 API를 쓴다(`docs/operations/caller-onboarding.md`).
 
+## 발송 정지와 호출처
+
+운영자가 발송을 멈출 수 있다(RQ-043, ADR-0011 결정 2·3). 호출처가 알아야 할 것은 다음과 같다.
+
+- 정지 중에도 등록(`POST /jobs`)은 받는다. 응답은 평소와 같은 202다. 작업은 `PENDING`에 쌓이고 `expiresAt`에 `EXPIRED`가 된다. 긴 정지는 `EXPIRED`를 대량으로 만든다. 만료 처리는 평소와 같다(`JOB_EXPIRED`).
+- 정지를 알아보려면 호출처 API 키로 `GET /health/ready`를 호출한다. 응답의 `sendPaused`가 `{ paused, scope }`다. `scope`는 `all`(전체 정지) 또는 `caller`(이 호출처만 정지)이고 정지가 없으면 `null`이다. `/health/ready`의 200/503은 정지와 무관하다.
+- 정지를 이벤트 피드로 알리지 않는다. 피드는 종결 이벤트용이다.
+- 이미 `SENDING`인 작업은 정지 뒤에도 끝까지 전송한다. 정지 직후에 `SENT`가 올 수 있다.
+- 모르는 응답 필드는 무시한다(아래 규칙 3). `sendPaused`가 없는 구버전 서버도 같은 규칙으로 다룬다.
+
+## 운영 REST
+
+`/ops/*`는 운영자용 endpoint다(RQ-042·043·044, ADR-0011 결정 1·7). 호출처 API 키로는 호출할 수 없고(401) 운영 토큰을 쓴다.
+
+| 경로 | 권한 | 동작 |
+| ---- | ---- | ---- |
+| `GET /ops/pauses` | 읽기 | 정지 목록 |
+| `PUT`·`DELETE /ops/pauses/all` | 관리 | 전체 정지·재개 |
+| `PUT`·`DELETE /ops/pauses/callers/{callerId}` | 관리 | 호출처 정지·재개 |
+| `GET /ops/jobs/{jobId}` | 읽기 | 작업 조회(모든 호출처, Key 없음, `callerId` 있음) |
+| `POST /ops/jobs/{jobId}/cancel` | 관리 | 작업 취소(`canceledBy: OPERATOR`) |
+| `GET /ops/audit` | 읽기 | 감사 목록(`limit`, `before`) |
+
+- 읽기 토큰은 읽기 endpoint만 열고, 관리 토큰은 읽기 권한을 포함한다. 읽기 토큰으로 변경 endpoint를 부르면 403(`forbidden`)이다. 호출처 키와 모르는 값은 401이다.
+- 정지·재개는 멱등하다. 이미 그 상태면 상태를 바꾸지 않고 `changed: false`로 200이다. 감사 기록은 상태를 바꾼 요청만 쓴다.
+- 감사는 토큰 이름, 동작, 범위, 작업 ID, 시각뿐이다. 사유 같은 자유 텍스트는 없다.
+- 호출처가 직접 하는 작업 취소와 달리 관리 취소는 `canceledBy`가 `OPERATOR`다. 호출처 피드의 `JOB_CANCELED`에 운영자 이름은 없다.
+- 운영 응답은 `Cache-Control: no-store`다.
+
 ## 호출처가 모르는 값을 만났을 때
 
 서버는 이벤트 종류, 작업 상태, 응답 필드를 추가할 수 있다(ADR-0011 구현 순서 1). 호출처는 다음 세 규칙을 지킨다.
@@ -126,7 +156,7 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 - `failureReason`은 `PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`, `EXPIRED`다.
 - `lastError`는 `category`(`TRANSIENT`, `PERMANENT`, `ACCOUNT`, `LEASE_EXPIRED`), `smtpCode`, `enhancedCode`, `occurredAt`이다. SMTP 응답 텍스트는 API에 노출하지 않는다.
 - `rejectedRecipients`는 `address`, `smtpCode`, `enhancedCode`다. 응답 텍스트는 없다.
-- 오류 `type`은 `urn:mailo:problem:<이름>` 9종이다. `job-not-cancelable`(409)은 `jobStatus`(작업의 현재 상태)를 더한다. RFC 9457의 `status`(HTTP 상태 코드)와 이름이 겹치지 않게 했다. 401은 `WWW-Authenticate: Bearer`를 반환한다.
+- 오류 `type`은 `urn:mailo:problem:<이름>` 10종이다. `forbidden`(403)은 읽기 토큰으로 `/ops`의 변경 endpoint를 호출한 경우다. `job-not-cancelable`(409)은 `jobStatus`(작업의 현재 상태)를 더한다. RFC 9457의 `status`(HTTP 상태 코드)와 이름이 겹치지 않게 했다. 401은 `WWW-Authenticate: Bearer`를 반환한다.
 - 예상하지 못한 서버 오류(DB 장애 포함)는 모두 503(`service-unavailable`)이다. 500은 쓰지 않는다. 호출처는 같은 Key로 재시도한다(ADR-0005 결정 5).
 - `priority`(선택, `LOW`·`NORMAL`·`HIGH`·`URGENT`, 대소문자 구분, 생략은 `NORMAL`)가 그 밖의 값이면 `/priority` `INVALID_FORMAT`이다. 암호화 평문 안의 `priority`는 `/content` `UNKNOWN_FIELD`다(RQ-033).
 - `ttlSeconds`(선택, 정수 60 이상 서버 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS` 이하, 생략은 서버 기본 TTL)가 정수가 아니면 `/ttlSeconds` `INVALID_FORMAT`, 범위 밖 정수면 `/ttlSeconds` `OUT_OF_RANGE`다. 만료 시각은 응답의 `expiresAt`이다. 암호화 평문 안의 `ttlSeconds`는 `/content` `UNKNOWN_FIELD`다(RQ-039).

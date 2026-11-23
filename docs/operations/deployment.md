@@ -237,7 +237,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_DB_LOCK_TIMEOUT_MS` | 10000 | 1000~3600000 | 잠금 대기 상한(`lock_timeout`, 55P03). 앱 풀에만 적용한다. 마이그레이션 CLI는 이 변수를 읽지 않고 10초로 고정이다 |
 | `MAILO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | 60000 | 1000~3600000 | 트랜잭션을 열고 쿼리 없이 머무는 상한(`idle_in_transaction_session_timeout`). 넘으면 서버가 연결을 끊는다(25P03) |
 | `MAILO_DB_QUERY_TIMEOUT_MS` | 35000 | 1000~3600000, `STATEMENT` 초과 | 클라이언트(pg `query_timeout`)의 응답 대기 상한. 서버가 응답하지 않는 단절을 끊는다 |
-| `MAILO_OPS_TOKEN` | 없음(꺼짐) | 공백 없는 32자 이상 | 운영자 토큰. 시크릿(`_FILE` 지원). `GET /health/ready`에 전역 큐·Worker 상태를 더한다. 호출처 API 키로는 볼 수 없다. 업무 endpoint에는 쓸 수 없다(401) |
+| `MAILO_OPS_TOKEN` | 없음(꺼짐) | 공백 없는 32자 이상 | 읽기 토큰. 시크릿(`_FILE` 지원). `GET /health/ready`의 운영자 응답과 `GET /ops/*`를 연다. 호출처 API 키로는 볼 수 없다. 업무 endpoint에는 쓸 수 없다(401) |
+| `MAILO_OPS_ADMIN_NAMES` | 없음(관리 기능 꺼짐) | 쉼표 구분 이름 최대 8개. 이름은 `[a-z][a-z0-9]{0,31}` | 관리 토큰 이름. 이름은 감사 기록의 `actor`가 된다. 형식 위반, 중복, 9개 이상은 기동을 거부한다. 값이 없으면 `/ops`의 변경 endpoint는 읽기 토큰에 403, 그 밖에 401이다 |
+| `MAILO_OPS_ADMIN_TOKEN_<이름 대문자>` | 이름 목록에 있으면 필수 | 공백 없는 32자 이상 | 이름마다 하나의 관리 토큰. 시크릿(`_FILE` 우선). 예: 이름 `oncall`은 `MAILO_OPS_ADMIN_TOKEN_ONCALL`. 읽기 권한을 포함한다. 이름 목록에 있는 이름의 토큰이 없거나 규칙에 어긋나면, 토큰 값이 읽기 토큰·다른 관리 토큰과 같으면, 호출처 API 키와 같으면 기동을 거부한다. 이름 목록에 없는 이름의 변수는 읽지 않는다 |
 | `MAILO_STOP_GRACE_PERIOD` | 없음(검사 안 함). compose는 `150s`를 넣는다 | `150s`, `2m30s`, `1h`(h·m·s·ms 조합) | 컨테이너 `stop_grace_period`와 같은 값. 있으면 drain 상한 + 10초 이상인지 기동 때 검사한다 |
 | `MAILO_CALLERS_FILE` | 없음(필수) | 파일 경로 | 호출처 레지스트리 JSON. 기동 때 한 번 읽는다(핫 리로드 없음) |
 
@@ -366,7 +368,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 ## 시크릿 주입
 
 - 시크릿 변수는 `<NAME>_FILE`(파일 경로)을 주면 파일 내용을 읽는다. 파일이 있으면 같은 이름의 환경 변수보다 우선한다. 끝의 개행 한 개는 제거한다. 파일이 비었거나 읽지 못하면 기동 실패다(사유는 변수 이름과 errno 코드만 출력).
-- `_FILE`을 지원하는 변수: `MAILO_DATABASE_URL`, `MAILO_DB_PASSWORD`, `MAILO_OPS_TOKEN`, `MAILO_SMTP_PASSWORD`, `MAILO_DB_ENCRYPTION_KEY_V<n>`, `MAILO_FINGERPRINT_KEY_V<n>`, 개인키 `MAILO_JWE_KEY_*`, 호출처 비밀키 `MAILO_JWS_SECRET_*`.
+- `_FILE`을 지원하는 변수: `MAILO_DATABASE_URL`, `MAILO_DB_PASSWORD`, `MAILO_OPS_TOKEN`, `MAILO_OPS_ADMIN_TOKEN_<이름>`, `MAILO_SMTP_PASSWORD`, `MAILO_DB_ENCRYPTION_KEY_V<n>`, `MAILO_FINGERPRINT_KEY_V<n>`, 개인키 `MAILO_JWE_KEY_*`, 호출처 비밀키 `MAILO_JWS_SECRET_*`.
 - 운영은 시크릿 파일 마운트를 권장한다(ADR-0008 결정 5·6). 환경 변수도 허용하지만 `docker inspect`와 프로세스 환경에서 보인다(일반 지식).
 - 이미지에는 시크릿을 넣지 않는다. `Dockerfile`에 시크릿을 넣는 단계가 없다(이미지를 빌드해 검사하지는 않았다).
 - 이 저장소의 `docker-compose.yml`은 compose `secrets:`를 정의하지 않는다(기본 구성은 `.env`의 환경 변수다. `scripts/container/`와 CI가 이 구성에 의존한다). 운영은 아래처럼 compose `secrets:`와 `_FILE`로 바꾸는 것을 권한다. 이 방식은 실행해 확인하지 않았다(추정, compose는 파일 시크릿을 컨테이너의 `/run/secrets/<이름>`에 읽기 전용으로 둔다).
@@ -391,9 +393,10 @@ secrets:
   - 마운트한 파일은 컨테이너의 `node`(UID 1000)가 읽을 수 있어야 한다. compose `secrets`의 `file:` 시크릿은 호스트 파일의 권한을 그대로 보이므로(`uid`·`mode` 지정은 Swarm 전용) 호스트 파일을 UID 1000 또는 그룹이 읽게 둔다(추정).
 - 마운트한 파일은 Mailo 실행 계정(UID 1000)이 읽을 수 있어야 한다. 다른 계정은 읽지 못하게 둔다.
 - 개인키 PEM은 환경 변수로 줄 때 줄바꿈을 `\n` 두 글자로 써도 된다(`key-file.ts`). 파일로 주면 일반 PEM이다.
-- 시크릿 파일 목록: DB 접속 URL, SMTP 비밀번호, DB 본문 키 전 버전, 지문 키 전 버전, JWE 개인키 전부, JWS 비밀키 전부. 발급·교체는 `key-management.md`다.
+- 시크릿 파일 목록: DB 접속 URL, SMTP 비밀번호, 운영 읽기·관리 토큰, DB 본문 키 전 버전, 지문 키 전 버전, JWE 개인키 전부, JWS 비밀키 전부. 발급·교체는 `key-management.md`다.
 - API 키 평문은 Mailo에 두지 않는다. `callers.json`에는 SHA-256 해시만 둔다(`caller-onboarding.md`).
 - 로그·오류·이벤트에는 본문, 제목, 수신자 주소, 인증 정보, 키를 남기지 않는다(RQ-027).
+- 관리 토큰 변수는 `.env`의 `MAILO_*`로 컨테이너에 전달되므로(`env_file`) compose에 이름별 설정을 더하지 않는다. `_FILE`로 받으면 파일 마운트를 따로 연다(위 `secrets:` 예시와 같다).
 
 ## 헬스
 
@@ -404,11 +407,13 @@ secrets:
 
 - `/health/ready`는 읽기 전용 트랜잭션 하나로 PostgreSQL 점검을 3초 안에 마친다. 쿼리에는 서버 쪽 `statement_timeout` 2초를 따로 걸고, 3초를 넘기면 그 연결을 풀에서 버린다. 응답만 포기하면 쿼리가 풀 슬롯을 계속 잡기 때문이다. 차단기가 `open`·`half_open`이어도 200이다. 등록과 조회는 정상이므로 오케스트레이터가 인스턴스를 내리면 안 된다.
 - 발송 정지(Worker 정지, 적체)는 200/503에 반영하지 않는다. 원인이 DB나 SMTP 계정이면 재시작이 도움이 안 되고, 오탐이면 오케스트레이터가 정상 인스턴스를 재시작하기 때문이다. 대신 운영자 토큰(`MAILO_OPS_TOKEN`)으로 호출하면 아래 필드를 준다. 모니터링은 이 값을 폴링해 경보를 만든다.
-- 인증 없이는 `status`, `checks.database`, `circuitBreaker.state`만 반환한다. 유효한 호출처 Bearer가 있으면 `openUntil`, `lastReason`, `eventFeed`를 더한다. 틀린 `Authorization`은 401이다.
-- 운영자 토큰(`Authorization: Bearer $MAILO_OPS_TOKEN`)은 `openUntil`, `lastReason`에 더해 다음을 반환한다(`eventFeed`는 호출처 전용이라 없다). 전역 수치는 다른 호출처의 발송량을 드러내므로 호출처 API 키로는 주지 않는다. 운영자 토큰은 업무 endpoint에서 401이다. 메일 본문·수신자·작업 ID·`caller_id`는 어느 필드에도 없다.
+- 인증 없이는 `status`, `checks.database`, `circuitBreaker.state`만 반환한다. 유효한 호출처 Bearer가 있으면 `openUntil`, `lastReason`, `eventFeed`, `sendPaused`를 더한다. 틀린 `Authorization`은 401이다.
+- `sendPaused`는 그 호출처에 해당하는 발송 정지 요약이다(`{ paused, scope }`, `scope`는 `all`·`caller`·`null`). `all`과 `caller`가 함께 걸려 있으면 `all`이다. 호출처 ID·운영자 이름·시각은 없다. 정지는 200/503에 반영하지 않는다.
+- 운영자 토큰(`Authorization: Bearer $MAILO_OPS_TOKEN` 또는 관리 토큰. 응답은 같다)은 `openUntil`, `lastReason`에 더해 다음을 반환한다(`eventFeed`·`sendPaused`는 호출처 전용이라 없다). 전역 수치는 다른 호출처의 발송량을 드러내므로 호출처 API 키로는 주지 않는다. 운영자 토큰은 업무 endpoint에서 401이다. 메일 본문·수신자·작업 ID·`caller_id`는 어느 필드에도 없다.
 
 | 필드 | 의미 | 읽는 법 |
 | ---- | ---- | ------- |
+| `sendControls` | `{ allPaused, pausedCallerCount }`. 호출처 ID는 없다 | `allPaused`가 true이거나 `pausedCallerCount`가 0보다 크면 발송 정지가 걸려 있다. 어느 호출처인지는 `GET /ops/pauses`로 본다("발송 정지와 운영 REST") |
 | `queue.dueCount` | 점유 대상(`PENDING`·`RETRY_WAIT`, `next_attempt_at` 경과) 작업 수. 상한 10000 | `queue.dueCountTruncated`가 true면 더 있다. 차단기가 `open`이거나 호출처 할당에 걸린 작업도 센다 |
 | `queue.oldestDueAgeSeconds` | 가장 오래 기다린 작업이 점유 가능해진 뒤 지난 초. 없으면 null | 이 값이 커지는데 `worker.lastPollAgeSeconds`도 크면 점유 정지다. 차단기가 `closed`이고 할당에 걸리지 않았는데 커지면 이상이다 |
 | `queue.dueCountByPriority` | 등급(`LOW`·`NORMAL`·`HIGH`·`URGENT`)별 `dueCount`. 네 키가 항상 있다. 상한 10000이 등급마다 따로 걸린다 | 등급별 합은 `dueCount`와 다를 수 있다(상한이 따로 걸린다). 읽는 순서는 `troubleshooting.md` "등급별 적체" |
@@ -424,6 +429,52 @@ secrets:
 - 오케스트레이터의 liveness는 `/health/live`, readiness는 `/health/ready`(인증 없이)를 쓰는 구성을 권한다(추정, 실행해 확인하지 않았다).
 - 로그 형식은 아래 "로그" 절이다. 헬스 요청 로그는 debug라 production에서는 나오지 않는다.
 
+## 발송 정지와 운영 REST
+
+근거: RQ-042·043·044, ADR-0011 결정 1·2·3·6·7.
+
+토큰 두 종류를 쓴다. 읽기 토큰(`MAILO_OPS_TOKEN`)은 읽기 endpoint만 연다. 관리 토큰(`MAILO_OPS_ADMIN_TOKEN_<이름>`)은 읽기 권한을 포함하고 변경 endpoint를 연다. 변경은 모두 DB에 감사 기록(`mail_ops_audit`)을 같은 트랜잭션으로 남긴다. 토큰 발급·교체는 `key-management.md` "운영 토큰"이다.
+
+| 하고 싶은 일 | 명령(`$ADMIN`은 관리 토큰, `$READ`는 읽기 토큰) |
+| ------------ | ----------------------------------------------- |
+| 전체 정지 | `curl -s -X PUT -H "Authorization: Bearer $ADMIN" http://<host>:3000/ops/pauses/all` |
+| 전체 재개 | `curl -s -X DELETE -H "Authorization: Bearer $ADMIN" http://<host>:3000/ops/pauses/all` |
+| 호출처만 정지 | `curl -s -X PUT -H "Authorization: Bearer $ADMIN" http://<host>:3000/ops/pauses/callers/<callerId>` |
+| 호출처 재개 | `curl -s -X DELETE -H "Authorization: Bearer $ADMIN" http://<host>:3000/ops/pauses/callers/<callerId>` |
+| 정지 목록 | `curl -s -H "Authorization: Bearer $READ" http://<host>:3000/ops/pauses` |
+| 감사 목록 | `curl -s -H "Authorization: Bearer $READ" "http://<host>:3000/ops/audit?limit=20"` |
+
+- 정지는 DB 행이라 모든 인스턴스가 다음 점유부터 같은 값을 본다. 환경 변수나 레지스트리처럼 재시작이 필요하지 않다.
+- 전체 정지는 일반 점유와 차단기 대표 작업(probe) 점유를 모두 막는다. 호출처 정지는 그 호출처의 작업만 점유에서 빼고 호출처별 24시간 할당 계산에서도 뺀다. 정지는 차단기와 독립이다. 정지를 풀어도 차단기 상태는 바뀌지 않는다.
+- 정지 중에도 lease 복구, 결과 기록, 만료 sweep, 본문·기록 삭제, 등록(REST·파일)은 계속 돈다. 이미 `SENDING`인 작업의 전송은 끝까지 간다. 정지 응답 직후에도 최대 인스턴스 수 × `MAILO_WORKER_CONCURRENCY`건이 점유를 마친 채 남을 수 있다(코드 읽기에 따른 상한 추정, 측정하지 않았다).
+- 정지 중에도 작업의 `expiresAt`은 흐른다. 정지가 길면 `PENDING` 작업이 `EXPIRED`가 된다(`JOB_EXPIRED`). 정지 시간은 호출처 TTL(기본 24시간)보다 짧게 잡는다. 재개하면 점유 가능한 작업이 한꺼번에 대상이 되고 동시 전송 수와 우선순위(RQ-035)가 처리 순서를 정한다.
+- 호출처 정지는 레지스트리의 `callerId`가 아니어도 걸린다. 응답의 `inRegistry`로 오타를 확인한다. 새 요청 자체를 막으려면 API 키를 폐기한다(`key-management.md`). 호출처를 레지스트리에서 빼도 큐에 이미 있는 작업은 계속 발송된다.
+- 정지 요약은 `GET /health/ready`에 있다. 호출처 키 응답은 `sendPaused`, 운영자 응답은 `sendControls`다. `/health/ready`의 200/503에는 반영하지 않는다.
+- 발송이 멈춘 것처럼 보이면 `troubleshooting.md` "발송이 멈췄다"에서 정지를 먼저 확인한다.
+- 정지 해제 직후 대량 재개가 SMTP 계정의 일일 한도·분당 한도에 닿을 수 있다. 차단기가 열릴 수 있으므로 재개 뒤 `circuitBreaker.state`를 본다(추정, 실제 Gmail 한도는 확인하지 않았다).
+
+### 운영 토큰·정지 도입 배포 순서
+
+근거: ADR-0011 결정 10. 마이그레이션 `0008`(`mail_send_controls`, `mail_ops_audit`)은 새 테이블만 만들고 기존 테이블을 잠그지 않는다. 구버전은 새 테이블을 읽지 않으므로 마이그레이션 직후에도 영향이 없다.
+
+1. 마이그레이션 전에 `pg_dump`를 받는다("백업과 복구"). `0008`을 적용한다(기동 때 자동 또는 `mailo-migrate`).
+2. 모든 Mailo 인스턴스를 새 버전으로 바꾼다.
+3. 관리 토큰(`MAILO_OPS_ADMIN_NAMES`와 `MAILO_OPS_ADMIN_TOKEN_<이름>`)을 설정하고 인스턴스를 다시 시작한다. 환경 변수는 기동 때 읽는다. 관리 취소(`POST /ops/jobs/{jobId}/cancel`)는 호출처가 바라지 않은 `CANCELED`를 만들 수 있으므로 호출처가 모르는 값 규칙을 지키는지 확인한 뒤 이 단계를 한다("작업 취소 도입 배포 순서").
+
+롤링 중(구·신 혼용)에는 정지 명령을 쓰지 않는다. 구버전 인스턴스는 정지를 읽지 않아 계속 발송한다.
+
+롤백(이 순서를 지킨다):
+
+1. 호출처의 취소 API와 관리 취소 사용을 먼저 멈춘다.
+2. 정지를 모두 푼다(`GET /ops/pauses`가 빈 목록인지 확인한다). 구버전은 정지를 무시하므로 정지가 남은 채 롤백하면 발송이 조용히 재개된다.
+3. 이전 버전으로 인스턴스를 바꾼다.
+4. 마이그레이션은 되돌리지 않는다. `mail_send_controls`·`mail_ops_audit` 테이블은 남기고 구버전은 읽지 않는다.
+
+```txt
+위험도: 낮음~중간 (새 테이블 2개만 추가, 기존 테이블 잠금 없음. 정지 상태를 남긴 채 롤백하면 발송이 조용히 재개됨)
+롤백: 정지를 모두 푼 뒤 앱만 이전 버전으로 되돌린다. 스키마는 되돌리지 않는다(되돌리려면 pg_dump 복원)
+```
+
 ## 로그
 
 모든 로그는 표준 출력의 한 줄 JSON이다. Worker·파일 폴러·HTTP 요청·DB·헬스·Nest 내부 로그가 같은 로거 하나(`createApp`이 만든다)를 쓴다. 이전에는 Worker·파일 폴러만 JSON이고 나머지는 Nest 텍스트 줄이었다.
@@ -437,7 +488,7 @@ secrets:
 - 앞의 네 필드는 모든 줄에 있다: `ts`(ISO 8601 UTC), `instance`(`MAILO_INSTANCE_ID`, 없으면 호스트 이름 = 컨테이너 ID), `level`(`debug`·`info`·`warn`·`error`), `event`. 나머지는 이벤트마다 다르다. 호출자 필드가 이 네 값을 덮어쓰지 않는다.
 - `event: "http_request"`: 응답이 끝날 때 한 줄. 필드는 `requestId`, `method`, `route`(라우트 패턴, 예 `/jobs/:jobId`), `status`, `callerId`(인증 전에는 `null`), `durationMs`뿐이다. 쿼리 문자열, 경로 값, `Idempotency-Key`, 헤더, 본문은 없다(RQ-027). `requestId`는 오류 응답 본문의 `instance`(`urn:uuid:…`)와 같다.
 - `event: "nest_log"`: Nest 프레임워크와 `Logger`로 쓴 문자열 로그. `message`, `context`(클래스·모듈 이름), 오류 수준이면 Nest가 넘긴 `stack`이 있다. `stack`의 첫 줄에는 예외 메시지가 들어 있을 수 있다(이전 텍스트 출력과 같은 정보다).
-- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
+- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), `ops_pause_set`·`ops_pause_cleared`(info, `actor`·`scope`(`all`·`caller`)·`callerId`(`caller`일 때만), 상태를 바꾼 관리 요청만. 멱등 재요청은 남지 않는다), `ops_job_canceled`(info, `actor`·`jobId`), Worker의 `send_paused`(warn)·`send_resumed`(info)(`scope`, `callerId`는 `caller`일 때만. 정지 상태가 바뀐 것을 관찰할 때 한 번만 남고 폴링마다 반복하지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
 - 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패는 `event: "startup_failed"`(필드 `error`는 예외 이름·코드, 설정 오류는 변수 이름만 담은 `message`)로 남는다. 설정을 읽기 전의 실패는 `instance`가 호스트 이름이다(`MAILO_INSTANCE_ID`를 아직 읽지 못했다).
 - 본문·제목·수신자 주소·SMTP 인증 정보·키는 어느 필드에도 넣지 않는다. 예외는 이름과 코드(`Error:57014`)만 쓴다(RQ-027). 이 규칙은 canary 문자열 테스트로 확인한다.
 - 로그 수집기가 인스턴스를 구분하려면 `instance`를 쓴다. 로그와 DB 행의 연결: 결과를 기록한 시도의 `instance`가 `mail_attempts.instance` 컬럼에 같은 값으로 남는다(128자까지). 로그의 `jobId`(`job_completed` 등)로 시도 행을 찾고 `instance`로 기록한 인스턴스를 확인한다. lease 회수로 쓴 `LEASE_EXPIRED` 시도, 0003 적용 전 행, 롤링 배포 중 이전 버전이 쓴 행은 NULL이다(점유한 인스턴스를 DB에 쓰지 않는다: lease는 `lease_token`으로만 다룬다). REST 응답에는 노출하지 않는다. 컨테이너를 다시 만들면 호스트 이름이 바뀌므로 고정 이름이 필요하면 `MAILO_INSTANCE_ID`를 준다.
@@ -509,6 +560,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 
 - 컨테이너 기동, 재생성, 재시작 후 자동 복구(RQ-025·026의 미충족 조건).
 - 실제 SIGTERM을 받은 컨테이너의 종료 시간(`pause` 먼저 호출하는 새 종료 순서 포함).
+- 운영 토큰·발송 정지 도입(`0008`)의 롤링 배포·롤백 실행. 다중 인스턴스에서 정지 명령 직후 점유를 마친 작업 수(상한은 코드 읽기에 따른 추정)와 정지 해제 직후의 SMTP 한도 반응.
 - 작업 취소 도입(`0006`·`0007`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기 시간(대용량·쓰기 부하). 구버전의 동작은 코드를 읽어 적었다.
 - 요청별 만료 시간 도입의 롤링 배포·롤백 실행, 긴 `MAILO_JOB_EXPIRY_MAX_SECONDS`에서의 대기 건수와 점유 지연.
 - 마이그레이션의 대용량 DB 적용 시간. `0005`(`CREATE INDEX CONCURRENTLY`)를 쓰기 부하 중에 적용한 시간도 측정하지 않았다.

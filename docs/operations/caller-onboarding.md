@@ -502,6 +502,15 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 - 이벤트 피드에서 `JOB_CANCELED`는 `failureReason: CANCELED_BY_CALLER` 같은 저장 값이 붙은 실패형 이벤트로 나갈 수 있다. 사용처는 `type`으로 분기해야 한다. `failureReason`으로 취소를 판정하지 않는다.
 - 구버전 인스턴스에 취소 요청이 가면 `POST /jobs/{jobId}/cancel` 경로가 없어 404다. 롤링이 끝나기 전에는 취소 API를 쓰지 않는다.
 
+### 발송 정지
+
+근거: RQ-043, ADR-0011 결정 2·3. 운영자가 장애 중 발송을 멈출 수 있다(`deployment.md` "발송 정지와 운영 REST").
+
+- 정지 중에도 등록은 평소처럼 202다. 작업은 `PENDING`에 쌓이고 만료 시각(`expiresAt`)에 `EXPIRED`가 된다. 사용처 relay는 등록 실패로 처리하지 않는다.
+- 정지를 알아보려면 호출처 API 키로 `GET /health/ready`를 호출해 `sendPaused`(`{ paused, scope }`)를 본다. `scope`가 `all`이면 전체 정지, `caller`이면 이 호출처만 정지다. 이 값은 이벤트 피드로 오지 않는다.
+- 정지는 키 폐기와 다르다. 키 폐기는 새 요청을 막고 정지는 발송만 멈춘다. 호출처 키가 유출됐으면 운영자가 호출처 정지와 키 폐기를 함께 한다.
+- 운영자가 관리 토큰으로 작업을 취소하면(`POST /ops/jobs/{jobId}/cancel`) `CANCELED`와 `JOB_CANCELED`(`canceledBy: OPERATOR`)가 온다. 사용처는 호출처가 직접 취소한 경우와 같게 종결 처리한다(위 "작업 취소").
+
 ### 한계
 
 - 발송은 at-least-once다. SMTP 수락 직후 장애가 나면 같은 메일이 두 번 갈 수 있다(RQ-013). 완화로 `Message-ID`를 작업 ID에서 유도한 고정값으로 쓴다. Gmail이 같은 `Message-ID`를 중복으로 버리는지는 확인하지 못했다(ADR-0007 결정 8).

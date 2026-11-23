@@ -6,7 +6,7 @@
 
 2026-11-23에 제안했고 2026-11-24에 사용자가 승인했다. 열린 질문이던 7건은 이 문서가 적은 권고대로 승인했다. 승인된 값은 "미결정·확인하지 않은 것"의 "승인된 결정" 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 6"이다.
 
-구현 상태(2026-11-24): 구현 묶음 A(작업 취소, 결정 4의 호출처 API와 결정 10의 `0006`·`0007`)를 구현하고 자동 테스트로 검증했다. 요구사항은 RQ-040(호출처 작업 취소), RQ-041(취소 배포 호환성)이다. 구현 순서 1의 문서·샘플 반영(1.1~1.7)을 마쳤고 1.8(저장소 밖 호출처 확인)은 남았다. 구현 순서 2는 끝났다. 결정 4의 관리 API(`POST /ops/jobs/{jobId}/cancel`)와 호출처 단위 일괄 취소, 결정 1~3·5~9와 구현 순서 3~9는 시작하지 않았다. 구현 중 확정한 세부는 "구현 중 확정" 절이다. `docs/api/openapi.yaml`의 `JobStatus`·`EventType` enum과 `Job` 스키마는 취소 구현과 함께 바꿨다(`ReadyResponse`의 `additionalProperties`는 정지 구현 때 바꾼다).
+구현 상태(2026-11-24): 구현 묶음 A(작업 취소, 결정 4의 호출처 API와 결정 10의 `0006`·`0007`)와 묶음 B(결정 1 토큰 분리, 결정 2·3 발송 정지, 결정 4의 관리 취소 API, 결정 6 감사, 결정 7의 `/ops` REST, 결정 10의 `0008`)를 구현하고 자동 테스트로 검증했다. 요구사항은 RQ-040(호출처 작업 취소), RQ-041(취소 배포 호환성), RQ-042(운영 토큰과 `/ops` 인증), RQ-043(발송 정지), RQ-044(감사와 관리 취소)다. 구현 순서 1의 문서·샘플 반영(1.1~1.7)을 마쳤고 1.8(저장소 밖 호출처 확인)은 남았다. 구현 순서 2~4는 끝났다. 결정 5(`outcomeUncertain`), 결정 8(`allowedRecipientDomains`), 결정 9(피드 공백 신호), 결정 7의 CLI, 호출처 단위 일괄 취소, `0009`와 구현 순서 5~8은 시작하지 않았다. 구현 중 확정한 세부는 "구현 중 확정" 절이다. `docs/api/openapi.yaml`의 `ReadyResponse`는 `sendPaused`·`sendControls`를 더하고 `Problem`은 `forbidden`을 더했다(`additionalProperties: false`의 계약 변경).
 
 검증 범위는 코드 읽기와 PostgreSQL 17.11(로컬 compose)의 임시 schema 확인이다(2026-11-23).
 
@@ -355,7 +355,7 @@
 
 ## 구현 중 확정 (2026-11-24)
 
-결정 문구는 바꾸지 않는다. 아래는 구현 묶음 A(작업 취소)에서 정한 세부다.
+결정 문구는 바꾸지 않는다. 1~8은 구현 묶음 A(작업 취소), 9~18은 구현 묶음 B(토큰 분리·발송 정지·감사·`/ops`)에서 정한 세부다.
 
 1. **409 응답의 현재 상태 필드 이름(결정 4, `src/http/problem.ts`).** 결정 4는 "응답에 현재 `status`만 넣는다"고 적었다. RFC 9457의 `status`는 HTTP 상태 코드(409)이고 같은 이름으로 작업 상태를 넣으면 덮어쓴다. 작업의 현재 상태는 `jobStatus` 필드로 낸다. `type`은 `urn:mailo:problem:job-not-cancelable`이다. 오류 본문에 요청 값을 넣지 않는 규칙은 같다.
 2. **이벤트의 취소 주체 저장(결정 4, `queue/cancel.ts`).** `mail_events`에 새 컬럼을 두지 않는다. 이벤트의 `failure_reason`에 작업과 같은 값(`CANCELED_BY_CALLER`·`CANCELED_BY_OPERATOR`)을 쓰고, 응답의 `canceledBy`는 이 값에서 만든다(`intake/presenters.ts`의 `canceledByOf`). 모르는 값은 `null`이다. 이 저장 값이 구버전 인스턴스에서는 실패형 이벤트의 `failureReason`으로 그대로 나간다(결정 4의 구버전 동작과 같다).
@@ -365,6 +365,16 @@
 6. **호출처 경로의 라우트 구성(결정 4).** `POST /jobs/cancel`(Key)과 `POST /jobs/:jobId/cancel`(작업 ID)은 세그먼트 수가 달라 겹치지 않는다. 요청 본문은 읽지 않는다. 경로 파라미터의 퍼센트 디코딩 오류는 기존 `/jobs/` 접두사 처리로 `validation-failed`다(`http/problem.filter.ts`).
 7. **로그(결정 4, 구현 순서 9).** `job_canceled`(info)는 `jobId`, `callerId`, `canceledBy`만 담고 이미 취소된 작업의 재요청에는 남기지 않는다. 관리 토큰 경로의 `ops_job_canceled`는 이 묶음에 없다.
 8. **검증.** PostgreSQL 통합: `test/queue/cancel.integration-spec.ts`, `test/http/rest-cancel.integration-spec.ts`, `test/db/job-constraints.integration-spec.ts`, `test/e2e/mail-flow.integration-spec.ts`(취소 뒤 Worker가 발송하지 않음). 샘플: Gradle 단위 테스트와 `samples/spring-boot-relay/verify/run-e2e.sh`의 S15·S15b(스크립트 검증, 자동 테스트 아님).
+9. **관리 로그의 필드(결정 6, `ops/ops.service.ts`).** 결정 6은 `ops_pause_set`·`ops_pause_cleared`의 필드를 `actor`와 `scope`뿐이라고 적었다. 호출처 정지는 어느 호출처인지 알아야 하므로 `scope`를 `all`·`caller` 값으로 두고 `callerId`를 함께 낸다(Worker의 `send_paused`와 같은 모양이다). `ops_job_canceled`는 `actor`, `jobId`다. 상태를 바꾼 요청에만 남기고 멱등 재요청에는 남기지 않는다. 호출처 ID는 형식 검사를 통과한 식별자다.
+10. **호출처 키와의 비교 위치(결정 1, `callers/callers.module.ts`).** 결정 1의 "호출처 API 키와 같으면 거부"는 `CALLER_REGISTRY` provider가 레지스트리를 읽은 직후 `authenticate`로 한다. `loadConfig`는 레지스트리를 모르기 때문이다. 어기면 `ConfigError`(변수 이름만 담는다)로 기동하지 않는다. 이름 목록에 없는 이름의 `MAILO_OPS_ADMIN_TOKEN_*` 변수는 읽지 않고 거부하지도 않는다.
+11. **정지 읽기 시점(결정 2, `queue/claim.ts`).** `claim`은 차단기 행을 읽은 직후, 모드를 정하기 전에 `mail_send_controls`를 읽는다. 차단기가 닫혀 점유하지 않는 호출에서도 읽는다. Worker가 정지 상태 변화를 로그로 남기려면 모든 호출에서 관찰해야 하기 때문이다. 전체 정지면 `planQuotas`를 부르지 않는다. 읽은 상태는 `onSendControls` 콜백으로 Worker에 알린다.
+12. **정지 행 쓰기(결정 2, `queue/send-controls.ts`).** `INSERT ... ON CONFLICT (scope_type, scope_id) DO UPDATE SET scope_type = EXCLUDED.scope_type RETURNING ..., (xmax = 0)`로 쓴다. 이미 정지면 같은 값을 다시 써 행을 잠그고 처음 시각·이름을 돌려주며 `changed: false`다. 동시에 `DELETE`가 와도 항상 한 행을 돌려받는다. 해제는 `DELETE`의 `rowCount`로 `changed`를 정한다.
+13. **`account` 범위 행(결정 2).** 테이블은 `account`를 허용하지만 `GET /ops/pauses`는 `all`·`caller`만 내고 `claim`도 `account` 행을 읽지 않는다. 단계 7이 이 행을 쓰게 될 때 두 곳을 함께 바꾼다.
+14. **`/ops` 응답 헤더와 오류(결정 7).** 모든 `/ops` 성공 응답에 `Cache-Control: no-store`를 둔다. 결정 7에 없는 추가다. `callerId` 형식 오류는 `PUT`·`DELETE` 모두 400(`parameter: callerId`, `INVALID_FORMAT`)이고 경로의 잘못된 퍼센트 인코딩은 `/ops/jobs/`·`/ops/pauses/callers/` 접두사에서만 `validation-failed`다(`http/problem.filter.ts`). `GET /ops/audit`의 `limit`(1~200)·`before`(양의 int64) 오류는 `parameter`와 `INVALID_FORMAT`뿐이다. 같은 이름을 반복하면 오류다.
+15. **감사 쪽 나눔(결정 6).** `nextBefore`는 `limit`건을 넘게 있을 때만 마지막 항목의 `id`다. 정확히 `limit`건이 남았으면 `null`이다. 한 건 더 읽어 판정한다. `at`은 DB `now()`(트랜잭션 시작 시각)다. 항목의 `scope`는 `PauseScope`와 같은 모양이고 `jobId`는 취소 항목에만 있다.
+16. **관리 취소의 입력(결정 4, `queue/cancel.ts`).** `cancelJobAsOperator(client, { jobId })`가 호출처 범위를 푼 입력이다. 호출처 경로의 `cancelJob(pool, CancelTarget)`은 `callerId`가 필수라 호출처 키 경로에서 범위가 풀릴 수 없다. 두 함수가 같은 SQL 본문(`cancelWithin`)을 쓴다. 관리 경로는 호출자가 연 트랜잭션의 연결을 받아 감사를 같은 트랜잭션에 쓴다. 새로 취소했을 때만 감사와 `ops_job_canceled`를 쓴다.
+17. **`ReadyResponse`의 필드(결정 2).** 영향 범위 표대로 운영자 응답에 `sendControls`, 호출처 키 응답에 `sendPaused`를 더했다. 기존 통합 테스트(`rest-intake.integration-spec.ts`의 호출처 키 `ready` 응답 동등 비교)에 `sendPaused: { paused: false, scope: null }`을 더했다. 필드가 계약에 새로 생겼기 때문이고 다른 값은 바꾸지 않았다.
+18. **점유 쿼리 비용 측정(결정 2의 "비용").** 결정 2는 정지 조회 비용을 측정하지 않았다고 적었다. 로컬 PostgreSQL 17의 임시 schema에서 대기 10만 건으로 `EXPLAIN (ANALYZE, BUFFERS)`를 한 번씩 실행했다. 정지 조회는 `Seq Scan` 1행, 실행 0.009ms다. 정지가 없으면 점유 쿼리 계획이 바뀌지 않는다(인덱스 스캔, 실행 0.03ms). 정지 호출처 4개를 `caller_id <> ALL`로 빼도 같은 계획이다(실행 0.07ms). 정지한 호출처가 대기 작업 전부를 가지면 `mail_jobs` 전체를 읽는다(순서 인덱스를 못 쓰고 `Seq Scan`과 `Sort`, 실행 7.4ms와 13.8ms 두 사례). ADR-0007 구현 중 확정 10의 할당 초과와 같은 동작이다. 다중 인스턴스와 운영 크기는 측정하지 않았다.
 
 ## 검토한 대안
 

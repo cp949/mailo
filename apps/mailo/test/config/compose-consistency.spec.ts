@@ -64,8 +64,15 @@ describe("docker-compose.yml과 .env.example의 관계 (M6, RQ-025)", () => {
       "MAILO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS",
       "MAILO_DB_QUERY_TIMEOUT_MS",
       "MAILO_OPS_TOKEN",
+      "MAILO_OPS_ADMIN_NAMES",
+      "MAILO_OPS_ADMIN_TOKEN_ONCALL",
     ])
       expect(envExample).toContain(name);
+  });
+
+  it("운영 토큰 변수는 compose가 env_file(.env)로 전달하므로 이름별 environment 항목을 두지 않는다(ADR-0011 결정 1)", () => {
+    expect(compose).toMatch(/^ {4}env_file:\n {6}- \.env$/m);
+    expect(compose).not.toMatch(/^\s+MAILO_OPS_[A-Z_]+:/m);
   });
 });
 

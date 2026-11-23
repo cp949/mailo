@@ -5,7 +5,8 @@
 
 ## 결론
 
-- 발송이 멈췄으면 먼저 인증된 `GET /health/ready`의 `circuitBreaker`를 본다. `open`·`half_open`이면 SMTP 계정 단위 장애다. 차단기가 `closed`인데 쌓이면 운영자 토큰(`MAILO_OPS_TOKEN`)으로 호출해 `queue.oldestDueAgeSeconds`와 `worker.lastPollAgeSeconds`를 본다(`deployment.md` "헬스"). 둘 다 크면 점유 루프가 멈춘 것이다.
+- 발송이 멈췄으면 먼저 발송 정지를 확인한다. 호출처 키로 `GET /health/ready`를 호출해 `sendPaused`를, 운영자 토큰으로 `sendControls`를 본다("발송 정지").
+- 정지가 아니면 인증된 `GET /health/ready`의 `circuitBreaker`를 본다. `open`·`half_open`이면 SMTP 계정 단위 장애다. 차단기가 `closed`인데 쌓이면 운영자 토큰(`MAILO_OPS_TOKEN` 또는 관리 토큰)으로 호출해 `queue.oldestDueAgeSeconds`와 `worker.lastPollAgeSeconds`를 본다(`deployment.md` "헬스"). 둘 다 크면 점유 루프가 멈춘 것이다.
 - 차단기가 `closed`인데 작업이 쌓이면 호출처 할당(`caller_quota_exceeded`), lease 회수(`LEASE_EXPIRED`), DB 오류(`claim_failed`)를 순서대로 본다.
 - 파일이 입력 폴더에서 사라지지 않으면 `file_poll` 로그의 `unreadable`을 본다. 권한 문제다.
 - 파일 거부는 이벤트의 `reasonCode`로 원인을 고른다. 원본은 삭제되므로 호출처가 보유한 원본과 `fileName`·`sha256`을 대조한다.
@@ -287,11 +288,49 @@ SELECT id, caller_id, idempotency_key, status, failure_reason,
 | `MAILO_JOB_EXPIRY_SECONDS는 MAILO_JOB_EXPIRY_MAX_SECONDS 이하여야 한다` | 기본 TTL이 상한보다 크다 | 상한을 기본 TTL 이상으로 올리거나 상한 변수를 지운다 |
 | `MAILO_JOB_EXPIRY_MAX_SECONDS은 1 이상 31536000 이하의 정수여야 한다` | 범위 밖이거나 정수가 아니다 | 정수 초로 적는다 |
 
+## 발송 정지
+
+근거: RQ-043·044, ADR-0011 결정 2·3·6.
+
+신호: 운영자가 정지하면 `ops_pause_set`(info, `actor`, `scope`, 호출처 정지면 `callerId`), Worker가 정지를 처음 관찰할 때 `send_paused`(warn, `scope`, `callerId`)가 한 번 남는다. 해제하면 `ops_pause_cleared`와 `send_resumed`(info)가 한 번씩 남는다. `send_*`는 정지 상태가 바뀐 것을 관찰할 때만 남고 폴링마다 반복하지 않는다. 인스턴스마다 한 줄씩 나온다.
+
+확인:
+
+- 호출처 키: `GET /health/ready`의 `sendPaused`(`{ paused, scope }`). `scope`가 `all`이면 전체 정지, `caller`이면 그 호출처만 정지다.
+- 운영자·관리 토큰: `GET /health/ready`의 `sendControls`(`allPaused`, `pausedCallerCount`)와 `GET /ops/pauses`(정지한 범위, 시각, 토큰 이름).
+- 누가 언제 했는가: `GET /ops/audit` 또는 DB의 `SELECT at, actor, action, scope_type, scope_id, job_id FROM mail_ops_audit ORDER BY id DESC LIMIT 20;`
+
+```sql
+-- 현재 걸려 있는 정지(account 범위는 이 버전이 쓰지 않는다)
+SELECT scope_type, scope_id, paused_at, paused_by FROM mail_send_controls ORDER BY paused_at;
+```
+
+해석:
+
+- 정지 중에는 해당 범위의 `PENDING`·`RETRY_WAIT` 작업이 쌓이고 `queue.oldestDueAgeSeconds`가 커진다. `worker.lastPollAgeSeconds`는 작다(점유 루프는 돈다). 차단기가 `closed`이고 `caller_quota_exceeded`가 없는데 이렇게 쌓이면 정지를 먼저 본다.
+- 정지 중에도 작업의 `expiresAt`은 흐른다. 정지가 길면 `EXPIRED`(`JOB_EXPIRED`)가 대량으로 생긴다. 호출처 TTL(기본 24시간)보다 짧게 멈춘다.
+- 정지 명령 직후에도 최대 인스턴스 수 × `MAILO_WORKER_CONCURRENCY`건이 점유를 마친 채 발송될 수 있다. 이미 `SENDING`인 전송은 끝까지 간다.
+- 호출처 정지는 그 호출처만 멈춘다. 레지스트리에서 호출처를 빼도 큐에 있는 작업은 계속 나간다. 멈추려면 호출처 정지를 쓴다. 응답의 `inRegistry`가 `false`면 호출처 ID 오타일 수 있다(오타로 건 정지는 다른 호출처를 멈추지 않는다. `GET /ops/pauses`로 확인해 `DELETE`로 푼다).
+- 정지를 풀어도 차단기 상태는 바뀌지 않는다. 정지 전에 `open`이었으면 해제 뒤에도 `open`이다.
+- 롤링 배포 중에는 구버전 인스턴스가 정지를 읽지 않아 발송을 계속한다. 롤링 중에는 정지 명령을 쓰지 않는다(`deployment.md` "운영 토큰·정지 도입 배포 순서").
+- 점유 쿼리 비용: 정지한 호출처가 대기 작업 대부분을 가진 경우 점유 쿼리가 대기 작업을 읽고 버린다. 호출처 할당 초과와 같은 동작이다. 10만 건 대기에서 한 호출처가 전부 정지됐을 때 점유 쿼리가 약 7~14ms였다(로컬 PostgreSQL 17 단일 측정). 정지가 길어지면 호출처 작업을 취소하거나 만료를 기다린다.
+
+`/ops` 호출 오류:
+
+| 응답 | 의미 |
+| ---- | ---- |
+| 401 `unauthorized` | 토큰이 없거나 틀렸다. 호출처 API 키는 `/ops`에서 401이다. 관리 토큰을 설정하지 않은 서버에서는 관리 토큰 값도 401이다 |
+| 403 `forbidden` | 읽기 토큰으로 변경 endpoint를 불렀다. 관리 토큰을 쓴다 |
+| 400 `validation-failed` | `callerId` 형식 오류(`parameter: callerId`), `jobId` 형식 오류, `limit`·`before` 오류. 값은 응답에 없다 |
+| 503 | DB 오류. 정지·감사는 한 트랜잭션이라 둘 다 반영되지 않았다. 같은 요청을 다시 보내면 된다(멱등) |
+
+기동 거부: 관리 토큰 설정이 잘못되면 `설정이 올바르지 않다:` 아래에 변수 이름과 사유가 나온다(`MAILO_OPS_ADMIN_NAMES`의 형식·개수, `MAILO_OPS_ADMIN_TOKEN_<이름>` 없음·규칙 위반, 토큰끼리 같은 값). 토큰이 호출처 API 키와 같으면 같은 형식으로 `호출처 API 키와 같은 값이다`가 나온다. 값은 출력하지 않는다. 해석은 `key-management.md` "운영 토큰".
+
 ## 작업 취소
 
 근거: RQ-040·041, ADR-0011 결정 4.
 
-신호: `job_canceled`(info, `jobId`, `callerId`, `canceledBy`)는 호출처가 작업을 취소한 요청마다 한 번 남는다. 이미 취소된 작업에 다시 요청한 경우는 남지 않는다. `Idempotency-Key`와 수신자는 로그에 없다.
+신호: `job_canceled`(info, `jobId`, `callerId`, `canceledBy`)는 호출처가 작업을 취소한 요청마다 한 번 남는다. 운영자가 관리 토큰으로 취소하면(`POST /ops/jobs/{jobId}/cancel`) `ops_job_canceled`(info, `actor`, `jobId`)가 남고 감사 기록(`CANCEL_JOB`)이 같은 트랜잭션에 쓰인다. 이미 취소된 작업에 다시 요청한 경우는 둘 다 남지 않는다. `Idempotency-Key`와 수신자는 로그에 없다.
 
 ```sql
 -- 취소한 작업과 사유. failure_reason은 CANCELED_BY_CALLER 또는 CANCELED_BY_OPERATOR다
@@ -309,6 +348,7 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 - 취소 이벤트가 피드에 없으면 호출처의 cursor와 `type` 필터를 먼저 본다. `type` 필터를 쓰는 호출처는 `JOB_CANCELED`를 필터에 넣었는지 확인한다. 필터가 없으면 모든 종류가 온다.
 - 호출처가 `CANCELED`·`JOB_CANCELED`를 모르는 값으로 만나 outbox 행이 종결되지 않으면 사용처의 모르는 값 처리 문제다(`docs/api/README.md` "호출처가 모르는 값을 만났을 때"). 같은 Key의 `GET /jobs?idempotencyKey=`로 `status`를 확인한다.
 - 같은 Key로 다시 보냈는데 메일이 나가지 않는다: 그 Key의 작업이 `CANCELED`다. 같은 내용 재전송은 200과 `CANCELED` 작업을 돌려준다. 새 Key로 다시 보낸다.
+- 운영자가 취소했는지는 `failure_reason = 'CANCELED_BY_OPERATOR'`와 `mail_ops_audit`(`action = 'CANCEL_JOB'`, `job_id`)로 확인한다. 호출처 응답과 피드에는 `canceledBy: OPERATOR`만 있고 운영자 이름은 없다.
 - 롤링 배포 중에는 구버전 인스턴스가 `CANCELED`를 그대로 내보내고 `GET /events?type=JOB_CANCELED`를 400으로 거부한다(`deployment.md` "작업 취소 도입 배포 순서").
 
 이벤트 쓰기 실패 등 DB 오류로 취소 요청이 503이면 전이도 롤백되어 `PENDING`·`RETRY_WAIT` 그대로다. 같은 요청을 다시 보내면 된다.
@@ -350,6 +390,7 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 
 ## 검증하지 않은 것
 
+- "발송 정지"의 SQL은 스키마와 대조했고 통합 테스트(`test/queue/send-controls.integration-spec.ts`, `test/http/ops.integration-spec.ts`)가 동작을 확인한다. 점유 쿼리 비용 수치는 로컬 단일 측정이고 다중 인스턴스·운영 크기에서는 측정하지 않았다.
 - "작업 취소"의 SQL은 스키마와 대조했고 실행해 결과를 확인하지 않았다. 취소 동작 자체는 통합 테스트(`test/queue/cancel.integration-spec.ts`, `test/http/rest-cancel.integration-spec.ts`)가 확인한다.
 - 위 신호와 SQL을 운영 환경에서 실행해 결과를 확인하지 않았다. "등급별 적체"의 SQL은 로컬 PostgreSQL 17의 테스트 schema에서 실행해 문법과 결과 열을 확인했다(2026-11-23). 로그 이벤트 이름과 필드는 코드와 통합 테스트(차단기, 할당, 파일 폴러)로 확인했다. `breaker_not_closed`는 `worker/worker.integration-spec.ts`가 단언한다.
 - 실제 Gmail의 응답 코드·텍스트로 `lastReason` 분류를 대조하지 않았다(ADR-0007 구현 중 확정 2).
