@@ -103,7 +103,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 구현·검증 완료: NAS/NFS loopback 통합 테스트(`pnpm test:nfs` 31건, NFSv4.1·4.2 각각), 같은 호스트 Docker named volume 권한·e2e 스크립트(`scripts/volume/` 7항목 a~g), `ESTALE` 처리 수정(`file-channel/errno.ts`), 호출처별 발송 할당(RQ-032).
 - 문서: 운영 문서 `docs/operations/`(README, deployment, key-management, caller-onboarding, troubleshooting, nfs), 사용처 연동 지침(`caller-onboarding.md`의 outbox + relay, 이벤트 피드 소비, Key 조회 404 처리).
 - 권한 문구: 사용자 위임 결정으로 ADR-0004 결정 8과 RQ-024에 "default ACL 권장, 공용 그룹 + setgid는 대안" 보완 표기를 달았다(ADR-0004 구현 중 확정 28).
-- 미검증 목록: 실제 Gmail·Workspace SMTP, 실제 NAS 제품(서버 재시작·failover, NFSv3·4.0·Kerberos 포함), GitHub 호스티드 러너(워크플로는 작성만 했고 실행하지 않았다), bind mount·rootless Docker, 호스트 외 환경, Java 사용처 구현과 JOSE 상호 운용. SIGKILL 중복 발송과 컨테이너 SIGTERM은 로컬 Docker에서 관찰했다.
+- 미검증 목록: 실제 Gmail·Workspace SMTP, 실제 NAS 제품(서버 재시작·failover, NFSv3·4.0·Kerberos 포함), GitHub 호스티드 러너(워크플로는 작성만 했고 실행하지 않았다), bind mount·rootless Docker, 호스트 외 환경. Java 사용처 샘플(`samples/spring-boot-relay/`)은 컴파일하고 이 저장소의 Mailo와 실행해 확인했다(RQ-021·022, 확인한 범위는 각 RQ의 판정 근거). SIGKILL 중복 발송과 컨테이너 SIGTERM은 로컬 Docker에서 관찰했다.
 
 ## 1. 입력 채널과 경계
 
@@ -223,7 +223,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 **판정 근거:**
 
 - `queue/register.integration-spec.ts`, `http/rest-intake.integration-spec.ts`: 같은 Key 재호출이 작업 하나로 수렴한다(20건 동시 포함).
-- 문서 조건 둘: `docs/operations/caller-onboarding.md`가 relay 규칙(네트워크 오류·5xx 재시도, 4xx 비재시도, 409 영구 실패와 알림, 재시도 7일 이하)과 파일 채널 유실 구간을 기술한다. 문서 작성과 계약 대조이고 Java relay를 구현해 검증하지는 않았다.
+- 문서 조건 둘: `docs/operations/caller-onboarding.md`가 relay 규칙(네트워크 오류·5xx 재시도, 4xx 비재시도, 409 영구 실패와 알림, 재시도 7일 이하)과 파일 채널 유실 구간을 기술한다. 문서 작성과 계약 대조다. 2026-11-23에 Spring Boot relay 샘플(`samples/spring-boot-relay/`)을 Mailo와 실행해 규칙대로 동작함을 확인했다: 202·200은 완료 표시(같은 outbox 행 재전송은 200, `mail_jobs` 1행, 수신 1통), 네트워크 오류는 같은 Key로 backoff 재시도, 400은 재시도 없이 표시, 409는 격리, 401은 relay 중지. 샘플은 409·4xx 상태를 `QUARANTINED`·`REJECTED`로 나눠 둬서 문서 예시 스키마의 `FAILED`와 이름이 다르다.
 - 첫 조건의 `[ ]`는 근거가 있는데 체크가 빠져 있던 것을 2026-11-23 문서 정합에서 `[x]`로 고쳤다.
 
 ## 2. 발송
@@ -656,7 +656,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 
 ### RQ-021 비즈니스 트랜잭션과의 분리
 
-- [ ] **진행 상태:** 진행 중 (3단계, 문서는 작성했고 연동 예시는 컴파일·실행하지 않았다)
+- [x] **진행 상태:** 검증 완료 (3단계, 2026-11-23 Spring Boot 샘플을 컴파일하고 로컬 Mailo와 실행해 확인했다)
 
 **요구사항:**
 
@@ -669,11 +669,12 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - [x] 사용처 연동 문서가 커밋 후 전송과 outbox + relay를 구분해 기술한다. (`docs/operations/caller-onboarding.md` 7절 표)
   - outbox + relay는 요청 유실이 없다.
   - 커밋 후 전송은 전송 전 장애 시 요청이 유실될 수 있다.
-- [ ] Mailo가 중단된 상태에서도 사용처 비즈니스 트랜잭션이 영향을 받지 않는 연동 예시가 있다. (같은 문서 7절에 Spring Boot outbox + relay 구성·SQL·Java 예시를 썼다. 컴파일·실행하지 않았고 Mailo 중단을 사용처 코드로 재현하지 않았다.)
+- [x] Mailo가 중단된 상태에서도 사용처 비즈니스 트랜잭션이 영향을 받지 않는 연동 예시가 있다. (`samples/spring-boot-relay/`. 2026-11-23 JDK 21·Gradle 8.14.3으로 컴파일하고 `verify/run-e2e.sh`로 이 저장소의 Mailo와 실행했다. 시나리오 S8: Mailo 프로세스를 내린 상태에서 주문이 201로 커밋됐고, outbox가 `PENDING`으로 backoff 재시도하다가 Mailo 재기동 뒤 `SENT`가 됐다.)
 
 **판정 근거:**
 
-- 문서 대조만이다. 예시의 헤더·상태 코드·필드는 `docs/api/openapi.yaml`과 코드(`intake`, `envelope`, `file-channel`)에 맞췄다. 자동 검증은 없다.
+- 샘플 실행(2026-11-23, `samples/spring-boot-relay/verify/run-e2e.sh` 76항목 통과, 실패 0): 주문·재고 차감·outbox를 한 `@Transactional`에 쓰고, 재고 부족 시 주문과 outbox가 함께 롤백됐다(메일 0통, S6). Mailo 중단 중 주문은 201이고 outbox는 `PENDING`과 `NETWORK_ERROR`로 재시도했다(S8). 이벤트 피드로 `SENT`·`FAILED`·`EXPIRED`·`INTAKE_REJECTED`를 사용처 쪽에 반영했다(S1·S3·S7·S13). 결과 표와 한계는 `samples/spring-boot-relay/README.md`다.
+- 범위: 로컬 PostgreSQL 17, 로컬 SMTP 서버, JDK 21. 이 검증은 jest나 Mailo CI에 없다(Java 빌드 환경 분리). 여러 relay 인스턴스의 `SKIP LOCKED` 경합, 전송 도중 relay 강제 종료, 7일 `DEAD` 전이의 시각 경과는 재현하지 않았다.
 
 ## 9. 보안
 
@@ -697,7 +698,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 
 **수용 조건:**
 
-- [x] 암호화한 요청과 암호화하지 않은 요청이 모두 정상 발송된다. (REST는 Worker로 SMTP 발송까지, 파일 채널의 JWE 파일은 복호화·등록까지 확인했다. 파일 JWE의 SMTP 발송 e2e는 하지 않았다. 등록 이후 경로는 REST와 같다.)
+- [x] 암호화한 요청과 암호화하지 않은 요청이 모두 정상 발송된다. (REST는 Worker로 SMTP 발송까지 확인했다. 파일 채널의 JWE 파일은 jest에서 복호화·등록까지 확인했고, 2026-11-23 Spring Boot 샘플(nimbus-jose-jwt)이 JWS+JWE 파일을 써서 SMTP 수신까지 확인했다.)
 - [x] 암호화한 파일을 열어도 본문과 제목을 읽을 수 없다. (JWE 파일의 바이트에 제목·본문이 없고, 등록 뒤 DB에도 평문이 없다. 파일 채널 통합 테스트.)
 - [x] 복호화에 실패한 요청의 오류 기록과 로그에서 canary 문자열이 검색되지 않는다. (REST 응답과 로그, 파일 채널의 거부 기록·이벤트·로그. 파일은 변조한 JWE와 `caller`가 다른 JWE로 확인했다.)
 - [x] `caller`가 요청의 `caller_id`와 다른 JWE는 거부된다.
@@ -712,7 +713,8 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - `envelope/rest-envelope.integration-spec.ts`: 실제 HTTP와 PostgreSQL로 JWE 왕복(202, DB에 평문 없음), 같은 Key의 평문·JWE 재요청 200과 내용 변경 409, 400 코드(`KID_UNKNOWN`·`DECRYPTION_FAILED`·`CALLER_MISMATCH`·`CONTROL_CHARACTER`), 응답·로그에 canary와 암호문 없음, Worker로 JWE 요청과 평문 요청이 SMTP로 나감.
 - `file-channel/poller.integration-spec.ts`: JWE 파일 수집, `caller` 불일치(`CALLER_MISMATCH`), 알 수 없는 `kid`(`DECRYPTION_FAILED`로 기록), 암호화한 제목의 CR/LF 거부, 변조한 JWE의 거부와 canary 부재.
 - 한계 문구(`signature.mode=none`, DB AAD 범위)는 문서 항목이다. 코드 동작은 바꾸지 않았고 이를 단언하는 자동 테스트는 없다. 서명 `required`가 수신자 변경을 거부한다는 서술은 서명이 `payload` 전체를 덮는다는 JWS 성질에 근거한다. 잘못된 서명의 거부는 `file-channel/poller.integration-spec.ts`가 확인하지만, 수신자만 바꾼 서명 파일을 거부하는 전용 테스트는 없다.
-- 미확인: nimbus-jose-jwt 등 다른 JOSE 구현이 만든 JWE·JWS와의 상호 운용, 파일 JWE의 SMTP 발송 e2e, JWE 개인키 유출 때의 대응 절차(미결정, `key-management.md`).
+- nimbus-jose-jwt 10.10 상호 운용(2026-11-23, `samples/spring-boot-relay/verify/run-e2e.sh`): 확인한 조합은 JWE `RSA-OAEP-256`+`A256GCM`(RSA 3072, protected `kid`·`caller`)을 REST `content`로 보낸 것(202, SMTP 수신, 복호화된 제목·본문 일치)과 파일 채널로 보낸 것, JWS flattened `HS256`(protected `kid`·`caller`·`iat` 숫자)을 파일 채널로 보낸 것(`signature.mode=required`, SENT, 수집 거부 0건)이다. 다른 비밀키 서명은 `SIGNATURE_INVALID`, 알 수 없는 `kid`는 400 `KID_UNKNOWN`으로 거부됐다. 두 구현 사이의 형식 해석 차이는 관찰되지 않았다.
+- 미확인: 다른 nimbus 버전, `RSA-OAEP-256` 외 알고리즘, 키 교체 중 이전 `kid`의 상호 운용, 2 MiB 근처 큰 본문, JWE 개인키 유출 때의 대응 절차(미결정, `key-management.md`).
 
 **한계:**
 

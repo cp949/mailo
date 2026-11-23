@@ -231,5 +231,5 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 
 - 키 교체 절차 전체를 운영 환경에서 실행하지 않았다. 단위·통합 테스트는 개별 규칙(키 2개 교체, 이전 `kid` 복호화, 보존 기간 전 삭제 거부, 지문 키 교체 뒤 재시도, DB 키 교체 뒤 복호화)을 확인한다.
 - 다중 인스턴스에서 키 버전이 어긋났을 때의 동작(위 3단계 이유)은 코드 읽기 결과다.
-- nimbus-jose-jwt 등 Java 구현이 만든 JWE·JWS와의 상호 운용을 확인하지 않았다.
+- nimbus-jose-jwt 10.10은 JWE(`RSA-OAEP-256`+`A256GCM`)와 JWS(`HS256`, flattened)를 한 조합씩 확인했다(`samples/spring-boot-relay/README.md`). 다른 버전·알고리즘, 키 교체 중 이전 `kid`로 암호화한 요청은 확인하지 않았다.
 - 유출 대응 절차를 정하지 않았다.

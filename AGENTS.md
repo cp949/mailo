@@ -8,6 +8,7 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 - 패키지를 새로 나누지 않는다. 모듈 경계는 `apps/mailo/src/` 디렉터리로 둔다(RQ-029).
 - 모듈: `intake`(REST), `queue`(claim·lease 복구·완료 기록·sweep·차단기 저장소), `worker`(점유·전송·기록 루프, 종료 drain, 설정→Worker·SMTP 옵션 조립), `smtp`(전송·단계 기준 분류·백오프 계산), `crypto`(본문 암호화·지문), `envelope`(JWS 서명 검증·JWE 복호화, 수집 공용 파이프라인 `openRequest`·큐 등록 입력 변환 `toRegisterInput`·개인키 키링), `file-channel`(파일 채널 폴러, ADR-0004), `events`, `callers`(레지스트리·API 키), `health`, `config`, `db`(pg 풀·마이그레이션), `http`(problem+json 오류·요청 ID·본문 읽기 공통 처리), `validation`(요청 입력 검증, config와 intake가 공유).
 - 각 모듈은 `index.ts`로만 공개한다. 다른 모듈은 `index.ts`를 통해서만 import한다.
+- `samples/spring-boot-relay/`는 사용처용 Java 샘플(Gradle)이다. pnpm 워크스페이스, turbo, Mailo CI 대상이 아니고 Mailo 코드를 import하지 않는다. 검증은 `samples/spring-boot-relay/verify/run-e2e.sh`(Docker, JDK 21 필요, 자동 테스트 아님)다.
 - 앱 조립은 `app.module.ts`·`app-lifecycle.ts`·`worker-port.ts`가 맡는다. 파일 폴러는 `file-channel/port.ts`의 `FILE_POLLER`로 같은 방식으로 연결한다. `main.ts`는 `createApp({ config, worker: {} })`로 실제 Worker를 켠다. 옵션 없이 만든 앱(테스트 기본값)은 발송하지 않는다.
 - 본문 평문 형식은 `{"v":1,"subject","text","html"}` 하나다. `queue`↔`crypto` 연결은 `crypto/queue-adapters.ts` 한 곳이고 Worker·intake도 이 어댑터를 쓴다. 어댑터를 새로 만들지 않는다.
 - DB는 PostgreSQL 13 이상(ADR-0006). ORM을 쓰지 않고 `pg`와 순수 SQL을 쓴다.

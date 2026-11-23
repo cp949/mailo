@@ -1,0 +1,22 @@
+# 비밀 값(relay.api-key 등)은 환경 변수로 준다. 이 파일에는 가짜 개발 값과 기본값만 둔다.
+spring:
+  application:
+    name: mailo-relay-sample
+  datasource:
+    url: ${RELAY_DB_URL:jdbc:postgresql://127.0.0.1:15432/sample}
+    username: ${RELAY_DB_USER:sample}
+    password: ${RELAY_DB_PASSWORD:sample-dev-password}
+  task:
+    scheduling:
+      pool:
+        size: 2 # relay와 이벤트 폴링이 서로를 막지 않게 한다
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+relay:
+  base-url: http://127.0.0.1:3000
+  caller-id: sample
+  from: no-reply@example.com
+  # api-key, signature.*, encryption.*, file-inbox-dir은 환경 변수나 --relay.* 인자로 준다.

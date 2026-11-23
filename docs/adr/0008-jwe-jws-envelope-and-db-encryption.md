@@ -9,6 +9,7 @@
 2026-11-23 파일 채널 폴러(`src/file-channel`)가 `openRequest`에 연결돼 JWS 파일과 JWE 파일의 수집·거부 기록까지 PostgreSQL 통합 테스트로 확인했다. 구현 세부는 "구현 중 확정" 절과 ADR-0004 "구현 중 확정"을 따른다.
 
 - ADR-0001 결정 6의 암호화 형식이 구체화되고, ADR-0001 미확정 중 알고리즘·`kid`·키 교체·키 배포 항목이 해소된다.
+- 2026-11-23 Java 호출처 샘플(nimbus-jose-jwt 10.10)과 Mailo(`jose` 6.2.18)의 상호 운용을 확인했다(구현 중 확정 11).
 - 이 ADR의 결정 2가 ADR-0004 결정 9의 HMAC 서명을 JWS로 대체한다.
 - 이 ADR의 결정 3이 ADR-0004 결정 5의 3~6단계를 대체한다.
 - 이 ADR의 결정 2가 ADR-0004 결정 1의 공통 스키마 적용 위치를 `payload`로 정한다.
@@ -150,6 +151,11 @@ ADR-0001은 호출처 선택 봉투 암호화와 DB 본문 상시 암호화를 �
    - AES-GCM의 AAD는 `job_id`뿐이다. 행 사이 암호문 바꿔치기는 막지만, DB 쓰기 권한자가 같은 행의 `recipients`(평문 jsonb)를 바꾸는 것은 막지 못한다. 바뀐 수신자로 본문이 발송된다.
    - 완화는 운영 절차다. DB 쓰기 계정을 Mailo 앱으로 최소화하고, 백업·복구본의 무결성을 관리한다(`docs/operations/key-management.md`, `deployment.md`).
    - 향후 선택지(이번 범위 아님): 새 행부터 `key_version`(또는 별도 `aad_version`)으로 AAD 형식을 구분해 `job_id`와 `recipients` 해시를 함께 넣는다. 기존 행은 이전 형식 그대로 복호화하므로 마이그레이션 없이 가능하다. 도입하려면 새 ADR로 결정한다.
+11. **nimbus-jose-jwt 상호 운용 확인(결정 1·2·8, 2026-11-23).** 결정 문구는 바꾸지 않는다. 구현 중 확정 8의 "nimbus-jose-jwt와의 상호 운용은 확인하지 않았다"는 아래 범위에서 확인으로 바뀌었다.
+   - 확인 방법: `samples/spring-boot-relay/verify/run-e2e.sh`가 Spring Boot 샘플(nimbus-jose-jwt 10.10, JDK 21)이 만든 요청을 이 저장소의 Mailo(`jose` 6.2.18)에 보내 SMTP 수신까지 확인했다. 로컬 PostgreSQL 17과 로컬 SMTP 서버 대상이다.
+   - 확인한 조합: JWE `RSA-OAEP-256` + `A256GCM`, RSA 3072 공개키, protected header `kid`·`caller`(`customParam`)를 REST `content`와 파일 채널 `content`로. JWS flattened `HS256`, protected header `kid`·`caller`·`iat`(숫자)를 파일 채널(`signature.mode=required`)로. 모두 수신까지 갔고 두 구현 사이의 형식 해석 차이는 관찰되지 않았다.
+   - 거부 확인: 다른 비밀키로 서명한 JWS는 `SIGNATURE_INVALID`(`INTAKE_REJECTED`), 알 수 없는 `kid`의 JWE는 400 `KID_UNKNOWN`.
+   - 확인하지 않은 것: 다른 nimbus 버전, 다른 알고리즘, 키 교체 중 이전 `kid`, 2 MiB 근처의 큰 본문, `jose` 외 다른 구현.
 
 ## 미확정
 

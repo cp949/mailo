@@ -2,7 +2,7 @@
 
 호출처(사용처)를 Mailo에 등록하는 운영 절차와, 사용처가 따라야 하는 연동 규칙을 적는다.
 계약의 기준은 `docs/api/openapi.yaml`과 `docs/api/README.md`이고, 이 문서의 예시는 그 계약과 2026-11-23 코드에 맞춰 썼다.
-표기: "추정"은 확인하지 않은 값이다. Java 코드와 SQL 예시는 컴파일·실행하지 않았다. 필드 이름, 헤더, 상태 코드, 파일 형식은 코드·계약과 대조했다.
+표기: "추정"은 확인하지 않은 값이다. 이 문서의 인라인 Java 코드와 SQL 조각은 그대로 컴파일하지 않았다. 컴파일하고 이 저장소의 Mailo와 실행한 구현은 [`samples/spring-boot-relay/`](../../samples/spring-boot-relay/README.md)다(2026-11-23, JDK 21, nimbus-jose-jwt 10.10). 필드 이름, 헤더, 상태 코드, 파일 형식은 코드·계약과 대조했고 샘플 실행으로도 확인했다.
 
 ## 결론
 
@@ -181,7 +181,7 @@ REST 본문과 같은 필드에 `version`(정수 1)과 `idempotencyKey`가 더�
 
 JWE 사용 시 `subject`·`text`·`html` 대신 `content`(JWE compact, 점으로 구분한 5부분)를 넣는다. 평문과 암호문을 한 요청에 섞으면 `CONFLICTING_FIELDS`(REST) 또는 `VALIDATION_FAILED`(파일)다. 복호화 평문은 UTF-8 JSON `{"subject","text","html"}`뿐이다. `alg`는 `RSA-OAEP-256`, `enc`는 `A256GCM`, protected header에 `kid`(Mailo가 알려 준 값)와 `caller`(호출처 `id`)를 넣는다. 수신자와 `Idempotency-Key`는 평문이다.
 
-### Java 예시(컴파일하지 않았다)
+### Java 예시(조각은 컴파일하지 않았다. 같은 API 호출을 쓰는 `samples/spring-boot-relay/`의 `FileChannelWriter`·`RequestSigner`·`EnvelopeEncryptor`는 컴파일·실행했다)
 
 최종 파일 쓰기(JDK만 사용):
 
@@ -200,7 +200,7 @@ static void writeRequestFile(Path inbox, UUID requestId, String json) throws IOE
 }
 ```
 
-서명(nimbus-jose-jwt 사용 가정, 버전은 사용처가 정하고 Mailo와의 상호 운용은 확인하지 않았다):
+서명(nimbus-jose-jwt. 10.10에서 `kid`·`caller`·`iat`를 `customParam`으로 넣은 HS256 flattened JWS를 Mailo가 `signature.mode=required`로 받는 것을 확인했다. 다른 버전은 확인하지 않았다):
 
 ```java
 JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.HS256)
@@ -254,6 +254,8 @@ Content-Type: application/json
 
 ## 7. Spring Boot 사용처: outbox + relay
 
+실행 가능한 구현은 [`samples/spring-boot-relay/`](../../samples/spring-boot-relay/README.md)다(Gradle, Spring Boot 3.5.16, JDK 21). 아래 규칙과의 차이는 두 가지다. 샘플은 상태에 `REJECTED`(400·401·413·415 등 재시도 불가, 파일 수집 거부)와 `QUARANTINED`(409, 같은 Key에 다른 내용)를 두어 Mailo의 최종 실패 `FAILED`와 구분한다. 401은 행 하나를 `REJECTED`로 표시한 뒤 relay를 프로세스 재시작까지 멈춘다. 이 규칙 표(6절) 중 Mailo 응답으로 실행 확인한 것은 202, 200, 400, 401, 409와 네트워크 오류(연결 거부)다. 5xx, 413, 415, 429는 샘플의 `SendDecision` 단위 테스트로 판정만 확인했고 Mailo 응답으로는 재현하지 않았다.
+
 ### 구조(RQ-004, RQ-021, ADR-0001 결정 4)
 
 비즈니스 트랜잭션이 발송 요청을 자기 DB의 outbox 행으로 같은 트랜잭션에 쓴다. 커밋 뒤 별도 relay가 outbox를 읽어 Mailo로 보낸다. Mailo가 내려가 있어도 비즈니스 트랜잭션은 영향받지 않는다. relay는 outbox 행이 남아 있는 한 재시도한다.
@@ -272,7 +274,7 @@ Mailo는 사용처 DB를 알지 못하고 접속하지 않는다(RQ-003). 사용
 CREATE TABLE mail_outbox (
   id              uuid PRIMARY KEY,                  -- Idempotency-Key로 쓴다. 요청 단위로 고유하다
   request_json    text NOT NULL,                     -- 등록 시점에 확정한 요청. 재시도에서 필드를 바꾸지 않는다(바꾸면 409)
-  status          text NOT NULL DEFAULT 'PENDING',   -- PENDING, DELIVERED, SENT, FAILED, EXPIRED, DEAD
+  status          text NOT NULL DEFAULT 'PENDING',   -- PENDING, DELIVERED, SENT, FAILED, EXPIRED, DEAD (샘플은 REJECTED, QUARANTINED 추가)
   attempt_count   integer NOT NULL DEFAULT 0,
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -291,10 +293,10 @@ CREATE INDEX mail_outbox_due_idx ON mail_outbox (next_attempt_at) WHERE status =
 - 결과 처리는 위 표(6절)를 따른다.
 - 재시도 간격은 exponential backoff에 jitter를 더하고 상한을 둔다. 수치는 사용처가 정한다. 예시 값: 시작 30초, 배수 2, 상한 1시간, jitter ±20%(추정).
 - **최대 재시도 기간은 7일 이하다.** `created_at`부터 7일이 지나면 `DEAD`로 기록하고 알린다. Key 보존 기간(종결 후 30일)보다 충분히 짧아야 하기 때문이다(7일은 추정). 서명 파일은 `iat` 허용 기간(기본 7일)도 같은 한도를 만든다.
-- 409는 영구 실패다. 행을 `FAILED`로 두고 운영 알림을 낸다. 같은 Key로 다른 내용을 보내려는 버그다.
+- 409는 영구 실패다. 행을 영구 실패 상태(`FAILED`, 샘플은 `QUARANTINED`)로 두고 운영 알림을 낸다. 같은 Key로 다른 내용을 보내려는 버그다.
 - HTTP 타임아웃은 사용처가 정한다. 예시: 연결 5초, 요청 10초(추정). 타임아웃은 등록 여부를 알 수 없는 경우이므로 같은 Key로 재시도한다.
 
-HTTP 호출과 판정(JDK `java.net.http`, 컴파일하지 않았다):
+HTTP 호출과 판정(JDK `java.net.http`. 이 조각은 컴파일하지 않았다. 샘플의 `MailoClient`·`SendDecision`이 같은 호출 방식으로 실행 확인됐다):
 
 ```java
 enum Decision { DONE, RETRY, FAIL_AND_ALERT }
@@ -388,8 +390,8 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 
 ## 검증하지 않은 것
 
-- Spring Boot 사용처 구현 전체. 이 문서의 Java·SQL 예시는 실행하지 않았다.
-- nimbus-jose-jwt 등 Java 구현이 만든 JWE·JWS와 Mailo의 상호 운용(Mailo 테스트는 `jose`와 직접 서명한 값으로 확인했다).
+- 이 문서의 인라인 Java·SQL 조각 자체. 샘플(`samples/spring-boot-relay/`)이 같은 규칙을 구현해 Mailo와 실행됐고, 여러 relay 인스턴스의 동시 실행·전송 도중 강제 종료·7일 `DEAD` 전이의 시각 경과는 재현하지 않았다.
+- nimbus-jose-jwt 10.10 외 버전, `RSA-OAEP-256`+`A256GCM`·`HS256` 외 알고리즘, 키 교체 중 이전 `kid`로 암호화한 요청과의 상호 운용. 위 조합은 샘플 실행으로 확인했다.
 - 실제 NAS 제품, bind mount, rootless Docker·`userns-remap`, ACL을 지원하지 않는 파일시스템에서의 권한 구성.
 - 호출처가 Linux가 아닌 환경에서의 파일 쓰기.
 - 실제 Gmail·Workspace SMTP.
