@@ -4,3 +4,11 @@ packages:
 # jest-haste-map의 watch 모드 전용 네이티브 모듈. 빌드 스크립트를 실행하지 않는다.
 allowBuilds:
   "@parcel/watcher": false
+
+# jest 30.5.2(최신)가 끌어오는 취약 버전을 패치 버전으로 올린다. 개발 의존성 전용이고 운영 이미지(--prod)에는 없다.
+# glob: GHSA-3g3m-2fjr-6pw4, minimatch: GHSA-g3hv-75wg-m249.
+# test-exclude·jest-runtime 등이 glob ^10·^13, minimatch ^9·^10을 요구해 상위 갱신으로는 풀리지 않는다.
+# jest가 glob ^14·minimatch ^11을 직접 요구하게 되면 지운다.
+overrides:
+  "glob@>=9.0.0 <14.0.2": "^14.0.2"
+  "minimatch@>=7.0.0 <11.0.1": "^11.0.1"
