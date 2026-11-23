@@ -86,6 +86,24 @@ describe("Worker 옵션 검증", () => {
       validateWorkerOptions({ ...defaultWorkerOptions(120), concurrency: 1.5 }),
     ).toThrow(WorkerOptionsError);
   });
+
+  it("점유 경로 비율은 기본 0.1이고 0 이상 1 이하만 받는다 (RQ-035, ADR-0009)", () => {
+    expect(defaultWorkerOptions(120).claimFifoRatio).toBe(0.1);
+    for (const ratio of [0, 0.5, 1])
+      expect(() =>
+        validateWorkerOptions({
+          ...defaultWorkerOptions(120),
+          claimFifoRatio: ratio,
+        }),
+      ).not.toThrow();
+    for (const ratio of [-0.01, 1.01, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(() =>
+        validateWorkerOptions({
+          ...defaultWorkerOptions(120),
+          claimFifoRatio: ratio,
+        }),
+      ).toThrow(WorkerOptionsError);
+  });
 });
 
 describe("SMTP 결과를 시도 결과로 변환", () => {

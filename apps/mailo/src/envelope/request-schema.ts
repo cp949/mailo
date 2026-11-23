@@ -6,11 +6,14 @@
  * - `null` 값과 `to` 누락·빈 배열을 거부한다(`to`는 1명 이상).
  * - 평문 모드(`subject`·`text`·`html`)와 암호화 모드(`content`)를 섞을 수 없다.
  * - 파일 채널은 `version`(1)과 `idempotencyKey`를 추가로 요구한다. REST는 Key를 헤더로 받으므로 이 두 필드는 정의되지 않은 필드다.
+ * - `priority`는 선택 필드이고 `LOW`·`NORMAL`·`HIGH`·`URGENT`만 받는다(대소문자 구분). 생략하면 `NORMAL`이다(RQ-033).
+ *   라우팅에 쓰는 값이라 최상위 평문 필드다. JWE 복호화 평문 안의 `priority`는 `open-request.ts`가 `UNKNOWN_FIELD`로 거부한다.
  * - 오류는 위치(JSON Pointer)와 고정 코드만 담는다. 요청 값은 담지 않는다(RQ-027).
  *
  * 암호화 모드(`content`)는 여기서 수신자·발신자 규칙까지만 본다. 제목·본문은 복호화한 뒤에 검증한다(ADR-0008 결정 3).
  * 그래서 성공 결과의 `outer`는 암호화 모드에서 제목·본문이 자리표시자다. 그대로 쓰지 않는다.
  */
+import { DEFAULT_PRIORITY, isPriority, type Priority } from "../queue/index.js";
 import {
   validateIdempotencyKey,
   validateMailRequest,
@@ -33,6 +36,7 @@ const COMMON_FIELDS = [
   "text",
   "html",
   "content",
+  "priority",
 ] as const;
 const FILE_ONLY_FIELDS = ["version", "idempotencyKey"] as const;
 const PLAIN_CONTENT_FIELDS = ["subject", "text", "html"] as const;
@@ -55,6 +59,8 @@ export type RequestSchemaParse =
       content: string | null;
       /** 파일 채널의 `idempotencyKey`. REST는 null이다. */
       idempotencyKey: string | null;
+      /** 요청한 우선순위. 생략하면 `NORMAL`이다(RQ-033). */
+      priority: Priority;
     }
   | { ok: false; reason: SchemaFailureReason; errors: ValidationErrorItem[] };
 
@@ -156,6 +162,13 @@ export function parseRequestSchema(
     }
   }
 
+  // null은 위 반복문이 이미 INVALID_FORMAT으로 보고했다. 숫자·빈 문자열·소문자·정의되지 않은 이름도 같은 코드다.
+  const rawPriority = body["priority"];
+  let priority: Priority = DEFAULT_PRIORITY;
+  if (isPriority(rawPriority)) priority = rawPriority;
+  else if (rawPriority !== undefined && rawPriority !== null)
+    report("/priority", "INVALID_FORMAT");
+
   const content = body["content"];
   const hasContent = content !== undefined;
   const plainPresent = PLAIN_CONTENT_FIELDS.some((f) => body[f] !== undefined);
@@ -179,6 +192,7 @@ export function parseRequestSchema(
   delete candidate["content"];
   delete candidate["version"];
   delete candidate["idempotencyKey"];
+  delete candidate["priority"];
   for (const [name, value] of Object.entries(candidate))
     if (value === null) delete candidate[name];
   if (subjectless) {
@@ -207,5 +221,11 @@ export function parseRequestSchema(
       (attachments ? "ATTACHMENTS_NOT_SUPPORTED" : "VALIDATION_FAILED");
     return { ok: false, reason, errors };
   }
-  return { ok: true, outer: checked.value, content: jwe, idempotencyKey };
+  return {
+    ok: true,
+    outer: checked.value,
+    content: jwe,
+    idempotencyKey,
+    priority,
+  };
 }

@@ -77,6 +77,7 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
       lease: { seconds: 120 },
       pollMs: 1000,
       concurrency: 4,
+      claimFifoRatio: 0.1,
       retention: {
         bodyGraceSeconds: 86_400,
         recordRetentionSeconds: 2_592_000,
@@ -725,6 +726,30 @@ describe("DB 시간제한·풀 크기·운영자 토큰 (H1·M1·H2)", () => {
       token,
     );
   });
+});
+
+describe("점유 경로 비율 MAILO_CLAIM_FIFO_RATIO (RQ-035, ADR-0009)", () => {
+  it("기본값은 0.1이고 0과 1 경계값과 소수를 받는다", () => {
+    expect(loadConfig(env()).worker.claimFifoRatio).toBe(0.1);
+    for (const [text, value] of [
+      ["0", 0],
+      ["1", 1],
+      ["0.25", 0.25],
+    ] as const) {
+      expect(
+        loadConfig(env({ MAILO_CLAIM_FIFO_RATIO: text })).worker.claimFifoRatio,
+      ).toBe(value);
+    }
+  });
+
+  it.each(["-0.1", "1.01", "2", "abc", "0.1x", "NaN", "Infinity"])(
+    "범위 밖이거나 숫자가 아닌 값(%s)은 기동을 거부하고 변수 이름으로 가리킨다",
+    (text) => {
+      expect(issuesOf({ MAILO_CLAIM_FIFO_RATIO: text })).toContain(
+        "MAILO_CLAIM_FIFO_RATIO",
+      );
+    },
+  );
 });
 
 describe("기본값이 안전하지 않은 설정 거부 (M4)", () => {

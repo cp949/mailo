@@ -14,6 +14,8 @@
  *   `stop()`은 `pause()`를 포함하고 진행 중 전송을 기다린다. drain 상한(`drainTimeoutMs`)은 `pause()` 시점부터 센다.
  *   시간이 지나면 남은 전송을 끊고 결과를 기록하지 않는다. lease는 풀지 않는다.
  *   그 작업은 lease 만료 뒤 `LEASE_EXPIRED`로 회수된다(결정 12, 중복 발송 가능, RQ-013).
+ * - 점유 경로(RQ-035): claim 호출마다 `claimRandom() < claimFifoRatio`이면 대기 순서 경로, 아니면 우선순위 경로다.
+ *   경로 상태를 DB에 두지 않으므로 여러 인스턴스가 같은 규칙으로 동작한다.
  * - 시계·난수·발송기·BodyCipher는 주입한다. 작업 시각은 모두 DB `now()`다.
  */
 import type pg from "pg";
@@ -57,6 +59,11 @@ export interface WorkerDeps {
   clock?: Clock;
   /** [0, 1) 난수. 재시도 jitter와 폴링 간격에 쓴다. 생략하면 Math.random이다. */
   random?: () => number;
+  /**
+   * [0, 1) 난수. claim 경로 선택에만 쓴다(RQ-035). 생략하면 Math.random이다.
+   * jitter 난수(`random`)와 나눈 이유: 테스트가 둘 중 하나만 고정해도 다른 쪽 결과가 바뀌지 않게 한다.
+   */
+  claimRandom?: () => number;
   logger?: AppLogger;
   /** 로그의 `instance`와 같은 값. 시도 기록(`mail_attempts.instance`)에 남겨 로그와 DB 행을 잇는다. 생략하면 NULL이다. */
   instance?: string;
@@ -128,6 +135,7 @@ export function createWorker(
   const { pool, sender, bodyCipher, defaultFrom } = deps;
   const clock = deps.clock ?? systemClock;
   const random = deps.random ?? Math.random;
+  const claimRandom = deps.claimRandom ?? Math.random;
   const log = deps.logger ?? silentLogger;
   const completeDeps: CompleteDeps = {
     retry: { ...options.retry, random },
@@ -228,6 +236,8 @@ export function createWorker(
           leaseSeconds: options.leaseSeconds,
           limit: free,
           deps: completeDeps,
+          // [0, 1) 난수라 비율 0이면 항상 우선순위 경로, 1이면 항상 대기 순서 경로다.
+          order: claimRandom() < options.claimFifoRatio ? "fifo" : "priority",
           ...(options.callerQuotas && {
             callerQuotas: options.callerQuotas,
             onQuotaBlocked: reportQuotaBlocked,

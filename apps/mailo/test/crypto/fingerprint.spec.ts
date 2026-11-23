@@ -186,3 +186,23 @@ describe("Fingerprinter 키 버전 (ADR-0005 결정 3)", () => {
     }
   });
 });
+
+// 우선순위 도입 전 지문 값을 고정한다(RQ-034, ADR-0009). 값은 도입 전 코드로 계산했다.
+// 상수를 리터럴로 둔다. 정규화 규칙이 바뀌면 이 테스트가 실패해 형식 태그를 올려야 함을 알린다.
+describe("우선순위 도입 전 지문 골든 값 (RQ-034, ADR-0009)", () => {
+  const golden = createFingerprinter(
+    createKeyRing({
+      currentVersion: 1,
+      keys: new Map([[1, Buffer.alloc(32, 9)]]),
+    }),
+  );
+
+  it("정책 필드가 없는 입력의 정규화 문자열과 지문이 도입 전 값과 같다", () => {
+    expect(canonicalizeFingerprintInput(base)).toBe(
+      '["mailo-fp-v1","noreply@example.com","help@example.com",["a@example.com","b@example.com"],["c@example.com"],[],"안녕하세요","본문","<p>본문</p>",[]]',
+    );
+    expect(golden.compute(base).fingerprint).toBe(
+      "1f9f216c39e16498b7d7a24f066bed204eee1c8d2224f7269ac29a2e6dce78fa",
+    );
+  });
+});

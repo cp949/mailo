@@ -11,6 +11,7 @@
 - 사용처는 outbox + relay로 요청을 보낸다. `Idempotency-Key`는 outbox 행 ID를 쓰고, 재시도할 때 내용을 바꾸지 않는다.
 - 파일 채널의 쓰기 순서는 임시 이름(점으로 시작)에 쓰기, `fsync`, `close`, 권한 `0660`, 같은 폴더에서 `rename`이다.
 - 파일 채널만 쓰는 호출처도 REST API 키가 필요하다. 결과는 Key 조회와 이벤트 피드로만 확인한다.
+- 우선순위(`priority`)는 선택이다. 생략하면 `NORMAL`이다. `URGENT`는 즉시 전송을 뜻하지 않는다("우선순위").
 
 ## 1. 등록 전에 정할 것
 
@@ -161,7 +162,7 @@ MAILO_UID=1000 MAILO_GID=1000 CALLERS="billing:10002 reports:10003" \
 
 ### 파일 내용
 
-REST 본문과 같은 필드에 `version`(정수 1)과 `idempotencyKey`가 더해진다. REST에서는 이 두 필드가 정의되지 않은 필드(400)다. `attachments`는 거부한다.
+REST 본문과 같은 필드에 `version`(정수 1)과 `idempotencyKey`가 더해진다. REST에서는 이 두 필드가 정의되지 않은 필드(400)다. `attachments`는 거부한다. 선택 필드 `priority`도 REST와 같다("우선순위").
 
 서명 `none`, 평문:
 
@@ -381,6 +382,49 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 2. 거부 이벤트가 없고 쓴 지 충분히 지났으면(폴링 간격보다 훨씬 긴 시간, 예 5분, 추정) 같은 Key·같은 내용으로 파일을 다시 쓴다. 이미 등록된 Key면 중복으로 걸러지므로 안전하다.
 3. 4번(30일 경과)은 사용처가 이미 종결 이벤트를 받았어야 하는 시점이다. 이벤트를 놓쳤다면 사용처 쪽 결정이 필요하다.
 
+### 우선순위
+
+근거: RQ-033·035·036, ADR-0009.
+
+요청 최상위에 `priority`를 넣으면 Worker가 높은 등급을 먼저 점유한다. REST와 파일이 같은 규칙이다.
+
+| 값 | 용도 기준(예) |
+| -- | ------------- |
+| `URGENT` | 인증 코드, 보안 알림. 늦으면 사용자가 다음 단계로 못 가는 메일 |
+| `HIGH` | 주문·결제 확인처럼 사용자가 곧 확인하는 거래 메일 |
+| `NORMAL` | 기본값(생략과 같다). 일반 알림 |
+| `LOW` | 뉴스레터, 대량 안내처럼 늦어도 되는 메일 |
+
+- 값은 위 네 문자열만 받는다. 대소문자를 구분한다. `null`, 숫자, 빈 문자열, `urgent` 같은 소문자는 REST 400(`/priority` `INVALID_FORMAT`), 파일은 `VALIDATION_FAILED` 거부다.
+- `priority`는 수신자처럼 평문 최상위 필드다. JWE 복호화 평문(`content`) 안에 넣으면 `UNKNOWN_FIELD`(파일은 `VALIDATION_FAILED`)다. 파일 JWS는 요청 JSON 전체를 서명하므로 `priority`도 서명 대상이다.
+- `priority`는 `Idempotency-Key` 내용 비교에 들어간다. 생략과 `NORMAL`은 같은 내용이다. 같은 Key로 등급만 바꿔 보내면 409(파일은 `FINGERPRINT_MISMATCH`)다. 재시도할 때 등급을 바꾸지 않는다. 등록 뒤 등급을 바꾸는 API는 없다.
+- 작업 조회·등록 응답의 `priority`가 등록한 등급이다. 이 기능 도입 전에 등록한 작업은 `NORMAL`이다. 이벤트 피드에는 `priority`가 없다.
+- 모든 호출처가 모든 등급을 쓸 수 있다. 모든 메일을 `URGENT`로 보내면 등급 효과가 없어지고 다른 호출처의 급한 메일도 늦어진다. 위 용도 기준을 지킨다.
+
+```json
+{"to":["kim@example.com"],"subject":"인증 코드","text":"인증 코드는 123456입니다.","priority":"URGENT"}
+```
+
+파일(서명 `none`)과 JWE 요청에서도 같은 위치다. JWS는 이 JSON 전체가 `payload`다.
+
+```json
+{
+  "version": 1,
+  "idempotencyKey": "0b7e5f4c-2a1d-4e8b-9c3f-6d2a1b0e9f88",
+  "to": ["kim@example.com"],
+  "from": "no-reply@example.com",
+  "priority": "LOW",
+  "content": "<JWE compact>"
+}
+```
+
+점유 순서와 한계:
+
+- claim 호출마다 약 10%(`MAILO_CLAIM_FIFO_RATIO`, 추정 기본값)는 등급을 무시하고 가장 오래 기다린 작업을 고른다. 나머지는 `URGENT` → `HIGH` → `NORMAL` → `LOW`, 같은 등급은 오래 기다린 순서다.
+- `URGENT`는 즉시 전송을 뜻하지 않는다. 점유 지연 하한은 "빈 슬롯이 생길 때까지 + Worker 폴링 간격(기본 1초)"이다. 진행 중 전송을 끊지 않는다. 재시도 대기(`next_attempt_at`), 호출처 할당(모든 등급 합산), 차단기 `open`은 `URGENT`에도 같게 적용된다. 수신함 도착이나 정확히 한 번 발송도 보장하지 않는다.
+- 굶음의 한계: 오래된 작업에 주는 몫은 처리량의 일부다. 유입이 처리량보다 많은 상태가 이어지면 `LOW` 작업은 만료 시각(기본 24시간)을 넘겨 `EXPIRED`가 될 수 있다. `LOW`도 언젠가 보내야 하는 메일이면 만료 이벤트(`JOB_EXPIRED`)를 처리한다.
+- 배포 순서: Mailo의 모든 인스턴스가 이 기능을 지원하는 버전이 된 뒤에 `priority`를 보내기 시작한다. 이전 버전은 `priority`를 정의되지 않은 필드로 거부한다(REST 400, 파일 거부). Mailo를 이전 버전으로 되돌릴 때는 `priority` 전송을 먼저 끊는다(`deployment.md` "우선순위 도입 배포 순서").
+
 ### 한계
 
 - 발송은 at-least-once다. SMTP 수락 직후 장애가 나면 같은 메일이 두 번 갈 수 있다(RQ-013). 완화로 `Message-ID`를 작업 ID에서 유도한 고정값으로 쓴다. Gmail이 같은 `Message-ID`를 중복으로 버리는지는 확인하지 못했다(ADR-0007 결정 8).
@@ -403,3 +447,4 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 - 실제 NAS 제품, bind mount, rootless Docker·`userns-remap`, ACL을 지원하지 않는 파일시스템에서의 권한 구성.
 - 호출처가 Linux가 아닌 환경에서의 파일 쓰기.
 - 실제 Gmail·Workspace SMTP.
+- 우선순위의 효과를 실제 부하(여러 인스턴스, 장시간 적체)에서 측정하지 않았다. 점유 순서는 통합 테스트(`test/queue/claim-priority.integration-spec.ts`, `test/worker/worker-priority.integration-spec.ts`)로 확인했다.

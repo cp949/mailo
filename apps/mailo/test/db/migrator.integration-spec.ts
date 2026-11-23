@@ -144,6 +144,35 @@ describe("PostgreSQL 통합: 마이그레이션의 비트랜잭션 실행과 loc
     ).toBeNull();
   });
 
+  it("CONCURRENTLY 실패로 INVALID 인덱스가 남으면 IF NOT EXISTS 재실행도 기록하지 않고 인덱스 이름으로 실패하며, 지운 뒤 재실행하면 적용된다(ADR-0009)", async () => {
+    await writeFile(
+      path.join(dir, "0001_t.sql"),
+      "CREATE TABLE dup (v int); INSERT INTO dup VALUES (1), (1);",
+    );
+    await writeFile(
+      path.join(dir, "0002_idx.sql"),
+      "-- mailo:no-transaction\nCREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS dup_v_idx ON dup (v);",
+    );
+
+    // 첫 실행: 중복 값으로 CONCURRENTLY가 실패해 INVALID 인덱스가 남는다(기존 동작).
+    await expect(runMigrations(db.pool, dir)).rejects.toThrow();
+    expect(await indexValid("dup_v_idx")).toBe(false);
+
+    // 원인을 고쳐도 IF NOT EXISTS가 INVALID 인덱스를 건너뛴다. 기록하지 않고 실패해야 한다.
+    await db.pool.query("DELETE FROM dup");
+    await expect(runMigrations(db.pool, dir)).rejects.toThrow(
+      /0002_idx\.sql: .*INVALID.*dup_v_idx/,
+    );
+    const applied = await db.pool.query(
+      "SELECT name FROM schema_migrations ORDER BY name",
+    );
+    expect(applied.rows.map((r) => r.name)).toEqual(["0001_t.sql"]);
+
+    await db.pool.query("DROP INDEX CONCURRENTLY dup_v_idx");
+    expect(await runMigrations(db.pool, dir)).toEqual(["0002_idx.sql"]);
+    expect(await indexValid("dup_v_idx")).toBe(true);
+  });
+
   it("표식 파일이 실패하면 기록하지 않고, 원인을 고친 뒤 다시 실행하면 적용된다(멱등 재시도)", async () => {
     await writeFile(
       path.join(dir, "0001_idx.sql"),

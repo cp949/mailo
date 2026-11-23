@@ -34,8 +34,9 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0006](../adr/0006-job-lookup-event-feed-and-intake-rejections.md): 작업 조회, 종결 이벤트 피드, 수집 거부 기록.
 - [ADR-0007](../adr/0007-smtp-stage-classification-and-circuit-breaker.md): SMTP 단계 기준 분류, 전역 차단기.
 - [ADR-0008](../adr/0008-jwe-jws-envelope-and-db-encryption.md): JWE·JWS 형식, DB 본문 암호화, 본문 삭제.
+- [ADR-0009](../adr/0009-claim-priority.md): 우선순위 등급, 점유 경로(우선순위·대기 순서), 지문의 `policy.priority`, 배포·롤백 순서. ADR-0002 구현 중 확정 2의 점유 인덱스·순서를 이어받는다.
 
-ADR-0001~0008은 모두 승인됐다(2026-11-23).
+ADR-0001~0009는 모두 승인됐다(2026-11-23).
 
 ## 용어와 진행 상태
 
@@ -61,6 +62,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-23 4단계 발송 우선순위 반영 뒤): `pnpm test` 단위 547건(31개 파일), `pnpm test:integration` 통합 333건(22개 파일), 실패 0건. `pnpm lint` 경고·오류 0건, `pnpm typecheck` 통과. 이 묶음은 Dockerfile·compose·파일 채널 I/O·샘플을 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e를 실행하지 않았다(RQ-033~038 판정 근거).
 - 검증 수치(2026-11-23 코드 리뷰 운영·컨테이너·로그 묶음 반영 뒤, 같은 작업 트리의 다른 묶음 변경 포함): `pnpm test` 단위 505건(30개 파일), `pnpm test:integration` 통합 278건(19개 파일), 실패 0건. 읽기 전용 루트·`cap_drop`·digest 고정 이미지로 `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`와 `scripts/volume/verify-e2e.sh`(acl·group)를 실행해 모두 기대와 일치했다. `verify-permissions.sh`(acl·group, 각 28개), `verify-root-model.sh`(15개), `verify-atomic-rename.sh`(acl·group, 각 4개)도 같은 날 실행해 기대와 다름 0건이었다. 이 수치를 낸 시점에는 `nfs-kernel-server`가 없어 `pnpm test:nfs`와 `apps/mailo/scripts/nfs/verify-docker-volume.sh`를 실행하지 못했다. 같은 날 뒤에 로컬에 `nfs-kernel-server` 2.6.1을 설치해 `scripts/nfs/run.sh`(`pnpm test:nfs` 31건, 기본 NFSv4.1 클라이언트 1회, 통과)와 `verify-docker-volume.sh`(통과 13, 실패 0)를 실행했다(RQ-002 판정 근거).
 - 검증 수치(2026-11-23 코드 리뷰 1묶음 반영 뒤): `pnpm test` 단위 449건(25개 파일), `pnpm test:integration` 통합 242건(18개 파일), 실패 0건. 이 묶음 뒤 `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`를 각 1회 실행해 기대와 일치했다(`POSTGRES_PASSWORD` 필수화·`MAILO_STOP_GRACE_PERIOD` 반영 compose). `pnpm test:nfs`·`scripts/volume/`은 이 묶음에서 실행하지 않았다.
 - 직전 수치(2026-11-23 최종 마무리 실행 결과): `pnpm test` 단위 407건(23개 파일), `pnpm test:integration` 통합 222건(15개 파일, 파일 채널 `file-channel/poller.integration-spec.ts`, `e2e/file-flow.integration-spec.ts`, 호출처 할당 테스트 포함), `pnpm test:nfs`는 NFS 환경이 정리돼 이번에 실행하지 않았다(직전 3단계 마무리 실행 31건, NFSv4.1·4.2 기본값 각각, 실패 0건). 볼륨 스크립트(`scripts/volume/`, a~g)는 CI 워크플로 작성 뒤 2026-11-23에 7개 실행(acl·group 포함)을 모두 다시 실행해 기대와 다름 0건이었다. 컨테이너 스크립트 `scripts/container/`(SIGKILL 중복 발송, SIGTERM 파일 처리)도 같은 날 종료 순서(pause 선행)·compose 기본값 변경 뒤 각 1회 실행해 기대와 일치했다. 단위·통합 실패는 0건이다.
@@ -75,6 +77,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 | 1단계 | REST 등록·조회·이벤트 피드, 큐·Worker, ADR-0005·0007 규칙, DB 본문 암호화(ADR-0008 결정 6·7), 호출처별 API 키 인증 |
 | 2단계 | 파일 채널(같은 호스트 볼륨), JWS, JWE, 호출처별 발송 할당(RQ-032) |
 | 3단계 | NAS/NFS 통합 테스트, 사용처 연동 문서와 운영 문서 |
+| 4단계 | 발송 우선순위(RQ-033~038, ADR-0009) |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -106,6 +109,11 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 문서: 운영 문서 `docs/operations/`(README, deployment, key-management, caller-onboarding, troubleshooting, nfs), 사용처 연동 지침(`caller-onboarding.md`의 outbox + relay, 이벤트 피드 소비, Key 조회 404 처리).
 - 권한 문구: 사용자 위임 결정으로 ADR-0004 결정 8과 RQ-024에 "default ACL 권장, 공용 그룹 + setgid는 대안" 보완 표기를 달았다(ADR-0004 구현 중 확정 28).
 - 미검증 목록: 실제 Gmail·Workspace SMTP, 실제 NAS 제품(서버 재시작·failover, NFSv3·4.0·Kerberos 포함), `hard` mount에서 서버를 멈췄을 때의 폴러 정지 감지, GitHub 호스티드 러너의 `nfs` 잡 통과(첫 실행은 환경 준비 성공, 테스트 단계 실패. 수정 뒤 로컬 `run.sh`는 31건 통과, 러너 재실행 전. `static`·`integration`·`container` 잡은 성공), bind mount·rootless Docker, 호스트 외 환경. Java 사용처 샘플(`samples/spring-boot-relay/`)은 컴파일하고 이 저장소의 Mailo와 실행해 확인했다(RQ-021·022, 확인한 범위는 각 RQ의 판정 근거). SIGKILL 중복 발송과 컨테이너 SIGTERM은 로컬 Docker에서 관찰했다.
+
+4단계 구현 상태(2026-11-23 갱신):
+
+- 구현·검증 완료: 요청 `priority` 필드, 지문 `policy.priority`(도입 전 골든 값 고정), 점유 두 경로와 `MAILO_CLAIM_FIFO_RATIO`, 마이그레이션(`0004` 컬럼·CHECK, `0005` 인덱스, INVALID 인덱스 fail-closed), 조회 응답과 운영자 헬스 수치. RQ-033~037은 검증 완료다.
+- RQ-038은 진행 중이다. 점유 쿼리 성능은 측정해 기준(2배 이내)을 충족했으나 수동 측정이다(최대 1.08배, ADR-0009 구현 중 확정 3). 문서 갱신은 검토로만 확인했다. 롤링 배포·롤백 실행과 대용량 `0005` 적용은 확인하지 않았다.
 
 ## 1. 입력 채널과 경계
 
@@ -1049,6 +1057,215 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
   - 할당이 있는 호출처가 있는데 `MAILO_RECORD_RETENTION_SECONDS`가 86400 미만이면 Worker 기동을 거부한다(`worker/worker.spec.ts`). 사용량이 최근 24시간의 `mail_attempts`를 세는데 기록이 먼저 지워지면 할당이 느슨해지기 때문이다.
   - 실제 Gmail 일일 한도와 이 할당의 관계는 확인하지 않았다. 호출처 할당의 합이 계정 한도를 넘지 않는다는 보장은 없다(한도 초과는 차단기가 처리한다).
 
+## 12. 발송 우선순위
+
+일반 메일이 큐에 많이 쌓인 상황에서 급한 메일을 먼저 발송한다. 결정은 [ADR-0009](../adr/0009-claim-priority.md)다.
+기존 PostgreSQL 큐와 Worker를 쓴다. 새 패키지·브로커·상시 서비스를 추가하지 않는다(RQ-029). 폴링을 알림 방식으로 바꾸는 작업은 범위 밖이다.
+
+### RQ-033 우선순위 지정
+
+- [x] **진행 상태:** 검증 완료 (4단계)
+
+**요구사항:**
+
+- REST와 파일 요청의 최상위 필드에 `priority`를 선택적으로 받는다.
+- 허용 값은 문자열 `LOW`, `NORMAL`, `HIGH`, `URGENT` 네 가지다. 대소문자를 구분한다. 앞의 것일수록 늦게 점유한다.
+- 생략하면 `NORMAL`로 처리한다. `null`, 숫자, 빈 문자열, 그 밖의 문자열은 검증 오류다.
+- `priority`는 수신자처럼 Mailo가 점유 순서에 쓰는 값이라 최상위 평문 필드다. JWE `content`의 복호화 평문에 `priority`가 있으면 기존 규칙대로 `UNKNOWN_FIELD`다.
+- 파일 JWS는 요청 JSON 전체를 서명하므로 `priority`도 서명 대상이다. REST는 기존과 같이 서명하지 않는다.
+- 인증된 모든 호출처가 모든 등급을 지정할 수 있다. 호출처별 허용 필드와 등급별 할당은 두지 않는다(ADR-0009 결정 3).
+- 잘못된 값의 REST 응답은 기존 검증 오류 형식의 400이다. 파일은 기존 수집 거부 기록·`INTAKE_REJECTED` 절차를 따른다. 응답·기록에 요청 원문을 넣지 않는다(RQ-027).
+- 기존 호출처는 요청을 바꾸지 않고 계속 쓸 수 있어야 한다.
+- 받아들인 위험: 지정 권한을 제한하지 않으므로 호출처가 모든 요청을 `URGENT`로 보내면 등급의 효과가 줄어든다. Mailo에는 이를 막는 수단이 없다. 호출처 연동 문서에 등급별 용도 기준(예: `URGENT`는 인증 코드·보안 알림, `LOW`는 대량 안내)을 적는다.
+
+**수용 조건:**
+
+- [x] REST·파일 모두 생략한 우선순위를 `NORMAL`로 등록하고, 네 등급 모두 JWS·JWE 경로에서 같은 값을 보존한다.
+- [x] 잘못된 우선순위(`null`, 숫자, 빈 문자열, 소문자 `urgent`, 정의되지 않은 이름)는 REST 400 또는 파일 수집 거부로 처리한다. JWE 복호화 평문 안의 `priority`는 `UNKNOWN_FIELD`다.
+
+**판정 근거:**
+
+- `envelope/open-request.spec.ts`(단위) "openRequest: 우선순위": 생략·`NORMAL`이 `NORMAL`, 파일 JWS 네 등급 보존과 `priority` 변조 시 `SIGNATURE_INVALID`, JWE 요청의 바깥 `priority` 보존, 잘못된 값 8종(`null`, 숫자, 빈 문자열, 소문자, 정의되지 않은 이름, 앞뒤 공백, 배열, 객체)이 REST·파일 모두 `/priority` `INVALID_FORMAT`, JWE 평문 안의 `priority`는 `/content` `UNKNOWN_FIELD`.
+- `http/rest-priority.integration-spec.ts`(PostgreSQL): REST 네 등급 202와 DB 순위(10·20·30·40), 생략은 `NORMAL`, 잘못된 값 5종이 400 `/priority` `INVALID_FORMAT`이고 등록하지 않음.
+- `envelope/rest-envelope.integration-spec.ts`(PostgreSQL): REST JWE 요청의 네 등급 보존, JWE 평문 안의 `priority`는 400 `UNKNOWN_FIELD`.
+- `file-channel/poller.integration-spec.ts`(PostgreSQL) "우선순위": 파일 생략은 `NORMAL`, 평문 JSON·JWS·JWE 파일의 네 등급 저장, 잘못된 값 5종과 JWE 평문 안의 `priority`는 `VALIDATION_FAILED` 거부 기록과 원본 삭제.
+- 구현: `envelope/request-schema.ts`(검증), `queue/priority.ts`(등급과 순위), `queue/register.ts`(저장).
+- 받아들인 위험(모든 호출처가 모든 등급 지정)은 자동 검증 대상이 아니다. 용도 기준은 `docs/operations/caller-onboarding.md` "우선순위"에 있다.
+
+### RQ-034 중복 등록 계약
+
+- [x] **진행 상태:** 검증 완료 (4단계)
+
+**요구사항:**
+
+- 유일성 범위 `(caller_id, Idempotency-Key)`는 유지한다. REST와 파일이 같은 범위를 쓴다(RQ-011).
+- 우선순위는 지문(`crypto/fingerprint.ts`)의 기존 `policy` 입력에 넣는다. ADR-0005 결정 3의 "요청별 정책 필드"에 해당한다(ADR-0009 결정 4).
+- 정규화 규칙:
+  - `NORMAL`(생략 포함)이면 `policy`에 키를 넣지 않는다.
+  - 그 밖의 등급이면 `policy.priority`에 등급 이름(`"LOW"`·`"HIGH"`·`"URGENT"`)을 넣는다.
+  - DB 순위 숫자는 지문에 넣지 않는다. 순위 숫자를 다시 매겨도 지문이 바뀌지 않게 하기 위해서다.
+- 결과:
+  - 생략과 `NORMAL`의 지문은 우선순위 도입 전 지문과 같다. 형식 태그 `mailo-fp-v1`을 올리지 않고 기존 작업의 지문을 다시 계산하지 않는다.
+  - 같은 Key·같은 내용·같은 등급은 기존 작업을 반환한다.
+  - 같은 Key에서 등급이 바뀌면 지문이 달라진다. REST는 409, 파일은 기존 지문 불일치 수집 거부 절차를 따른다. 기존 작업은 바꾸지 않는다.
+- 도입 전 지문 값이 바뀌지 않음을 골든 테스트(고정 입력과 고정 키로 계산한 기존 지문 값)로 고정한다.
+- 등록 뒤 우선순위를 바꾸는 API는 범위 밖이다.
+
+**수용 조건:**
+
+- [x] 같은 Key의 생략·`NORMAL`은 같은 작업을 반환하고, 등급 변경은 충돌한다. 도입 전에 등록된 작업에도 적용된다.
+- [x] 골든 테스트: 우선순위 생략·`NORMAL` 요청의 지문이 도입 전 계산 값과 같다.
+
+**판정 근거:**
+
+- 골든 값: `crypto/fingerprint.spec.ts`(정책 필드 없는 입력의 정규화 문자열과 HMAC 값)와 `envelope/open-request.spec.ts`(REST 요청의 정규화 문자열과 지문). 두 값은 우선순위 구현 전 코드로 계산해 리터럴로 고정했다. `open-request.spec.ts`는 `NORMAL`을 명시한 요청도 같은 값임을, 나머지 등급은 `policy`에 `["priority","<등급>"]`이 들어가 지문이 달라짐을 확인한다.
+- `http/rest-priority.integration-spec.ts`(PostgreSQL): 도입 전 작업은 `0001`~`0003`만 적용한 schema에 도입 전 정규화 문자열의 지문으로 직접 넣은 뒤 `0004`·`0005`를 적용해 만든다. 같은 Key의 생략·`NORMAL` 재요청은 그 작업을 200으로 돌려주고 `LOW`·`HIGH`·`URGENT`는 409이며 저장된 순위는 20 그대로다. 새 작업에서도 생략·`NORMAL`은 200, 등급 변경은 409, `URGENT` 작업에 생략 재요청은 409다.
+- `file-channel/poller.integration-spec.ts`: 같은 Key의 생략·`NORMAL` 파일은 중복, 등급을 바꾼 파일은 `FINGERPRINT_MISMATCH`이고 기존 작업의 순위는 그대로다.
+- `envelope/rest-envelope.integration-spec.ts`: JWE로 `URGENT` 등록한 Key의 같은 등급 평문 재요청은 200, 등급을 뺀 재요청은 409다.
+- 구현: `envelope/open-request.ts`(`priorityPolicy`), `crypto/fingerprint.ts`(정규화 규칙 변경 없음).
+
+### RQ-035 점유 순서
+
+- [x] **진행 상태:** 검증 완료 (4단계)
+
+**요구사항:**
+
+- 점유는 두 경로 중 하나로 고른다. Worker는 claim 호출마다 한 번 경로를 정한다(ADR-0009 결정 5).
+  - 우선순위 경로(기본): `priority DESC, next_attempt_at ASC, id ASC`.
+  - 대기 순서 경로: 우선순위를 무시한 `next_attempt_at ASC, id ASC`(도입 전 순서).
+- 대기 순서 경로를 고를 확률은 설정 `MAILO_CLAIM_FIFO_RATIO`다. 0 이상 1 이하이고 기본 0.1(추정)이다. 0이면 항상 우선순위 경로다. 범위 밖 값은 기동을 거부한다.
+- 경로 선택은 애플리케이션 난수로 한다. 테스트에서 난수를 주입할 수 있어야 한다. DB에 상태를 두지 않으므로 여러 Worker에서도 같은 규칙으로 동작한다.
+- 비율은 claim 호출 수 기준이다. 한 번의 claim이 빈 슬롯 수만큼 여러 건을 점유하므로 작업 건수 기준 비율은 정확히 10%가 아니다.
+- 대기 순서 경로는 가장 오래 기다린 작업에 몫을 준다. 그 작업이 `URGENT`여도 함께 뽑힌다. 어느 등급도 점유 기회가 0이 되지 않는다.
+- 대기 시간에 따른 승격은 하지 않는다. 정렬식에 `now()`를 쓰지 않는다(ADR-0009 결정 6).
+- 후보 조건은 두 경로 모두 기존과 같다. `PENDING`·`RETRY_WAIT`, `next_attempt_at <= now()`, `expires_at > now()`이고 호출처 할당·차단기 정책상 점유할 수 있어야 한다.
+- 서로 다른 호출처의 후보에도 같은 규칙을 적용한다.
+- 할당이 남은 호출처의 순번 계산(`row_number() OVER (PARTITION BY caller_id ...)`)에는 고른 경로와 같은 정렬을 쓴다. 우선순위 경로에서 잔여 1건인 호출처에 `URGENT`·`NORMAL` 후보가 함께 있으면 `URGENT` 작업을 점유한다.
+- `half_open` 대표 선택은 기존 첫 정렬 키(직전에 차단기를 연 작업을 후순위로, ADR-0007 구현 중 확정 3)를 유지하고, 그다음 키로 고른 경로의 정렬을 쓴다. 대표 작업 수는 1건 그대로다.
+- 우선순위는 다음 점유에서 고를 작업에만 적용한다. 이미 `SENDING`인 작업의 전송을 중단하거나 점유를 빼앗지 않는다.
+- 여러 Worker의 동시 점유에서는 각 점유 시점에 잠금 없이 고를 수 있는 후보가 기준이다. 전역 SMTP 전송 시작 순서·완료 순서는 보장하지 않는다.
+- 긴급 작업 등록 뒤 시작하는 점유는 그 등록 커밋을 볼 수 있을 때부터 반영한다.
+- `URGENT` 작업의 점유 지연 하한은 "빈 슬롯이 생길 때까지 + Worker 폴링 간격"이다. 대기 순서 경로에 걸린 claim 동안에는 더 늦어질 수 있다. `URGENT`는 즉시 전송을 뜻하지 않는다.
+
+**수용 조건:**
+
+- [x] 우선순위 경로: 발송 가능한 `NORMAL` 작업 10,000건이 있고 그중 다수가 300초 이상 기다린 상태에서 `URGENT` 작업이 등록되면, 다음 점유에서 `URGENT` 작업을 먼저 선택한다(적체 길이와 무관).
+- [x] 우선순위 경로: 네 등급이 섞여 있으면 `URGENT` → `HIGH` → `NORMAL` → `LOW` 순서로 선택하고, 같은 등급은 `next_attempt_at ASC, id ASC`다.
+- [x] 대기 순서 경로: 등급과 무관하게 `next_attempt_at ASC, id ASC`로 선택한다.
+- [x] 경로 선택: 주입한 난수로 각 경로가 선택되고, `MAILO_CLAIM_FIFO_RATIO=0`이면 항상 우선순위 경로다. 범위 밖 값은 기동을 거부한다.
+- [x] 할당 잔여 1건인 호출처에 `NORMAL`·`URGENT` 후보가 함께 있으면 우선순위 경로에서 `URGENT` 작업을 점유한다.
+- [x] `half_open` 대표 선택에서 직전 차단 작업 후순위 규칙을 유지하고, 그 밖의 후보 중 고른 경로의 첫 작업을 대표로 고른다. 대표는 1건이다.
+- [x] 모든 슬롯이 사용 중이면 `URGENT` 작업은 대기한다. 슬롯이 비면 다음 점유 규칙으로 선택하며 기존 전송을 중단하지 않는다.
+
+**판정 근거:**
+
+- `queue/claim-priority.integration-spec.ts`(PostgreSQL): 301~10,300초 기다린 `NORMAL` 10,000건(`generate_series`로 직접 INSERT, DEFAULT 순위) 뒤 등록한 `URGENT`를 다음 점유가 고름, 네 등급 순서와 같은 등급 안의 오래 기다린 순서, 같은 `next_attempt_at`의 `id` 순서, 경로 생략은 우선순위 경로, 대기 순서 경로는 등급 무관, 할당 잔여 1건에서 우선순위 경로는 `URGENT`·대기 순서 경로는 가장 오래된 `NORMAL`, `half_open` 대표는 직전 차단 작업 다음으로 경로의 첫 작업 1건(두 경로 각각)이고 직전 차단 작업만 남으면 그 작업.
+- `worker/worker-priority.integration-spec.ts`(PostgreSQL, 메모리 발송기, 동시 전송 1): 주입한 경로 난수로 우선순위·대기 순서 경로가 claim마다 고른 대로 점유됨, 비율 0이면 난수 0이어도 우선순위 경로, 비율 1이면 대기 순서 경로, 슬롯이 차 있으면 `URGENT`가 `PENDING`으로 기다리고 진행 중 전송을 끊지 않은 채 슬롯이 비면 `URGENT`를 먼저 점유.
+- `config/load-config.spec.ts`: `MAILO_CLAIM_FIFO_RATIO` 기본 0.1, 경계값 0·1, 범위 밖·숫자 아님 7종의 기동 거부. `worker/worker.spec.ts`: Worker 옵션의 같은 범위 검사.
+- RED 확인: 우선순위 정렬 조각을 대기 순서로 바꾸면 `claim-priority` 20건 중 9건, Worker의 경로 전달을 빼면 `worker-priority` 4건 중 2건이 실패했다(2026-11-23).
+- 구현: `queue/claim.ts`(`ORDER_BY` 고정 조각), `worker/worker.ts`(경로 선택), `config/load-config.ts`. SQL 형태는 ADR-0009 구현 중 확정 1이다.
+- 한계: 여러 Worker의 동시 점유는 단일 프로세스 안의 병렬 `claim`으로 확인했다. 비율 0.1의 적정성은 실제 부하로 측정하지 않았다.
+
+### RQ-036 기존 발송 정책 유지와 굶음의 한계
+
+- [x] **진행 상태:** 검증 완료 (4단계)
+
+**요구사항:**
+
+- 모든 등급이 재시도 backoff와 `next_attempt_at`을 지킨다. 재시도 대기 중인 높은 등급 작업이 발송 가능한 낮은 등급 작업을 막지 않는다.
+- 영구 오류, 최대 시도 횟수, 만료, lease 복구, 결과 기록 계약은 유지한다. 재시도·복구 뒤에도 등록한 우선순위를 보존한다.
+- 호출처별 `sendQuota24h`는 모든 등급의 합산 사용량에 적용한다. 높은 등급이 할당을 우회하거나 별도 할당을 얻지 않는다(RQ-032).
+- 차단기 `open`에서는 `URGENT` 작업도 점유하지 않는다.
+- 기존 `FOR UPDATE SKIP LOCKED`, lease 토큰, 작업 행 → 차단기 행 잠금 순서를 유지한다.
+- SMTP 중복 전송 가능성은 기존 at-least-once 계약과 같다(RQ-013). `URGENT`는 수신함 도착이나 정확히 한 번 발송을 보장하지 않는다.
+- 굶음의 한계: 대기 순서 경로는 처리량의 일부(기본 약 10%, 추정)만 오래된 작업에 준다. 유입이 처리량보다 많은 상태가 이어지면 낮은 등급 작업은 만료 시각(기본 TTL 24시간)을 넘겨 `EXPIRED`가 될 수 있다. 이 한계는 호출처 연동 문서와 운영 문서에 적는다.
+
+**수용 조건:**
+
+- [x] `URGENT` 작업이 계속 유입되는 동안에도 가장 오래 기다린 `LOW` 작업이 대기 순서 경로로 점유된다.
+- [x] 미래 재시도·만료·할당 초과의 높은 등급 작업은 점유하지 않고, 다른 처리 가능한 후보는 선택한다.
+- [x] 차단기 `open`, 동시 Worker, lease 복구 상황에서도 기존 점유·복구 계약과 우선순위 보존을 확인한다.
+
+**판정 근거:**
+
+- `queue/claim-priority.integration-spec.ts`(PostgreSQL):
+  - 점유마다 새 `URGENT`를 넣으며 우선순위·우선순위·대기 순서 경로로 점유하면 앞 두 번은 `URGENT`, 대기 순서 경로는 1시간 기다린 `LOW`를 고른다. 경로 순서는 Worker 난수 대신 고정했고, 난수로 경로를 고르는 것은 `worker/worker-priority.integration-spec.ts`가 확인한다.
+  - 재시도 대기 중인 `URGENT`, 만료된 `HIGH`, 할당 초과 호출처의 `URGENT`는 고르지 않고 발송 가능한 `LOW`를 고른다. 할당은 등급 합산이라 `URGENT`도 할당을 넘겨 점유하지 않는다.
+  - 차단기 `open`이면 두 경로 모두 `URGENT`를 점유하지 않는다. 동시 `claim` 두 개가 겹치지 않고 함께 상위 등급을 가져간다(`SKIP LOCKED`). `TRANSIENT` 뒤 `RETRY_WAIT`와 lease 만료 회수 뒤에도 순위가 그대로다.
+- 기존 점유·복구 계약 테스트(`queue/claim-complete`·`circuit-breaker`·`caller-quota`·`maintenance.integration-spec.ts`, `worker/*.integration-spec.ts`)가 같은 코드에서 통과했다.
+- 한계: 동시 Worker는 단일 프로세스 안의 병렬 `claim`이다. 굶음의 한계(낮은 등급의 만료)는 동작 설명이며 자동 검증 대상이 아니다. 문서 위치는 `docs/operations/caller-onboarding.md` "우선순위"와 `troubleshooting.md` "등급별 적체"다.
+
+### RQ-037 조회와 운영 가시성
+
+- [x] **진행 상태:** 검증 완료 (4단계)
+
+**요구사항:**
+
+- 작업 ID 조회, Key 조회, 신규 등록·중복 등록 응답의 작업 표현에 등록한 `priority` 등급 이름을 반환한다. 도입 전 작업은 `NORMAL`이다. DB 순위 숫자는 노출하지 않는다.
+- 기존 API 키 인증과 호출처별 조회 격리는 유지한다.
+- 이벤트 피드의 기존 소비 계약은 유지한다. 이벤트 payload에 `priority`를 추가하지 않는다.
+- 운영자 토큰(`MAILO_OPS_TOKEN`) `/health` 응답의 `queue`에 등급별 `dueCountByPriority`·`oldestDueAgeSecondsByPriority`(키는 등급 이름)를 추가한다. 기존 `dueCountTruncated` 관례를 따라 등급별 상한 도달 여부 `dueCountTruncatedByPriority`도 준다(ADR-0009 구현 중 확정 2). 등급마다 기존 `dueCount`와 같은 상한(10001건 조회, 10000에서 멈춤)·문 시간제한·후보 조건(`queue/backlog.ts`)을 쓴다. 기존 `dueCount`·`oldestDueAgeSeconds`는 그대로 둔다.
+- `/health/ready`의 200/503에는 등급별 적체를 반영하지 않는다(RQ-031).
+- 로그·오류·이벤트에 제목·본문·수신자·시크릿을 추가하지 않는다(RQ-027).
+
+**수용 조건:**
+
+- [x] 작업 조회·등록 응답에서 등급 이름을 확인하고, 다른 호출처의 작업은 기존과 같이 조회할 수 없다.
+- [x] 운영자 `/health`의 `dueCountByPriority`·`oldestDueAgeSecondsByPriority`가 등급별 적체를 반영하고, 운영자 토큰 없는 응답에는 나오지 않는다.
+- [x] 로그·오류·이벤트·거부 기록에서 본문·주소·시크릿 canary가 검출되지 않는다.
+
+**판정 근거:**
+
+- `http/rest-priority.integration-spec.ts`: 202 등록 응답·ID 조회·Key 조회의 등급 이름, 중복 등록(200) 응답의 등급, 도입 전 작업은 `NORMAL`, 응답에 순위 숫자 없음, 다른 호출처는 ID·Key 조회 모두 404. `http/rest-intake.integration-spec.ts`: `Job` 응답 필드 목록에 `priority`.
+- `http/health-ops.integration-spec.ts`: 운영자 응답의 네 등급 키와 등급별 `dueCount`·`oldestDueAgeSeconds`(미래 재시도·`SENDING` 제외), `dueCountTruncatedByPriority`, 등급마다 상한 10000이 따로 걸림, 전체·등급별 값을 문장 하나로 읽음, 호출처 API 키와 인증 없는 응답에는 등급별 필드가 없음.
+- canary: 잘못된 `priority` 값에 canary를 넣어 REST 응답·앱 로그(`rest-priority`), 파일 거부 기록·폴러 로그(`poller` "우선순위"), `openRequest` 실패 결과(`open-request.spec.ts`)에서 검출되지 않음. 본문·주소·시크릿 canary 기존 테스트(`rest-intake`, `poller` "로그와 기록에 내용이 없다", `worker.integration-spec.ts`)가 우선순위 코드로 통과했다. 이벤트 payload에는 `priority`를 넣지 않았다(`events/` 변경 없음).
+- 구현: `queue/read.ts`, `intake/presenters.ts`, `queue/backlog.ts`, `health/health.service.ts`.
+
+### RQ-038 배포 호환성과 문서
+
+- [ ] **진행 상태:** 진행 중 (4단계)
+
+**요구사항:**
+
+- DB 변경은 새 마이그레이션 파일로 추가한다. 적용된 마이그레이션은 수정하지 않는다.
+  - `mail_jobs`에 `priority smallint NOT NULL DEFAULT 20`(`NORMAL` 순위)을 추가한다. 도입 전 작업은 `NORMAL`로 읽힌다. 상수 DEFAULT 컬럼 추가는 PostgreSQL 11 이상에서 테이블을 다시 쓰지 않는다(PostgreSQL 문서 기준, 미측정).
+  - 순위는 `LOW` 10, `NORMAL` 20, `HIGH` 30, `URGENT` 40이다. 간격은 나중에 등급을 끼워 넣어도 기존 행을 바꾸지 않기 위한 것이다(ADR-0009 결정 2).
+  - 허용 순위 CHECK는 `NOT VALID`로 추가한다(`0003_attempt_instance.sql`과 같은 방식).
+  - 우선순위 경로용 인덱스 `(priority DESC, next_attempt_at, id) WHERE status IN ('PENDING','RETRY_WAIT')`를 `CREATE INDEX CONCURRENTLY`로 `-- mailo:no-transaction` 파일에 추가한다. 대기 순서 경로와 기존 헬스 수치는 기존 `mail_jobs_claim_idx`를 쓴다.
+- 구 Worker가 섞여 있으면 점유 순서만 기존과 같아질 뿐 정합성 문제는 없다.
+- 주 위험은 요청 스키마다. 구 버전은 `priority`를 `UNKNOWN_FIELD`로 거부한다. 배포·롤백 규칙(ADR-0009 결정 10):
+  1. 배포 순서는 마이그레이션 → 모든 Mailo 인스턴스 갱신 → 호출처의 `priority` 전송 시작이다.
+  2. 롤링 배포 중(구·신 인스턴스 혼용)에는 호출처가 `priority`를 보내지 않는다.
+  3. 롤백 전에 호출처의 `priority` 전송을 먼저 끊는다. 끊지 않으면 REST는 400, 파일은 수집 거부가 된다.
+  4. 롤백해도 `priority` 컬럼과 인덱스는 남긴다. 구 버전은 이를 읽지 않는다.
+- 구현 변경에는 다음 문서 갱신을 포함한다.
+  - OpenAPI(`docs/api/openapi.yaml`)와 파일·JWS·JWE 요청 예제.
+  - 호출처 연동 문서(`docs/operations/caller-onboarding.md`): 등급별 용도 기준, 굶음 한계.
+  - 배포 문서(`docs/operations/deployment.md`): `MAILO_CLAIM_FIFO_RATIO`, 배포·롤백 순서.
+  - 운영 문서(`docs/operations/troubleshooting.md`): 등급별 적체 확인 절차(`dueCountByPriority`, 차단기 상태, 할당, 슬롯 사용, 재시도 대기).
+- 성능 기준: 점유 쿼리 지연이 같은 데이터·조건·장비에서 기존 측정값의 2배 이내다. 기존 측정값은 ADR-0007 구현 중 확정 10의 값(할당 초과 호출처 대기 1만 건 1.4 ms, 10만 건 11.8 ms, PostgreSQL 17, 캐시 warm)이다.
+
+**수용 조건:**
+
+- [ ] 성능: 등급 혼합·할당 초과 적체가 있는 실제 PostgreSQL에서 두 경로의 점유 쿼리 실행 계획과 지연을 측정한다. 대기 1만 건·10만 건 각각에서 기존 측정값(1.4 ms·11.8 ms)의 2배 이내여야 한다. 기존 측정과 같은 데이터·조건·장비로 비교하고 결과를 기록한다. 기준을 넘으면 인덱스·쿼리 설계를 다시 검토한다.
+- [ ] 위 요구사항의 문서(OpenAPI·요청 예제, 호출처 연동, 배포, 운영)에 등급, `MAILO_CLAIM_FIFO_RATIO`, 배포·롤백 순서, 굶음 한계, 등급별 적체 확인 절차가 있다.
+
+**판정 근거:**
+
+- 성능(측정 완료, 기준 충족, 수동 측정이라 `[ ]` 유지): 2026-11-23, PostgreSQL 17.11, 본문 2 KiB, 캐시 warm, 30회 중앙값, 같은 날 기존 쿼리 재측정 대비. 측정 방법과 실행 계획은 ADR-0009 구현 중 확정 3이다. 측정 스크립트는 저장소에 없다.
+
+  | 쿼리 | 1만 건 | 10만 건 |
+  | ---- | ------ | ------- |
+  | 기존(재측정) | 0.99 ms | 9.09 ms |
+  | 우선순위 경로, 등급 혼합 | 0.43 ms | 3.52 ms |
+  | 우선순위 경로, 최악(초과 호출처가 모두 `URGENT`) | 1.06 ms | 9.86 ms |
+  | 대기 순서 경로 | 1.02~1.11 ms | 9.41~9.46 ms |
+
+  최대 1.08배(우선순위 경로 최악, 10만 건)다. 우선순위 경로는 `mail_jobs_priority_claim_idx`, 대기 순서 경로는 `mail_jobs_claim_idx`를 추가 정렬 없이 읽는다.
+- 문서(검토로만 확인, `[ ]` 유지): `docs/api/openapi.yaml`(`Priority` 스키마, `SendRequest.priority`, `Job.priority`, 운영자 `queue`의 등급별 필드, 요청·응답 예시), `docs/api/README.md`, `docs/operations/caller-onboarding.md` "우선순위"(용도 기준, 파일·JWE 예시, 굶음 한계, 배포 순서), `docs/operations/deployment.md`(`MAILO_CLAIM_FIFO_RATIO`, "우선순위 도입 배포 순서", 헬스 필드), `docs/operations/troubleshooting.md` "등급별 적체", `.env.example`. 자동 검증은 없다.
+- 마이그레이션(자동 검증): `0004_job_priority.sql`의 DEFAULT 20과 CHECK, `0005_job_priority_claim_index.sql`의 유효한 부분 인덱스(`queue/claim-priority.integration-spec.ts` "스키마"), 도입 전 schema에서 `0004`·`0005` 적용(`http/rest-priority.integration-spec.ts`), INVALID 인덱스가 남은 재실행의 fail-closed(`db/migrator.integration-spec.ts`, ADR-0009 구현 중 확정 4).
+- 남은 미검증: 롤링 배포 중 구·신 인스턴스 혼용, 롤백 실행, 대용량 테이블의 `0005` 적용 시간과 쓰기 부하 중 적용, 캐시가 차가운 상태의 점유 지연.
+
 ## 확정한 항목
 
 2026-11-23 판정으로 미결정에서 확정한 항목이다. 값은 해당 RQ와 ADR이 정한다.
@@ -1065,6 +1282,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 | 재시도 기본값           | RQ-008                                                 |
 | 이벤트 cursor           | RQ-017, ADR-0006                                       |
 | 구현 순서               | 구현 단계 절                                           |
+| 발송 우선순위           | RQ-033~038, ADR-0009                                   |
 | NFS 통합 테스트 환경    | 아래                                                   |
 
 NFS 통합 테스트 환경(3단계, 추정):
@@ -1082,7 +1300,7 @@ NFS 통합 테스트 환경(3단계, 추정):
 | 항목                    | 내용                                                                |
 | ----------------------- | ------------------------------------------------------------------- |
 | 파일 채널 상세          | 결정됨: `link` 방식은 채택하지 않는다(ADR-0004 구현 중 확정 10·30·32, `rename`만 쓴다). 실제 NAS의 mount 옵션(NFS loopback 기준은 `docs/operations/nfs.md`에 정했고 실제 NAS는 미검증). 결정됨: 호출처 계정·폴더 모드는 default ACL 권장(ADR-0004 구현 중 확정 14·28, `docs/operations/caller-onboarding.md`), 스키마 필드명과 폴링 간격(30초)·임시 파일 정리 시간(1시간) 기본값은 2단계에서 정했다(ADR-0004 "구현 중 확정") |
-| 메시지별 정책           | 재시도 횟수·간격·만료 시간을 요청별로 지정할지 여부                 |
+| 메시지별 정책           | 재시도 횟수·간격·만료 시간을 요청별로 지정할지 여부. 우선순위는 결정됨(RQ-033, ADR-0009) |
 | 반송(Bounce)            | SMTP 수락 이후 반송까지 추적할지 여부                               |
 | 관리 기능               | 발송 이력 조회, 실패 작업 수동 재시도, `CANCELED` 상태              |
 | 계정 전체 발송 속도 제어 | 한도에 닿기 전에 계정 전체 발송 속도를 선제적으로 제한할지 여부. 한도 초과 응답은 ADR-0007이, 호출처별 할당은 RQ-032가 정했다. 한도 수치는 Google 문서 갱신으로 바뀔 수 있다 |
