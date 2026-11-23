@@ -36,7 +36,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0008](../adr/0008-jwe-jws-envelope-and-db-encryption.md): JWE·JWS 형식, DB 본문 암호화, 본문 삭제.
 - [ADR-0009](../adr/0009-claim-priority.md): 우선순위 등급, 점유 경로(우선순위·대기 순서), 지문의 `policy.priority`, 배포·롤백 순서. ADR-0002 구현 중 확정 2의 점유 인덱스·순서를 이어받는다.
 - [ADR-0010](../adr/0010-per-request-job-ttl.md): 요청별 만료 시간 `ttlSeconds`, 허용 범위와 상한 설정, 지문의 `policy.ttlSeconds`, 만료 의미, 보존 기간 기동 검사, 배포 순서. ADR-0002 결정 7의 요청별 지정 미결정을 정한다.
-- [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 배포·롤백 순서. 구현 전이고 선행 조건(구현 순서 1)만 반영했다.
+- [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 배포·롤백 순서. 구현 묶음 A(작업 취소, RQ-040·041)만 구현했고 나머지 결정(토큰 분리, 정지, 감사, `/ops`, CLI, 수신 도메인 허용 목록, 피드 공백 감지)은 구현 전이다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 
@@ -64,6 +64,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 6단계 묶음 A 작업 취소 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 405건(27개 파일, 실제 PostgreSQL 17), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 이 묶음은 단위 테스트를 더하지 않았다(취소는 PostgreSQL 통합 테스트가 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 102·실패 0(S15·S15b 신규, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). Dockerfile·compose·파일 채널 I/O를 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(RQ-040·041 판정 근거).
 - 검증 수치(2026-11-23 5단계 요청별 만료 시간 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 363건(25개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. Dockerfile·compose·파일 채널 I/O·봉투 형식·샘플을 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e를 실행하지 않았다(RQ-039 판정 근거).
 - 검증 수치(2026-11-23 개발용 Mailpit profile 반영 뒤): `pnpm test` 단위 568건(31개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck` 통과, `pnpm lint` 경고·오류 0건. 소스 변경이 없어 통합 테스트는 다시 실행하지 않았다. compose 변경이라 `scripts/container/verify-sigterm-file.sh`(1000건, 종료 코드 0, 재기동 뒤 중복·유실 없음)·`verify-sigkill-duplicate.sh`(같은 Message-ID 2통, 기대대로)를 실행했다. `--profile mailpit`으로 띄운 별도 compose 프로젝트에서 Mailo→Mailpit 1건 발송을 수동 확인했다(RQ-029 판정 근거).
 - 검증 수치(2026-11-23 평문 SMTP 모드 반영 뒤): `pnpm test` 단위 563건(31개 파일), 실패 0건. 관련 통합 `e2e/smtp-plaintext.integration-spec.ts`·`e2e/mail-flow.integration-spec.ts` 9건(2개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck` 통과, `pnpm lint` 경고·오류 0건. 전체 통합·컨테이너·볼륨·NFS·샘플 e2e는 실행하지 않았다(RQ-005 판정 근거).
@@ -85,6 +86,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 | 3단계 | NAS/NFS 통합 테스트, 사용처 연동 문서와 운영 문서 |
 | 4단계 | 발송 우선순위(RQ-033~038, ADR-0009) |
 | 5단계 | 요청별 만료 시간(RQ-039, ADR-0010) |
+| 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041)만 구현했다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -537,6 +539,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 | `SENT`       | SMTP 서버가 메일을 수락함     |
 | `FAILED`     | 재시도 불가능 또는 최종 실패  |
 | `EXPIRED`    | 발송 만료 시각 초과           |
+| `CANCELED`   | 나가기 전에 호출처가 취소함(RQ-040). 종결이다 |
 
 **수용 조건:**
 
@@ -545,8 +548,8 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 
 **판정 근거:**
 
-- 문서: ADR-0002 결정 7. 마이그레이션 `CHECK`가 상태 값과 lease·종결 시각 일관성을 강제한다.
-- `db/job-constraints.integration-spec.ts`: `CHECK` 제약 위반이 SQLSTATE 23514와 제약 이름으로 거부된다. `SENDING`인데 lease 컬럼이 일부만 있음·`SENDING`이 아닌데 lease가 남음(`mail_jobs_lease_state`), 종결 상태인데 `finished_at` 없음·그 반대(`mail_jobs_terminal_state`), 본문 암호문·nonce·키 버전 중 일부만 있음(`mail_jobs_body_state`), 알 수 없는 상태 값, 음수 시도 횟수.
+- 문서: ADR-0002 결정 7, ADR-0011 결정 4(`CANCELED`와 전이 `PENDING`·`RETRY_WAIT` → `CANCELED`). 마이그레이션 `CHECK`가 상태 값과 lease·종결 시각 일관성을 강제한다. `CANCELED`는 마이그레이션 `0006`이 허용한다.
+- `db/job-constraints.integration-spec.ts`: `CHECK` 제약 위반이 SQLSTATE 23514와 제약 이름으로 거부된다. `SENDING`인데 lease 컬럼이 일부만 있음·`SENDING`이 아닌데 lease가 남음(`mail_jobs_lease_state`), 종결 상태인데 `finished_at` 없음·그 반대(`mail_jobs_terminal_state`, `CANCELED`도 같다), 본문 암호문·nonce·키 버전 중 일부만 있음(`mail_jobs_body_state`), 알 수 없는 상태 값, 음수 시도 횟수.
 - `queue/claim-complete.integration-spec.ts`: `lease_token`이 다른 결과 거부, 회수 뒤 다시 점유된 작업에 이전 점유의 늦은 결과 거부. 전이 UPDATE는 `status = 'SENDING'`을 조건으로 건다.
 
 ### RQ-015 상태 조회
@@ -564,6 +567,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
   - 마지막 오류 정보.
   - 최종 발송 성공 시각.
   - 최종 실패 시각과 실패 원인.
+  - 취소 시각과 취소 주체(`canceledAt`, `canceledBy`). 취소한 작업에만 값이 있다(RQ-040).
   - 거부된 수신자(`rejectedRecipients`). 일부 수신자만 거부된 경우에 해당한다.
 
 **수용 조건:**
@@ -613,7 +617,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 실패 작업 ID, 수신자, 실패 원인, 시도 횟수를 확인할 수 있어야 한다.
 - 알림 방식은 이벤트 피드 pull이다(ADR-0006). webhook과 실패 파일 쓰기는 제공하지 않는다.
   - `GET /events?after=<cursor>&type=<종류>&limit=<개수>`로 조회한다.
-  - 이벤트 종류는 `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `INTAKE_REJECTED`다.
+  - 이벤트 종류는 `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `JOB_CANCELED`, `INTAKE_REJECTED`다. `JOB_CANCELED`는 RQ-040이 정한다.
   - 호출처는 자기 이벤트만 읽는다. 같은 이벤트가 다시 올 수 있으므로 이벤트 ID로 멱등하게 처리한다.
   - cursor는 `(txid, id)`를 base64url로 감싼 불투명 문자열이다(ADR-0006 결정 7). 피드는 `txid`가 `pg_snapshot_xmin(pg_current_snapshot())`보다 작은 이벤트만 반환한다. DB 어디서든 긴 트랜잭션이 있으면 피드가 멈추지만 이벤트는 유실되지 않는다. PostgreSQL 13 이상이 필요하다.
   - 이벤트와 거부 기록은 30일 보존한다(추정 기본값, ADR-0006 결정 8). 권장 폴링 간격은 30초다(추정).
@@ -1347,6 +1351,93 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 구현: `envelope/request-schema.ts`(검증), `envelope/open-request.ts`(`requestPolicy`), `envelope/register-input.ts`, `config/load-config.ts`. 큐 SQL(`queue/register.ts`·`claim.ts`·`complete.ts`·`maintenance.ts`)은 바꾸지 않았다.
 - 문서(검토로만 확인, `[ ]` 유지): `docs/api/openapi.yaml`(`SendRequest.ttlSeconds`, 파일 요청, `OUT_OF_RANGE`, `Job.expiresAt`), `docs/api/README.md`, `docs/operations/caller-onboarding.md` "요청별 만료 시간", `deployment.md`(`MAILO_JOB_EXPIRY_MAX_SECONDS`, "요청별 만료 시간 도입 배포 순서"), `troubleshooting.md`, `key-management.md`, `.env.example`.
 - 남은 미검증: 롤링 배포 중 구·신 인스턴스 혼용과 롤백 실행, 긴 상한에서의 대기 건수와 점유 지연, 하한 60의 적정성.
+
+## 14. 운영 제어와 호출처 보호: 작업 취소
+
+결정은 [ADR-0011](../adr/0011-operations-control-and-caller-protection.md) 결정 4·10이다. 이 절은 호출처 API 키로 하는 취소만 다룬다. 관리 토큰 경로(`POST /ops/jobs/{jobId}/cancel`), 감사 기록, 호출처 단위 일괄 취소, 발송 정지, 수신 도메인 허용 목록, 이벤트 피드 공백 신호는 구현 전이고 구현할 때 이 절 뒤에 RQ를 추가한다.
+
+### RQ-040 호출처 작업 취소
+
+- [x] **진행 상태:** 검증 완료 (6단계 묶음 A)
+
+**요구사항:**
+
+- 상태 `CANCELED`(종결)와 이벤트 `JOB_CANCELED`를 둔다(ADR-0011 결정 4).
+- 취소할 수 있는 작업은 `PENDING`·`RETRY_WAIT`뿐이다. `SENDING`은 취소하지 않는다. 진행 중인 전송을 중단하지 않는다(ADR-0009 결정 8과 같다).
+- 호출처 API(호출처 키, 자기 작업만):
+  - `POST /jobs/{jobId}/cancel`. 작업 ID를 아는 호출처가 쓴다.
+  - `POST /jobs/cancel?idempotencyKey=<Key>`. 파일 채널 호출처가 쓴다. 요청 본문은 없고 보내도 읽지 않는다.
+  - 다른 호출처의 작업과 없는 작업은 구분하지 않고 404다(RQ-015와 같다). 형식이 틀린 `jobId`·Key는 400(`validation-failed`)이다.
+- 응답:
+  - 취소했거나 이미 `CANCELED`이면 200과 `Job`이다. 이미 `CANCELED`이면 이벤트와 로그를 새로 쓰지 않는다(멱등). 처음 취소의 `canceledAt`·`canceledBy`를 바꾸지 않는다.
+  - `SENDING`, `SENT`, `FAILED`, `EXPIRED`이면 409(`urn:mailo:problem:job-not-cancelable`)이고 작업은 바뀌지 않는다. 현재 상태는 `jobStatus`로 알린다(ADR-0011 구현 중 확정 1). 요청 값은 넣지 않는다(RQ-027).
+- 저장:
+  - 한 트랜잭션에서 작업 전이, 본문 삭제, `JOB_CANCELED` 이벤트를 쓴다. 이벤트 쓰기가 실패하면 전이도 롤백한다(RQ-017과 같다).
+  - `finished_at = now()`(DB 시각), `failure_reason = CANCELED_BY_CALLER`. 본문 컬럼 세 개를 함께 NULL로 바꾸고 `body_deleted_at`을 쓴다. 나갈 수 없는 메일의 본문을 유예 기간 동안 두지 않는다. 행, Key, 지문은 종결 후 보존 기간(기본 30일)까지 남는다(ADR-0005 결정 7).
+  - `failure_reason`은 응답의 `failureReason`으로 내보내지 않는다. `CANCELED`에서 `sentAt`·`failedAt`·`failureReason`은 `null`이다.
+- 경합: 취소와 `claim`은 작업 행 잠금으로 직렬화한다. 한 작업이 취소되면서 동시에 점유되지 않는다. 취소는 `mail_circuit_breaker`를 읽거나 쓰지 않아 잠금 순서(작업 행 → 차단기 행)를 지킨다.
+- Key 계약(RQ-034): 취소된 작업의 Key로 같은 내용을 다시 보내면 200과 `CANCELED` 작업이다. 다른 내용이면 409다. 새 메일은 새 Key로 보낸다.
+- 이벤트와 조회:
+  - `JOB_CANCELED`를 작업 호출처의 피드에 쓴다. 호출처가 직접 취소해도 쓴다. 필드는 `jobId`, `idempotencyKey`, `attempts`, `recipients`와 `canceledBy`(`CALLER`·`OPERATOR`)다. 운영자 이름은 넣지 않는다.
+  - `GET /events?type=JOB_CANCELED` 필터를 지원한다.
+  - `Job` 응답에 `canceledAt`, `canceledBy`(`CALLER`·`OPERATOR`·`null`)를 더한다.
+- 로그: `job_canceled`(info)에 `jobId`, `callerId`, `canceledBy`만 남긴다. `Idempotency-Key`·수신자·본문은 남기지 않는다(RQ-027).
+- 후속 처리: `CANCELED` 작업은 점유·만료 sweep·본문 정리 대상이 아니다. 보존 기간이 지나면 작업과 이벤트를 함께 지운다.
+- 범위 밖(구현 전): 관리 토큰 취소와 감사, 호출처 단위 일괄 취소.
+
+**수용 조건:**
+
+- [x] `PENDING`·`RETRY_WAIT` 작업의 취소가 `CANCELED`, `finished_at`, 사유, 본문 삭제, `JOB_CANCELED` 이벤트를 한 트랜잭션에서 쓴다. 이벤트 쓰기가 실패하면 전이도 롤백한다. 행·Key·지문은 남는다.
+- [x] `SENDING`, `SENT`, `FAILED`, `EXPIRED`는 409 `job-not-cancelable`과 `jobStatus`이고 작업·본문·이벤트를 바꾸지 않는다.
+- [x] 이미 `CANCELED`이면 200과 같은 응답이고 이벤트·시각·사유가 바뀌지 않는다(멱등).
+- [x] 다른 호출처의 작업과 없는 작업은 같은 404이고 다른 호출처의 작업은 바뀌지 않는다. ID와 Key 경로 모두 같다. 인증 없음·틀린 키는 401이다.
+- [x] 취소와 `claim`이 한 작업에서 둘 다 이기지 않는다. 잠금을 쥔 상태의 두 방향과 동시 반복으로 확인한다.
+- [x] 취소된 작업의 Key로 같은 내용은 200(`CANCELED`)이고 다른 내용은 409다. 새 작업이 생기지 않는다.
+- [x] 호출처 피드에 `JOB_CANCELED`가 한 건 생기고 `canceledBy`를 담는다. `type` 필터로 거를 수 있다. 다른 호출처의 피드에는 없다.
+- [x] `Job` 응답이 `CANCELED`와 `canceledAt`·`canceledBy`를 내고, 취소하지 않은 작업은 두 필드가 `null`이다.
+- [x] 취소 응답·이벤트·로그에 본문·제목·수신자·`Idempotency-Key`가 없다(canary).
+- [x] 취소된 작업은 Worker가 켜져 있어도 발송되지 않는다. `RETRY_WAIT`에서 취소하면 재시도 시각이 돼도 다시 보내지 않는다.
+- [x] 취소된 작업은 claim·sweep·본문 정리 대상이 아니고 보존 기간 뒤 작업과 이벤트가 함께 삭제된다.
+
+**판정 근거:**
+
+- `queue/cancel.integration-spec.ts`(PostgreSQL): `PENDING` 취소의 모든 저장 값과 이벤트, Key로 취소와 `OPERATOR` 사유(확장 자리), `RETRY_WAIT` 취소와 시도 횟수 유지, 멱등(이벤트 1건·시각 불변), `SENDING`·`SENT`·`FAILED`·`EXPIRED`의 `not_cancelable`과 무변경, 다른 호출처·없는 작업의 `not_found`, 이벤트 쓰기 실패 시 롤백(`mail_events_type_check`를 임시로 옛 값으로 되돌려 확인), `claim`이 행 잠금을 쥔 동안 취소가 기다렸다가 `SENDING`을 보고 `not_cancelable`, 취소가 행을 잡은 동안 `claim`이 건너뜀, 취소 40건과 `claim` 8건 동시 실행의 상호 배타와 이벤트 수, claim·sweep·본문 정리 제외, 보존 삭제, 읽기 모델, 차단기 `open`·대표 작업 중 차단기 행 불변.
+- `http/rest-cancel.integration-spec.ts`(PostgreSQL, 실제 앱): 두 endpoint의 200 응답 모양과 본문 삭제, 멱등, `SENDING`·종결 409(`type`·`jobStatus`), 호출처 격리 404 동일 응답(요청 ID만 다름), `jobId` 형식·퍼센트 디코딩 오류 400, 401, Key 누락·형식 오류 400, 본문을 보내도 처리, Key 계약(200·409·새 작업 없음), 조회 두 경로 동일, 취소하지 않은 작업의 `canceledAt`·`canceledBy` null, `JOB_CANCELED` 이벤트 필드 집합과 `type` 필터(단독·복수)와 격리, 모르는 `type` 400, canary(응답·로그·DB 이벤트), `job_canceled` 로그 필드 집합과 멱등 재요청 무로그.
+- `e2e/mail-flow.integration-spec.ts`(PostgreSQL, Worker, 로컬 SMTP): 취소한 `PENDING` 작업이 Worker 기동 뒤에도 발송되지 않음(SMTP 0통), `RETRY_WAIT` 취소 뒤 재시도 시각이 돼도 DATA 호출 수가 늘지 않음.
+- `db/job-constraints.integration-spec.ts`: `CANCELED`와 `finished_at`의 짝, `JOB_CANCELED` 삽입, 모르는 값 거부.
+- RED 확인(2026-11-24): 구현 전 코드에서 신규 `rest-cancel` 통합 테스트와 `job-constraints` 신규 항목이 실패했고(실행 결과 31건 중 20건 실패, 11건은 기존 동작과 같아 통과) `queue/cancel` 통합 테스트는 `cancelJob`이 없어 컴파일에 실패했다.
+- 구현: `queue/cancel.ts`, `intake/intake.service.ts`·`intake.controller.ts`·`presenters.ts`·`query-params.ts`, `http/problem.ts`, 마이그레이션 `0006`·`0007`.
+- 샘플 e2e(`samples/spring-boot-relay/verify/run-e2e.sh`의 S15·S15b)는 스크립트 검증이라 `[x]` 근거에 쓰지 않았다. 결과는 RQ-041 판정 근거에 적는다.
+
+### RQ-041 취소 배포 호환성과 호출처 선행 조건
+
+- [ ] **진행 상태:** 진행 중 (6단계 묶음 A)
+
+**요구사항:**
+
+- 마이그레이션은 `0006_job_canceled_status.sql`(`mail_jobs`의 `mail_jobs_status_check`·`mail_jobs_terminal_state`)과 `0007_event_type_canceled.sql`(`mail_events`의 `mail_events_type_check`)이다. 테이블마다 파일을 나눈다. 각 제약을 `DROP` 뒤 같은 이름으로 `NOT VALID`로 다시 추가한다. 기존 파일은 고치지 않는다. 되돌리지 않는다(ADR-0011 결정 10).
+- 호출처가 모르는 이벤트 종류·`Job.status`·응답 필드를 처리하는 규칙은 `docs/api/README.md`에 있다(ADR-0011 구현 순서 1). 취소 API를 쓰기 전에 사용처가 이 규칙을 지켜야 한다.
+- 샘플(`samples/spring-boot-relay/`)은 `CANCELED`·`JOB_CANCELED`를 실패가 아닌 종결로 처리한다(ADR-0011 구현 순서 1.7).
+- 배포 순서는 선행 조건 확인 → 마이그레이션 → 모든 인스턴스 교체 → 호출처가 취소 API 사용이다. 롤링 중에는 취소 API를 쓰지 않는다. 롤백은 취소 API 사용 중지 → 이전 버전이고 스키마는 되돌리지 않는다.
+- 구버전 인스턴스는 `CANCELED`를 그대로 내보내고 `GET /events?type=JOB_CANCELED`를 400으로 거부한다(코드를 읽어 확인했다).
+- 운영 문서: `docs/operations/deployment.md`("작업 취소 도입 배포 순서", `job_canceled` 로그), `caller-onboarding.md`("작업 취소"), `troubleshooting.md`("작업 취소"). API 문서: `docs/api/openapi.yaml`, `docs/api/README.md`.
+
+**수용 조건:**
+
+- [x] `0006`·`0007` 적용 뒤 `CANCELED`·`JOB_CANCELED`가 허용되고 모르는 값은 계속 거부되며 세 제약의 이름이 유지되고 `convalidated = false`다.
+- [x] 마이그레이션 실행기가 새 schema에 `0001`~`0007`을 순서대로 적용하고 기존 통합 테스트가 모두 통과한다.
+- [x] 샘플이 `CANCELED`와 `JOB_CANCELED`를 종결로 반영하고(이벤트·`GET /jobs`·확인 필요 해소 경로) 모르는 값은 계속 확인 필요로 둔다. Gradle 단위 테스트로 확인한다(로컬 실행, CI 대상 아님).
+- [ ] 롤링 배포(구·신 인스턴스 혼용)와 롤백을 실행해 구버전 동작과 문서 절차를 확인한다.
+- [ ] 이 저장소 밖 호출처가 모르는 값 규칙을 지키는지 확인한다(ADR-0011 구현 순서 1.8).
+- [ ] `docs/api/openapi.yaml`, `docs/api/README.md`, `docs/operations/`를 갱신한다(검토로만 확인했고 자동 검증은 예시 스키마 적합성 점검뿐이다).
+
+**판정 근거:**
+
+- `db/job-constraints.integration-spec.ts`: `CANCELED`·`JOB_CANCELED` 허용과 짝 제약, 모르는 값 거부, 제약 이름·`convalidated`(`pg_constraint`). 모든 PostgreSQL 통합 테스트가 `test/support/queue-fixtures.ts`의 `migrate`로 `0001`~`0007`을 새 schema에 적용한다.
+- 샘플 Gradle 단위 테스트(`JobStatusMappingTest`, `EventFeedPollerApplyTest`, `NeedsCheckResolverTest`): `CANCELED` 종결 반영과 취소 사유, `JOB_CANCELED` 이벤트 처리, 모르는 상태·이벤트 종류의 확인 필요 유지(대소문자가 다른 값 포함). DB 없이 대역으로 확인하며 상태 전이 SQL 조건은 e2e 스크립트가 맡는다.
+- 샘플 e2e 스크립트 `samples/spring-boot-relay/verify/run-e2e.sh`의 S15·S15b(결과는 아래 "검증 수치"의 샘플 항목). 스크립트 검증이라 자동 테스트가 아니다.
+- API 계약 예시 8건을 일회성 스크립트(ajv 8, JSON Schema 2020-12)로 스키마에 대조했다(저장소에 없다). OpenAPI 전용 린터는 실행하지 않았다.
+- 남은 미검증: 롤링 배포·롤백 실행, 대용량 테이블·쓰기 부하 중 `ACCESS EXCLUSIVE` 잠금 대기, 저장소 밖 호출처, 샘플 외 호출처의 모르는 값 처리.
 
 ## 확정한 항목
 

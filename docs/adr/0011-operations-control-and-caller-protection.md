@@ -6,7 +6,7 @@
 
 2026-11-23에 제안했고 2026-11-24에 사용자가 승인했다. 열린 질문이던 7건은 이 문서가 적은 권고대로 승인했다. 승인된 값은 "미결정·확인하지 않은 것"의 "승인된 결정" 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 6"이다.
 
-구현 상태(2026-11-24): 구현 전. 선행 조건(구현 순서 1)만 문서와 샘플에 반영했다. 1.1~1.6은 `docs/api/README.md`, 샘플(`samples/spring-boot-relay/`), `docs/operations/caller-onboarding.md`에 있고, 1.7(샘플이 `CANCELED`·`JOB_CANCELED`를 종결로 알게 하는 변경)과 1.8(저장소 밖 호출처 확인)은 남았다. 2~9는 시작하지 않았고 `apps/mailo`의 코드는 바꾸지 않았다. `docs/api/openapi.yaml`의 enum과 `additionalProperties`는 기능 구현 때 바꾼다.
+구현 상태(2026-11-24): 구현 묶음 A(작업 취소, 결정 4의 호출처 API와 결정 10의 `0006`·`0007`)를 구현하고 자동 테스트로 검증했다. 요구사항은 RQ-040(호출처 작업 취소), RQ-041(취소 배포 호환성)이다. 구현 순서 1의 문서·샘플 반영(1.1~1.7)을 마쳤고 1.8(저장소 밖 호출처 확인)은 남았다. 구현 순서 2는 끝났다. 결정 4의 관리 API(`POST /ops/jobs/{jobId}/cancel`)와 호출처 단위 일괄 취소, 결정 1~3·5~9와 구현 순서 3~9는 시작하지 않았다. 구현 중 확정한 세부는 "구현 중 확정" 절이다. `docs/api/openapi.yaml`의 `JobStatus`·`EventType` enum과 `Job` 스키마는 취소 구현과 함께 바꿨다(`ReadyResponse`의 `additionalProperties`는 정지 구현 때 바꾼다).
 
 검증 범위는 코드 읽기와 PostgreSQL 17.11(로컬 compose)의 임시 schema 확인이다(2026-11-23).
 
@@ -352,6 +352,19 @@
 모듈 경계: 정지 테이블과 취소 SQL은 `mail_jobs`를 소유한 `queue`에 둔다. 감사 테이블과 REST는 새 모듈 `ops`가 소유한다. 삭제 표지 테이블은 `events`가 소유하고 `queue`의 보존 삭제가 `events`의 `index.ts`를 통해 부른다. 새 npm 의존성은 없다.
 
 검증 계획(구현 때): 정지가 일반 점유와 대표 작업 점유를 모두 막는지, 호출처 정지가 다른 호출처를 막지 않는지, 정지 호출처가 `planQuotas` 계산(advisory lock·사용량 쿼리)에서 빠지는지, 호출처 키 `/health/ready`의 `sendPaused`가 자기 범위만 보이는지, 취소와 `claim`의 경합, `CHECK` 교체 뒤 새 상태 허용과 옛 행 보존, 표지 판정의 누락·오탐 경계(`type` 필터, cursor 이하 표지, 이벤트가 드문 호출처, 표지 갱신과 cascade 삭제의 같은 트랜잭션), 헤더 기본값과 `onGap=error`의 410, `allowedRecipientDomains` 기동 거부 사례(대문자·U-label·끝 점·`*`·선행 `.`·중복·빈 배열), 감사 기록에 자유 텍스트와 토큰이 없는지(canary 문자열 검색), 호출처 키로 `/ops`가 401인지, 읽기 토큰의 관리 endpoint가 403인지를 PostgreSQL 통합 테스트로 확인한다.
+
+## 구현 중 확정 (2026-11-24)
+
+결정 문구는 바꾸지 않는다. 아래는 구현 묶음 A(작업 취소)에서 정한 세부다.
+
+1. **409 응답의 현재 상태 필드 이름(결정 4, `src/http/problem.ts`).** 결정 4는 "응답에 현재 `status`만 넣는다"고 적었다. RFC 9457의 `status`는 HTTP 상태 코드(409)이고 같은 이름으로 작업 상태를 넣으면 덮어쓴다. 작업의 현재 상태는 `jobStatus` 필드로 낸다. `type`은 `urn:mailo:problem:job-not-cancelable`이다. 오류 본문에 요청 값을 넣지 않는 규칙은 같다.
+2. **이벤트의 취소 주체 저장(결정 4, `queue/cancel.ts`).** `mail_events`에 새 컬럼을 두지 않는다. 이벤트의 `failure_reason`에 작업과 같은 값(`CANCELED_BY_CALLER`·`CANCELED_BY_OPERATOR`)을 쓰고, 응답의 `canceledBy`는 이 값에서 만든다(`intake/presenters.ts`의 `canceledByOf`). 모르는 값은 `null`이다. 이 저장 값이 구버전 인스턴스에서는 실패형 이벤트의 `failureReason`으로 그대로 나간다(결정 4의 구버전 동작과 같다).
+3. **`JOB_CANCELED` 이벤트의 필드(결정 4).** `jobId`, `idempotencyKey`, `attempts`, `recipients`에 `canceledBy`를 더한다. `failureReason`·`lastError`·`rejectedRecipients`는 내지 않는다. 취소는 실패가 아니고 `lastError`를 읽는 일괄 조회(`findLastErrors`)의 대상도 아니다.
+4. **취소 전이 쿼리(결정 4, `queue/cancel.ts`의 `cancelJob`).** 한 트랜잭션에서 `UPDATE ... WHERE status IN ('PENDING','RETRY_WAIT') RETURNING`으로 전이하고 이벤트를 쓴다. 갱신 행이 없으면 같은 트랜잭션에서 현재 상태를 읽어 `already_canceled`·`not_cancelable`·`not_found`를 가른다. `claim`이 잠근 행은 UPDATE가 기다리고, 커밋 뒤 `SENDING`이어서 갱신하지 않는다. 이 동작을 `test/queue/cancel.integration-spec.ts`가 잠금을 직접 쥐고 확인한다. 취소는 `mail_circuit_breaker`를 읽거나 쓰지 않는다.
+5. **마이그레이션 검증(결정 10).** `0006`·`0007` 적용 뒤 세 제약 모두 `convalidated = false`이고 이름이 같다는 것을 `test/db/job-constraints.integration-spec.ts`가 확인한다. `CANCELED`와 `finished_at`의 짝(`mail_jobs_terminal_state`)과 `JOB_CANCELED` 삽입도 같은 파일이 확인한다. 임시 schema 확인(상태 절)과 달리 자동 테스트다. 동시 쓰기 중의 잠금 대기는 여전히 확인하지 않았다.
+6. **호출처 경로의 라우트 구성(결정 4).** `POST /jobs/cancel`(Key)과 `POST /jobs/:jobId/cancel`(작업 ID)은 세그먼트 수가 달라 겹치지 않는다. 요청 본문은 읽지 않는다. 경로 파라미터의 퍼센트 디코딩 오류는 기존 `/jobs/` 접두사 처리로 `validation-failed`다(`http/problem.filter.ts`).
+7. **로그(결정 4, 구현 순서 9).** `job_canceled`(info)는 `jobId`, `callerId`, `canceledBy`만 담고 이미 취소된 작업의 재요청에는 남기지 않는다. 관리 토큰 경로의 `ops_job_canceled`는 이 묶음에 없다.
+8. **검증.** PostgreSQL 통합: `test/queue/cancel.integration-spec.ts`, `test/http/rest-cancel.integration-spec.ts`, `test/db/job-constraints.integration-spec.ts`, `test/e2e/mail-flow.integration-spec.ts`(취소 뒤 Worker가 발송하지 않음). 샘플: Gradle 단위 테스트와 `samples/spring-boot-relay/verify/run-e2e.sh`의 S15·S15b(스크립트 검증, 자동 테스트 아님).
 
 ## 검토한 대안
 
