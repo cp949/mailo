@@ -17,8 +17,11 @@ import sample.relay.RelayProperties;
 @Component
 public class MailoClient {
 
-    /** {@code body}는 JSON이 아니거나 비어 있으면 null이다. */
-    public record Response(int status, JsonNode body) {}
+    /**
+     * @param body JSON이 아니거나 비어 있으면 null이다.
+     * @param cursorGap 응답 헤더 {@code Mailo-Cursor-Gap: true}가 있다. cursor 뒤에서 이벤트가 삭제됐다는 신호다(ADR-0011 결정 9).
+     */
+    public record Response(int status, JsonNode body, boolean cursorGap) {}
 
     private final HttpClient http;
     private final RelayProperties props;
@@ -51,22 +54,35 @@ public class MailoClient {
         return send(request);
     }
 
-    /** {@code GET /events}. 200이 아니면 IOException이다. cursor는 불투명 문자열이므로 그대로 넘긴다. */
-    public JsonNode getEvents(String after, int limit) throws IOException, InterruptedException {
+    /**
+     * {@code GET /events}. 상태 코드와 관계없이 응답을 돌려준다. 200 판정, 410 복구, 그 밖의 오류 처리는 호출자가 한다.
+     * 네트워크 오류만 IOException이다. cursor는 불투명 문자열이므로 그대로 넘긴다.
+     * 410을 받는 {@code onGap=error}는 보내지 않는다. 공백은 헤더({@link Response#cursorGap})로 받는다.
+     */
+    public Response getEvents(String after, int limit) throws IOException, InterruptedException {
         String query = "limit=" + limit;
         if (after != null) {
             query += "&after=" + URLEncoder.encode(after, StandardCharsets.UTF_8);
         }
-        HttpRequest request = HttpRequest.newBuilder(base.resolve("events?" + query))
+        return send(get("events?" + query));
+    }
+
+    /** {@code GET /jobs?idempotencyKey=}. 같은 호출처의 작업만 조회된다. 없으면 404다. */
+    public Response getJobByKey(UUID idempotencyKey) throws IOException, InterruptedException {
+        return send(get("jobs?idempotencyKey=" + URLEncoder.encode(idempotencyKey.toString(), StandardCharsets.UTF_8)));
+    }
+
+    /** {@code GET /jobs/{jobId}}. 등록 응답이나 이벤트로 받은 작업 ID로 조회한다. */
+    public Response getJob(UUID jobId) throws IOException, InterruptedException {
+        return send(get("jobs/" + jobId));
+    }
+
+    private HttpRequest get(String relativeUri) {
+        return HttpRequest.newBuilder(base.resolve(relativeUri))
                 .timeout(props.retry().requestTimeout())
                 .header("Authorization", "Bearer " + props.apiKey())
                 .GET()
                 .build();
-        Response response = send(request);
-        if (response.status() != 200 || response.body() == null) {
-            throw new IOException("GET /events 실패: HTTP " + response.status());
-        }
-        return response.body();
     }
 
     private Response send(HttpRequest request) throws IOException, InterruptedException {
@@ -77,6 +93,7 @@ public class MailoClient {
         } catch (IOException ignored) {
             // 본문이 JSON이 아니어도 상태 코드로 판정한다.
         }
-        return new Response(res.statusCode(), body);
+        boolean gap = res.headers().firstValue("Mailo-Cursor-Gap").map("true"::equalsIgnoreCase).orElse(false);
+        return new Response(res.statusCode(), body, gap);
     }
 }

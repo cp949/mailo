@@ -70,8 +70,16 @@ public class RelayWorker {
 
         switch (d.kind()) {
             case DONE -> {
-                outbox.markAttempt(row.id(), statusAfterRegistered(d.jobStatus()), d.httpStatus(), null);
-                log.info("relay_done outbox_id={} http={} job_status={}", row.id(), d.httpStatus(), d.jobStatus());
+                String status = JobStatusMapping.toOutboxStatus(d.jobStatus());
+                boolean unknown = OutboxStatus.NEEDS_CHECK.equals(status);
+                outbox.markAttempt(row.id(), status, d.httpStatus(), unknown ? "UNKNOWN_JOB_STATUS" : null);
+                if (unknown) {
+                    // 모르는 상태는 성공으로 처리하지 않는다. NeedsCheckResolver가 GET /jobs로 확인한다.
+                    log.warn("relay_unknown_job_status outbox_id={} http={} job_status={}", row.id(), d.httpStatus(),
+                            sanitize(d.jobStatus()));
+                } else {
+                    log.info("relay_done outbox_id={} http={} job_status={}", row.id(), d.httpStatus(), d.jobStatus());
+                }
             }
             case RETRY -> {
                 int failures = row.attemptCount() + 1;
@@ -97,19 +105,8 @@ public class RelayWorker {
         return true;
     }
 
-    /**
-     * 200 응답은 같은 Key의 기존 작업과 현재 상태를 돌려준다. 이벤트를 이미 소비한 뒤 재전송한 행이 DELIVERED로
-     * 남지 않게 종결 상태를 그대로 반영한다.
-     */
-    private static String statusAfterRegistered(String jobStatus) {
-        if (jobStatus == null) {
-            return OutboxStatus.DELIVERED;
-        }
-        return switch (jobStatus) {
-            case "SENT" -> OutboxStatus.SENT;
-            case "FAILED" -> OutboxStatus.FAILED;
-            case "EXPIRED" -> OutboxStatus.EXPIRED;
-            default -> OutboxStatus.DELIVERED;
-        };
+    /** 서버가 보낸 값을 로그에 넣기 전에 대문자와 밑줄만 남긴다. */
+    private static String sanitize(String value) {
+        return value == null ? "" : value.replaceAll("[^A-Z_]", "");
     }
 }

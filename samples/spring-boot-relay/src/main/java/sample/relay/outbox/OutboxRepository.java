@@ -1,5 +1,6 @@
 package sample.relay.outbox;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -89,18 +90,76 @@ public class OutboxRepository {
     }
 
     /**
-     * 이벤트 피드가 알려 준 결과를 반영한다. 아직 등록·전송 대기 중인 행만 바꾸므로 같은 이벤트가
-     * 다시 와도 결과가 같다(멱등). 바뀐 행 수를 돌려준다.
+     * 이벤트 피드가 알려 준 결과를 반영한다. 아직 종결되지 않은 행(전송 대기, 등록됨, 확인 필요)만 바꾸므로
+     * 같은 이벤트가 다시 와도 결과가 같다(멱등). 바뀐 행 수를 돌려준다.
      */
     public int applyFeedResult(UUID id, String status, String reason) {
         return jdbc.sql("""
                         UPDATE mail_outbox
                            SET status = :status, last_error = :reason, updated_at = now()
-                         WHERE id = :id AND status IN ('PENDING', 'DELIVERED')
+                         WHERE id = :id AND status IN ('PENDING', 'DELIVERED', 'NEEDS_CHECK')
                         """)
                 .param("id", id)
                 .param("status", status)
                 .param("reason", reason)
+                .update();
+    }
+
+    /**
+     * 모르는 이벤트 종류를 만난 행을 확인 필요로 바꾼다. 종결된 행은 바꾸지 않는다.
+     * 전송 대기(PENDING) 행도 바꾼다. 이벤트가 있다는 것은 Mailo가 이미 등록했다는 뜻이므로 relay가 다시 보낼 필요가 없다.
+     */
+    public int markNeedsCheck(UUID id, String reason) {
+        return jdbc.sql("""
+                        UPDATE mail_outbox
+                           SET status = 'NEEDS_CHECK', last_error = :reason, updated_at = now()
+                         WHERE id = :id AND status IN ('PENDING', 'DELIVERED')
+                        """)
+                .param("id", id)
+                .param("reason", reason)
+                .update();
+    }
+
+    /**
+     * 이벤트 공백 신호를 받았을 때 등록됨(DELIVERED) 행 전체를 확인 필요로 바꾼다.
+     * 놓친 이벤트가 어느 행의 것인지 알 수 없으므로 종결되지 않은 등록됨 행을 모두 확인한다.
+     * 전송 대기 행은 relay가 다시 보내고 200 응답의 Job 상태로 확인되므로 제외한다.
+     */
+    public int markDeliveredNeedsCheck(String reason) {
+        return jdbc.sql("""
+                        UPDATE mail_outbox
+                           SET status = 'NEEDS_CHECK', last_error = :reason, updated_at = now()
+                         WHERE status = 'DELIVERED'
+                        """)
+                .param("reason", reason)
+                .update();
+    }
+
+    /** 확인이 오래 걸린(updated_at이 오래된) 확인 필요 행부터 최대 limit개의 ID를 돌려준다. */
+    public List<UUID> findNeedsCheck(int limit) {
+        return jdbc.sql("SELECT id FROM mail_outbox WHERE status = 'NEEDS_CHECK' ORDER BY updated_at LIMIT :limit")
+                .param("limit", limit)
+                .query((rs, n) -> rs.getObject("id", UUID.class))
+                .list();
+    }
+
+    /** {@code GET /jobs}로 확인한 결과를 반영한다. 확인 필요 행만 바꾸므로 반복해도 결과가 같다. */
+    public int applyCheckResult(UUID id, String status, String reason) {
+        return jdbc.sql("""
+                        UPDATE mail_outbox
+                           SET status = :status, last_error = :reason, updated_at = now()
+                         WHERE id = :id AND status = 'NEEDS_CHECK'
+                        """)
+                .param("id", id)
+                .param("status", status)
+                .param("reason", reason)
+                .update();
+    }
+
+    /** 확인했지만 풀리지 않은 행의 updated_at만 갱신한다. 풀리지 않는 행이 조회 순서를 막지 않게 한다. */
+    public int touchNeedsCheck(UUID id) {
+        return jdbc.sql("UPDATE mail_outbox SET updated_at = now() WHERE id = :id AND status = 'NEEDS_CHECK'")
+                .param("id", id)
                 .update();
     }
 }

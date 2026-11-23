@@ -35,6 +35,13 @@ class EventRepository {
                 .update();
     }
 
+    /** cursor를 지운다. 다음 폴링은 `after` 없이 남아 있는 이벤트부터 읽는다. 이벤트 처리는 멱등이다. */
+    void deleteCursor() {
+        jdbc.sql("DELETE FROM mailo_event_cursor WHERE name = :name")
+                .param("name", CURSOR_NAME)
+                .update();
+    }
+
     /** event_id로 멱등하게 기록한다. 이미 있으면 false다. payload는 이벤트 JSON 그대로이고 본문은 들어 있지 않다. */
     boolean insertLog(String eventId, String type, UUID outboxId, String reason, String payloadJson,
             OffsetDateTime occurredAt) {

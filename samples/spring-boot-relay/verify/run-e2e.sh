@@ -166,6 +166,16 @@ check "S3 이벤트 기록 type" JOB_FAILED "$(sq "SELECT type FROM mailo_event_
 check "S3 이벤트 기록 smtpCode" 550 "$(sq "SELECT payload->'lastError'->>'smtpCode' FROM mailo_event_log WHERE outbox_id='$OB3'")"
 check "S3 SMTP 수신 메일 수" 0 "$(smtp_count nobody@reject.example)"
 
+log "S3a 확인 필요(NEEDS_CHECK) 행을 GET /jobs로 확인(ADR-0011 구현 순서 1)"
+sq "UPDATE mail_outbox SET status='NEEDS_CHECK', last_error='UNKNOWN_EVENT_TYPE' WHERE id='$OB3'" >/dev/null
+wait_until 20 status_is "$OB3" FAILED
+check "S3a 확인 필요 -> Job 종결 상태 반영" FAILED "$(sq "SELECT status FROM mail_outbox WHERE id='$OB3'")"
+check "S3a 사유(Job의 failureReason)" PERMANENT_ERROR "$(sq "SELECT last_error FROM mail_outbox WHERE id='$OB3'")"
+OB3B="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
+sq "INSERT INTO mail_outbox (id, request_json, status, last_error) VALUES ('$OB3B', '{}', 'NEEDS_CHECK', 'UNKNOWN_EVENT_TYPE')" >/dev/null
+sleep 6
+check "S3a Mailo에 없는 Key(404)는 확인 필요로 남는다" NEEDS_CHECK "$(sq "SELECT status FROM mail_outbox WHERE id='$OB3B'")"
+
 log "S4 같은 Key에 다른 내용 -> 409 격리"
 sq "UPDATE mail_outbox SET request_json = replace(request_json, '주문 접수 안내', '바뀐 제목'), status='PENDING', next_attempt_at=now() WHERE id='$OB1'" >/dev/null
 wait_until 20 status_is "$OB1" QUARANTINED

@@ -20,5 +20,12 @@ public final class OutboxStatus {
     /** 409(같은 Key에 다른 내용)나 FINGERPRINT_MISMATCH. 호출처 버그를 의심한다. 자동 재시도하지 않는다. */
     public static final String QUARANTINED = "QUARANTINED";
 
+    /**
+     * 모르는 이벤트 종류나 모르는 Job 상태를 만났거나 이벤트 공백 신호를 받아 확인이 필요한 행.
+     * 종결이 아니다. {@code NeedsCheckResolver}가 {@code GET /jobs}로 확인하고, 확인이 끝날 때까지 운영 알림 대상이다.
+     * relay는 이 행을 다시 보내지 않는다(ADR-0011 구현 순서 1, docs/api/README.md).
+     */
+    public static final String NEEDS_CHECK = "NEEDS_CHECK";
+
     private OutboxStatus() {}
 }
