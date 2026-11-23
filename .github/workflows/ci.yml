@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       run_nfs:
-        description: "nfs 잡을 실행한다(GitHub 호스티드 러너에서 동작을 아직 확인하지 않았다)"
+        description: "nfs 잡을 실행한다(GitHub 호스티드 러너에서 통과를 아직 확인하지 못했다)"
         type: boolean
         default: false
   schedule:
@@ -150,7 +150,7 @@ jobs:
 
   nfs:
     name: nfs (선택, 필수 체크 아님)
-    # 선택 잡이다. GitHub 호스티드 러너에서 커널 NFS 서버를 구성할 수 있는지 확인한 적이 없다.
+    # 선택 잡이다. 첫 실행(2026-11-23)에서 NFS 환경 준비는 성공했지만 테스트 단계가 실패해 러너 통과는 확인하지 못했다.
     # 첫 실행 결과를 확인하기 전에는 이 잡을 필수 체크로 지정하지 않는다(docs/operations/ci.md).
     # push·pull_request에서는 돌지 않는다. 수동 실행(run_nfs=true)과 주 1회 schedule에서만 돈다.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_nfs)
@@ -188,6 +188,9 @@ jobs:
       # setup.sh는 setfacl(acl 패키지)을 요구한다.
       - name: acl 설치
         run: sudo apt-get install -y acl
+      # 시간 상한: run.sh의 테스트 상한 MAILO_NFS_RUN_TIMEOUT(기본 1200초) < 이 단계 25분 < 잡 30분.
+      # 첫 실행(2026-11-23)에서 테스트가 멈춰 잡 전체 30분을 채웠기 때문에 안쪽 상한을 둔다(docs/operations/ci.md).
       - name: NFS 환경 준비·테스트·정리
+        timeout-minutes: 25
         working-directory: apps/mailo
         run: scripts/nfs/run.sh

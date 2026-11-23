@@ -105,7 +105,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 구현·검증 완료: NAS/NFS loopback 통합 테스트(`pnpm test:nfs` 31건, NFSv4.1·4.2 각각), 같은 호스트 Docker named volume 권한·e2e 스크립트(`scripts/volume/` 7항목 a~g), `ESTALE` 처리 수정(`file-channel/errno.ts`), 호출처별 발송 할당(RQ-032).
 - 문서: 운영 문서 `docs/operations/`(README, deployment, key-management, caller-onboarding, troubleshooting, nfs), 사용처 연동 지침(`caller-onboarding.md`의 outbox + relay, 이벤트 피드 소비, Key 조회 404 처리).
 - 권한 문구: 사용자 위임 결정으로 ADR-0004 결정 8과 RQ-024에 "default ACL 권장, 공용 그룹 + setgid는 대안" 보완 표기를 달았다(ADR-0004 구현 중 확정 28).
-- 미검증 목록: 실제 Gmail·Workspace SMTP, 실제 NAS 제품(서버 재시작·failover, NFSv3·4.0·Kerberos 포함), GitHub 호스티드 러너(워크플로는 작성만 했고 실행하지 않았다), bind mount·rootless Docker, 호스트 외 환경. Java 사용처 샘플(`samples/spring-boot-relay/`)은 컴파일하고 이 저장소의 Mailo와 실행해 확인했다(RQ-021·022, 확인한 범위는 각 RQ의 판정 근거). SIGKILL 중복 발송과 컨테이너 SIGTERM은 로컬 Docker에서 관찰했다.
+- 미검증 목록: 실제 Gmail·Workspace SMTP, 실제 NAS 제품(서버 재시작·failover, NFSv3·4.0·Kerberos 포함), GitHub 호스티드 러너의 `nfs` 잡 통과(첫 실행은 환경 준비 성공, 테스트 단계 실패, 수정 뒤 재실행 전. `static`·`integration`·`container` 잡은 성공), bind mount·rootless Docker, 호스트 외 환경. Java 사용처 샘플(`samples/spring-boot-relay/`)은 컴파일하고 이 저장소의 Mailo와 실행해 확인했다(RQ-021·022, 확인한 범위는 각 RQ의 판정 근거). SIGKILL 중복 발송과 컨테이너 SIGTERM은 로컬 Docker에서 관찰했다.
 
 ## 1. 입력 채널과 경계
 
@@ -172,7 +172,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - NFS loopback(2026-11-23, `test/nfs/file-channel.nfs-spec.ts`, `pnpm test:nfs` 31건, NFSv4.1·4.2 기본값 각각 통과): 호출처 UID → `w` 클라이언트 rename → Mailo(`m1`) 수집·삭제. mount 옵션 6종의 기존 폴더 가시성 7~13 ms, 새 호출처 폴더 가시성(기본값 31.3초, `acdirmin=acdirmax=3` 3.0초, `lookupcache=pos` 9 ms), `close` 전 `rename`에서도 전체 내용을 읽음(ADR-0004 결정 3의 추정과 다름), rename 뒤 덧쓰기는 부분 노출, 2 MiB × 16건 rename 원자성(부분 0건), 심볼릭 링크·FIFO·하드링크 처리, `ESTALE`(수정 전 40회 중 8회 던짐, 수정 후 0회), 서로 다른 NFS 클라이언트의 두 폴러 동시 수집(60건, 중복 0, 오류 0).
 - 컨테이너 시작 검사(2026-11-23, 코드 리뷰 반영): 파일 채널이 켜져 있고 `<root>/inbox`가 없거나 통과할 수 없으면 앱이 기동을 거부한다(`poller.integration-spec.ts`). 호출처 폴더 하나가 없는 것은 경고만 남긴다. `inbox`의 읽기 권한은 요구하지 않는다(권한 모델의 `0711`). 처음 구현이 읽기도 요구해 `scripts/volume/verify-e2e.sh`에서 기동하지 못했고 그 결과로 고쳤다(ADR-0004 구현 중 확정 34).
 - NFS를 컨테이너에서 쓰는 구성(`docker-compose.nfs-example.yml`, Docker local 드라이버 `type: nfs` named volume)은 작성만 했고 실행해 확인하지 않았다. 재현 스크립트 `apps/mailo/scripts/nfs/verify-docker-volume.sh`도 작성만 했다(작성 환경에 `nfs-kernel-server`가 없었다). `hard` mount에서 NAS가 멈췄을 때의 동작은 코드 읽기 결과만 있다(`docs/operations/nfs.md`, ADR-0004 구현 중 확정 35).
-- 미확인: 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, Docker local 드라이버 NFS 볼륨, rootless Docker, GitHub 호스티드 러너(워크플로 작성만 함).
+- 미확인: 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, Docker local 드라이버 NFS 볼륨, rootless Docker, GitHub 호스티드 러너의 `nfs` 잡 통과(2026-11-23 첫 실행은 테스트 단계에서 실패, 수정 뒤 재실행 전).
 
 **제한:**
 
@@ -798,7 +798,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - [x] 호출처 계정이 자기 폴더의 목록을 조회할 수 없다. (같은 호스트 Docker named volume, default ACL·공용 그룹 두 방식에서 차단을 확인했다. 이름을 알면 `stat`·읽기·삭제는 가능하다. 스크립트 검증이다. NFS loopback에서도 자기 폴더와 `inbox` 목록 조회가 `EACCES`이고 폴더 `chmod`가 거부됐다: `pnpm test:nfs`.)
 - [x] 호출처 계정이 다른 호출처 폴더의 파일을 읽거나 만들 수 없다. (같은 환경, 두 방식에서 목록·읽기·생성·rename·삭제와 inbox 루트 목록이 모두 차단됐다. root나 Mailo와 같은 UID로 실행하면 성립하지 않음을 보였다. NFS loopback에서도 같은 호출처 UID 2개로 서로의 폴더 만들기·목록·읽기·삭제가 `EACCES`이고, root는 `root_squash`로 거부됐다.)
 - [x] Mailo 계정이 호출처가 만든 파일을 호출처 umask와 무관하게 읽을 수 있다. (default ACL 방식 한정이다. 2026-11-23 보완: 공용 그룹 방식은 이 조건을 만족하지 않는다. default ACL 방식에서 umask 022·027·077·000 모두 읽었다. 공용 그룹 + setgid는 umask 077에서 읽지 못한다. 두 방식 모두 호출처가 생성 mode를 0600으로 명시한 파일은 읽지 못하므로 rename 전에 chmod 0660이 필요하다. ADR-0004 구현 중 확정 15·16·18. NFS loopback에서는 default ACL 폴더에서 NFSv4.2 클라이언트가 만든 파일만 umask 077에서 읽힌다. NFSv4.1 클라이언트는 umask 077이면 Mailo가 읽지 못해 `unreadable`로 남는다. 호출처 호스트도 `vers=4.2`가 필요하다. ADR-0004 구현 중 확정 22.)
-- [ ] 같은 호스트 볼륨(2단계)과 NAS/NFS 환경(3단계)에서 각각 통합 테스트로 확인한다. (같은 호스트 Docker named volume은 `scripts/volume/` 스크립트로 확인했다. jest 통합 테스트에는 넣지 않았다. CI 워크플로 `container` 잡에는 연결했으나 GitHub에서 실행하지 않았다. NFS는 loopback에서 `pnpm test:nfs` 31건(NFSv4.1·4.2 기본값 각각)으로 확인했다. 실제 NAS 제품과 GitHub 호스티드 러너는 확인하지 않았다. `nfs` 잡은 작성만 했다.)
+- [ ] 같은 호스트 볼륨(2단계)과 NAS/NFS 환경(3단계)에서 각각 통합 테스트로 확인한다. (같은 호스트 Docker named volume은 `scripts/volume/` 스크립트로 확인했다. jest 통합 테스트에는 넣지 않았다. CI 워크플로 `container` 잡에는 연결했고 GitHub 러너의 2026-11-23 실행에서 잡은 성공했다. NFS는 loopback에서 `pnpm test:nfs` 31건(NFSv4.1·4.2 기본값 각각)으로 확인했다. 실제 NAS 제품은 확인하지 않았다. `nfs` 잡은 GitHub 러너에서 첫 실행(2026-11-23)이 테스트 단계에서 실패했고 수정 뒤 재실행 전이라 러너 통과는 확인하지 못했다.)
 
 **판정 근거(서명 부분):**
 
@@ -1070,7 +1070,7 @@ NFS 통합 테스트 환경(3단계, 추정):
 - `root_squash`를 켜고 서로 다른 non-root UID 2개로 실행한다.
 - WSL 로컬에서는 건너뛴다. 특권 컨테이너는 필요 없다. (실행 결과: WSL2 커널 6.6에 nfsd 모듈이 있어 건너뛰지 않고 실행했다. `apps/mailo/scripts/nfs/run.sh`.)
 - 속성 캐시는 커널 NFS 클라이언트에서 생기므로 loopback으로 재현된다고 본다. (실행 결과: 주소·호스트 이름이 다른 클라이언트 3개를 mount하면 새 폴더 가시성 지연 31초가 재현됐다.)
-- GitHub 호스티드 러너에서 mount가 되는지는 확인하지 않았다. `nfs` 잡(선택, `continue-on-error`)을 작성했고 실행해 본 뒤에야 알 수 있다.
+- GitHub 호스티드 러너에서 mount는 됐다(2026-11-23 첫 실행, 서버 설치·export·mount 3개 준비 성공). 같은 실행에서 테스트 단계는 호출처 UID가 `caller-client.mjs` 경로를 통과하지 못해 실패했다. 사본 경로 실행과 timeout을 추가했고 재실행 전이라 `nfs` 잡 통과는 확인하지 못했다(`docs/operations/ci.md`).
 
 ## 미결정 항목
 

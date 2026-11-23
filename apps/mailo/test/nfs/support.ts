@@ -4,7 +4,13 @@
  * 모두 같은 커널의 loopback이므로 서로 다른 호스트를 흉내 낸 것이며, 실제 NAS와 같다고 단정하지 않는다.
  */
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -22,12 +28,41 @@ export const mountPoint = (client: Client): string =>
   path.join(BASE, "mnt", client);
 
 const SCRIPTS = path.join(process.cwd(), "scripts", "nfs");
-const CLIENT_SCRIPT = path.join(
+const CLIENT_SOURCE = path.join(
   process.cwd(),
   "test",
   "nfs",
   "caller-client.mjs",
 );
+
+/** 호출처 클라이언트 명령 한 건이 응답하기까지 기다리는 상한. 넘기면 클라이언트가 멈춘 것으로 보고 실패시킨다. */
+const CALL_TIMEOUT_MS = Number(process.env.MAILO_NFS_CALL_TIMEOUT_MS ?? 30_000);
+
+/**
+ * 다른 UID가 실행할 `caller-client.mjs` 사본 경로.
+ * 저장소 경로 위에 호출처 UID가 통과(x)할 수 없는 폴더가 있을 수 있다(GitHub 러너의 `/home/runner`는 0750).
+ * 그 경우 Node가 파일을 찾지 못해 MODULE_NOT_FOUND로 종료하므로, 누구나 읽을 수 있는 임시 폴더로 복사해서 쓴다.
+ * 임시 폴더는 `/tmp`에 둔다(`TMPDIR`가 홈 아래일 수 있어 쓰지 않는다).
+ */
+let clientScriptCopy: { dir: string; file: string } | undefined;
+export function callerClientScript(): string {
+  if (!clientScriptCopy) {
+    const dir = mkdtempSync("/tmp/mailo-nfs-client-");
+    chmodSync(dir, 0o755);
+    const file = path.join(dir, "caller-client.mjs");
+    copyFileSync(CLIENT_SOURCE, file);
+    chmodSync(file, 0o644);
+    clientScriptCopy = { dir, file };
+  }
+  return clientScriptCopy.file;
+}
+
+/** `callerClientScript()`가 만든 임시 폴더를 지운다. */
+export function removeCallerClientScript(): void {
+  if (!clientScriptCopy) return;
+  rmSync(clientScriptCopy.dir, { recursive: true, force: true });
+  clientScriptCopy = undefined;
+}
 
 /** 세 mount가 모두 있는가. 없으면 NFS 테스트는 건너뛴다(`MAILO_NFS_REQUIRED=1`이면 실패시킨다). */
 export function nfsAvailable(): boolean {
@@ -119,11 +154,37 @@ export interface Reply {
  * `sudo setpriv`로 UID를 바꾸므로 비밀번호 없는 sudo가 필요하다.
  */
 export class CallerClient {
-  private readonly queue: Array<(reply: Reply) => void> = [];
+  private readonly pending: Array<{
+    resolve: (reply: Reply) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  }> = [];
+  /** 클라이언트가 이미 끝났으면 그 사유. 이후 호출은 기다리지 않고 바로 실패한다. */
+  private dead: Error | undefined;
 
   private constructor(private readonly child: ChildProcess) {
     const rl = readline.createInterface({ input: child.stdout! });
-    rl.on("line", (line) => this.queue.shift()?.(JSON.parse(line) as Reply));
+    rl.on("line", (line) => {
+      const next = this.pending.shift();
+      if (!next) return;
+      clearTimeout(next.timer);
+      try {
+        next.resolve(JSON.parse(line) as Reply);
+      } catch {
+        next.reject(new Error("호출처 클라이언트 응답이 JSON이 아니다"));
+      }
+    });
+    // 종료·기동 실패 때 응답을 기다리는 호출을 모두 실패시켜 테스트가 timeout까지 매달리지 않게 한다.
+    child.once("exit", (code, signal) =>
+      this.fail(
+        new Error(
+          `호출처 클라이언트가 종료됐다(code=${String(code)}, signal=${String(signal)}). stderr를 확인한다`,
+        ),
+      ),
+    );
+    child.once("error", (error) => this.fail(error));
+    // 이미 끝난 자식에 쓰면 EPIPE가 stdin 'error'로 온다. 호출 쪽 reject로 처리하므로 여기서는 삼킨다.
+    child.stdin!.on("error", () => undefined);
   }
 
   static start(
@@ -143,7 +204,7 @@ export class CallerClient {
         `--regid=${gid}`,
         groups,
         process.execPath,
-        CLIENT_SCRIPT,
+        callerClientScript(),
       ],
       { stdio: ["pipe", "pipe", "inherit"] },
     );
@@ -153,9 +214,47 @@ export class CallerClient {
       .then(() => client);
   }
 
+  private fail(error: Error): void {
+    this.dead ??= error;
+    for (const next of this.pending.splice(0)) {
+      clearTimeout(next.timer);
+      next.reject(error);
+    }
+  }
+
+  /**
+   * 응답 없는 클라이언트를 강제로 끝낸다. 자식은 root인 sudo 아래의 다른 UID 프로세스다.
+   * 부모 Node가 보낸 SIGTERM은 sudo가 전달하지 않아(로컬 확인: 4.5초 뒤에도 살아 있었다) 명령 프로세스를 root 권한으로 직접 KILL한다.
+   * FIFO 열기처럼 시스템 호출에서 막힌 프로세스도 SIGKILL로는 끝난다.
+   */
+  private terminate(): void {
+    const pid = this.child.pid;
+    if (pid !== undefined) {
+      try {
+        execFileSync("sudo", ["-n", "pkill", "-KILL", "-P", String(pid)]);
+      } catch {
+        // 이미 끝났으면 pkill이 1을 돌려준다. 아래 kill로 sudo만 정리한다.
+      }
+    }
+    this.child.kill("SIGKILL");
+  }
+
   call(command: Record<string, unknown>): Promise<Reply> {
-    return new Promise((resolve) => {
-      this.queue.push(resolve);
+    return new Promise((resolve, reject) => {
+      if (this.dead) {
+        reject(this.dead);
+        return;
+      }
+      const timer = setTimeout(() => {
+        // 응답이 없으면 순서가 어긋나므로 이 클라이언트는 더 쓰지 않는다.
+        this.fail(
+          new Error(
+            `호출처 클라이언트 응답이 ${CALL_TIMEOUT_MS} ms 안에 오지 않았다(op=${String(command.op)})`,
+          ),
+        );
+        this.terminate();
+      }, CALL_TIMEOUT_MS);
+      this.pending.push({ resolve, reject, timer });
       this.child.stdin!.write(`${JSON.stringify(command)}\n`);
     });
   }
@@ -169,12 +268,15 @@ export class CallerClient {
   }
 
   async close(): Promise<void> {
-    if (this.child.exitCode !== null) return;
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return;
     const exited = new Promise<void>((resolve) =>
       this.child.once("exit", () => resolve()),
     );
     this.child.stdin!.write('{"op":"exit"}\n');
+    // 종료 명령에도 응답이 없으면 강제로 끝낸다.
+    const killer = setTimeout(() => this.terminate(), 10_000);
     await exited;
+    clearTimeout(killer);
   }
 }
 

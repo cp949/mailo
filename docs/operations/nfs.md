@@ -34,7 +34,8 @@
 - 호출처가 Windows·macOS 클라이언트인 경우, 서로 다른 커널 버전 조합은 확인하지 않았다.
 - 시계 어긋남(임시 파일 정리가 mtime과 Mailo 시계의 차이로 판정한다, ADR-0004 구현 중 확정 9)은 확인하지 않았다.
 - 폴더당 수천 개 파일에서의 `readdir` 성능은 확인하지 않았다.
-- GitHub 호스티드 러너에서 `apps/mailo/scripts/nfs/run.sh`가 동작하는지 확인하지 않았다. `.github/workflows/ci.yml`의 `nfs` 잡(수동·주 1회, `continue-on-error`)을 작성했으나 실행해 보지 않았고 러너에서 되는지는 실행 전에는 모른다(`ci.md`).
+- GitHub 호스티드 러너에서 `apps/mailo/scripts/nfs/run.sh`가 통과하는지 확인하지 못했다. 첫 실행(2026-11-23)에서 NFS 서버 설치·export·mount 3개 준비는 성공했지만, 테스트가 호출처 UID로 띄우는 `caller-client.mjs`를 그 UID가 찾지 못해(러너의 저장소 경로 통과 불가, `MODULE_NOT_FOUND`) 실패했고 잡이 30분 timeout까지 끝나지 않았다. 사본 경로 실행과 timeout을 추가했으나 재실행 전이라 러너 통과는 확인하지 못했다(`ci.md` "NFS 잡").
+- 호출처 UID가 실행하는 파일의 경로(테스트의 `caller-client.mjs` 사본)와 그 위 폴더가 호출처 UID에게 열려 있어야 한다. 저장소가 `0750` 홈 아래에 있어도 테스트는 `/tmp` 사본을 쓰므로 통과한다. 호출처 UID가 접근할 수 없는 `TMPDIR`는 쓰지 않는다.
 
 ## 권장 mount 옵션
 

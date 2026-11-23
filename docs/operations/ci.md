@@ -1,6 +1,6 @@
 # CI (GitHub Actions)
 
-`.github/workflows/ci.yml`이 정의한다. 2026-11-23에 작성했고 **GitHub에서 한 번도 실행하지 않았다.** 아래 "로컬 확인"은 워크플로의 각 명령을 같은 순서로 로컬에서 실행한 결과이고, GitHub 러너에서의 동작은 확인하지 않았다.
+`.github/workflows/ci.yml`이 정의한다. 2026-11-23에 작성했다. 같은 날 수동 실행 1회(run 45119061025, `run_nfs=true`, 커밋 `9c31318`)에서 `static`·`integration`·`container` 잡은 성공했고 `nfs` 잡은 취소됐다(아래 "NFS 잡"). 아래 "로컬 확인"은 워크플로의 각 명령을 같은 순서로 로컬에서 실행한 결과다. **`nfs` 잡은 GitHub 러너에서 통과를 확인하지 못했다.**
 
 ## 잡
 
@@ -32,10 +32,14 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 
 ## NFS 잡
 
-- GitHub 호스티드 러너에서 커널 NFS 서버(`nfs-kernel-server`, `nfsd` 모듈 적재, loopback mount)를 구성할 수 있는지는 실행해 보기 전에는 모른다. 확인한 적이 없다.
+- 첫 실행 결과(2026-11-23, run 45119061025, 수동 `run_nfs=true`): 환경 준비는 성공했다. `nfs-kernel-server` 설치, nfsd 기동, export, mount 3개가 되어 `준비 완료: export=/srv/mailo-nfs-test/export mounts=.../{w,m1,m2} mailoUid=1001`까지 출력했다. 테스트 실행에서 실패했고, 잡이 30분 timeout까지 끝나지 않아 05:38에 시작한 잡이 06:08에 취소됐다. 같은 run의 `static`·`integration`·`container` 잡은 성공했다.
+- 원인(로그와 로컬 재현으로 확인): 테스트가 호출처 UID(2001)로 `sudo setpriv ... node test/nfs/caller-client.mjs`를 띄우는데, 러너의 저장소 경로 `/home/runner/work/mailo/mailo/...`에 호출처 UID가 통과할 수 없어 Node가 `Error: Cannot find module '/home/runner/work/mailo/mailo/apps/mailo/test/nfs/caller-client.mjs'`(`code: 'MODULE_NOT_FOUND'`)로 종료했다. 로그에 이 오류가 10번 나온다. 로컬에서 통과를 막는 폴더(0750)에 복사한 같은 파일을 UID 2001로 실행하면 같은 오류가 재현된다. 러너의 `/home/runner` 권한(Ubuntu 기본 0750으로 추정)은 로그에 없어 확인하지 못했다.
+- 매달린 원인(코드로 확인): `CallerClient.call()`은 응답 대기열에 넣고 응답을 기다리기만 했다. 자식 프로세스가 종료돼도 대기 중인 호출을 끝내지 않아 각 테스트가 jest `testTimeout`(180초)까지 기다렸다. 로그의 오류 간격이 약 3분이다. 호출처 클라이언트를 쓰지 않는 측정 테스트는 진행해 `[nfs-measure]` 줄이 06:01에 출력됐다(그 테스트의 통과 여부는 취소된 로그에 없다).
+- 수정(2026-11-23): (1) `test/nfs/support.ts`가 `caller-client.mjs`를 `/tmp`의 임시 폴더(0755, 파일 0644)로 복사해 그 사본을 다른 UID로 실행한다(저장소 경로 권한은 바꾸지 않는다). (2) `CallerClient`가 자식 종료·기동 오류 때 대기 중인 호출을 즉시 실패시키고, 명령당 30초(`MAILO_NFS_CALL_TIMEOUT_MS`) 안에 응답이 없으면 클라이언트를 강제 종료하고 실패시킨다. (3) `run.sh`가 `pnpm test:nfs`를 `timeout`으로 감싼다(`MAILO_NFS_RUN_TIMEOUT`, 기본 1200초, 초과 시 종료 코드 124, teardown은 실행). (4) 워크플로의 실행 단계에 `timeout-minutes: 25`를 두었다. 시간 상한은 run.sh 20분 < 단계 25분 < 잡 30분이다.
+- 수정 뒤 재실행 전이다. **`nfs` 잡이 GitHub 러너에서 통과하는지는 여전히 확인하지 못했다.** 사본 경로로 바꾼 뒤 다른 uid·NFS 동작이 로컬과 같은지, 러너에서 나머지 테스트가 통과하는지는 재실행해야 안다. 로컬(WSL2)에서는 `nfs-kernel-server`가 없어 NFS 자체를 돌리지 못했고, NFS 없이 `CallerClient`만 UID 2001로 확인했다.
 - 그래서 `continue-on-error: true`이고 push·pull_request에서는 돌지 않는다. 첫 실행 결과를 확인하기 전까지 필수 체크가 아니다. 실패해도 워크플로 전체는 실패로 표시되지 않는다.
 - 설치(`MAILO_NFS_INSTALL=1`, `acl`)는 일회용 러너를 전제로 한다. `teardown.sh`는 설치를 되돌리지 않는다.
-- 이 잡이 동작하면 `nfs.md`의 "CI 러너 미확인" 항목을 갱신한다.
+- 이 잡이 러너에서 통과하면 `nfs.md`의 "CI 러너 미확인" 항목을 갱신한다.
 
 ## 로컬에서 확인한 범위 (2026-11-23)
 
@@ -45,7 +49,7 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 | `static` 명령 | `format:check`·`typecheck`·`lint`·`build`·`test` 통과. 단위 407건 통과. turbo 캐시 적중 때문에 `typecheck`·`lint`·`test`는 이전 실행 결과의 재생이다 |
 | `integration` 명령 | 로컬 PostgreSQL(`postgres:17-alpine`)로 `pnpm test:integration` 15개 파일 222건 통과 |
 | `container` 스크립트 | 9개 모두 통과(관찰값은 아래) |
-| `nfs` | 실행하지 않았다(이번 작업에서 NFS 환경을 만들지 않았다) |
+| `nfs` | 작성 시에는 실행하지 않았다. 첫 GitHub 실행은 위 "NFS 잡"에 적었다. 수정 뒤 로컬에서는 NFS 없이 `CallerClient`의 사본 실행·종료 감지·응답 timeout·`run.sh` timeout만 확인했다 |
 
 컨테이너·볼륨 스크립트 관찰값(로컬 Docker 29.8.0, compose v5.5.1):
 

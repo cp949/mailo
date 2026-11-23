@@ -17,7 +17,7 @@
 | RQ | 제목 | 상태 | 남은 미검증 |
 | -- | ---- | ---- | ----------- |
 | RQ-001 | REST 입력 채널 | 검증 완료 | 등록 중간 실패 주입 테스트 없음(단일 `INSERT`라는 구조 근거) |
-| RQ-002 | 파일 입력 채널 | 진행 중 | 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, Docker local 드라이버 NFS 볼륨(`docker-compose.nfs-example.yml`, 스크립트 작성만 함), `hard` mount에서 NAS 정지 시 폴러, rootless Docker, GitHub 러너(워크플로 작성만 함). 볼륨·NFS 검증은 스크립트·별도 jest 설정이다 |
+| RQ-002 | 파일 입력 채널 | 진행 중 | 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, Docker local 드라이버 NFS 볼륨(`docker-compose.nfs-example.yml`, 스크립트 작성만 함), `hard` mount에서 NAS 정지 시 폴러, rootless Docker, GitHub 러너에서 `nfs` 잡 통과(첫 실행은 테스트 단계에서 실패, 수정 뒤 재실행 전). 볼륨·NFS 검증은 스크립트·별도 jest 설정이다 |
 | RQ-003 | DB 비공유 | 진행 중 | "설정에 사용처 DB 정보 없음"·"사용처용 DB 계정 없음"의 자동 검증 없음(설정 읽기) |
 | RQ-004 | 보장 범위 | 검증 완료 | 여러 relay 인스턴스 동시 실행·전송 도중 강제 종료는 재현하지 않음(샘플 relay는 단일 인스턴스로 실행) |
 | RQ-005 | SMTP 발송 | 진행 중 | 실제 Gmail·Workspace SMTP, 서버 전환 |
@@ -53,7 +53,7 @@
 
 - 실제 Gmail·Workspace SMTP(RQ-005·006·009).
 - 실제 NAS 제품과 그 서버 재시작·failover(RQ-002·024). 같은 호스트 loopback만 확인했다.
-- GitHub 호스티드 러너. 워크플로(`ci.yml`)는 작성만 했고 실행하지 않았다. `nfs` 잡은 러너에서 커널 NFS 서버 구성이 되는지부터 모른다(`docs/operations/ci.md`).
+- GitHub 호스티드 러너의 `nfs` 잡 통과. 2026-11-23 첫 실행에서 `static`·`integration`·`container` 잡은 성공했다. `nfs` 잡은 NFS 서버 설치·mount 준비까지 성공하고 테스트 단계에서 실패했으며(호출처 UID가 `caller-client.mjs` 경로를 통과하지 못함), 수정 뒤 재실행 전이다(`docs/operations/ci.md`).
 - 실제 Gmail의 `Message-ID` 중복 처리(RQ-013). SIGKILL 재발송은 로컬 가짜 SMTP로 관찰했다.
 - Docker local 드라이버 NFS 볼륨(`docker-compose.nfs-example.yml`, RQ-002·024), compose `secrets:` 예시, `docker-compose.migrate-once.yml`, TLS를 켠 PostgreSQL 접속(RQ-025).
 - 컨테이너 재생성과 PostgreSQL 컨테이너 재시작(RQ-026), `NODE_ENV=development` 컨테이너(RQ-025). 운영 구성 기동·SIGTERM·SIGKILL은 로컬 가짜 SMTP로 관찰했다.

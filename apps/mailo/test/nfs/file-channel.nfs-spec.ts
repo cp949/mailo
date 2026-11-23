@@ -33,6 +33,7 @@ import {
   mountPoint,
   nfsAvailable,
   remount,
+  removeCallerClientScript,
   serverPath,
   serverRm,
   serverWriteAs,
@@ -111,6 +112,7 @@ suite("파일 채널 NFS 검증 (RQ-002·024, ADR-0004 결정 10)", () => {
   });
 
   afterAll(async () => {
+    removeCallerClientScript();
     await db.close();
   });
 
