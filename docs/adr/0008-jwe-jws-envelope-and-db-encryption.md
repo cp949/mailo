@@ -135,7 +135,7 @@ ADR-0001은 호출처 선택 봉투 암호화와 DB 본문 상시 암호화를 �
    - 실패 결과는 사유 코드와 위치(`field`, `issues`)만 담는다. 요청 값은 담지 않는다.
    - 파일 채널의 거부 사유 코드로 바꿀 때 `SIGNATURE_REQUIRED`는 `SIGNATURE_INVALID`로, `KID_UNKNOWN`은 `DECRYPTION_FAILED`로 합친다(`toRejectionReason`). 계약의 사유 코드 11종에 이 둘이 없기 때문이다.
    - REST는 서명을 쓰지 않는다. 수신자·발신자 검증 뒤 복호화하고, 오류 위치는 `/content`다.
-8. **라이브러리(결정 8, RQ-029).** Mailo는 `jose` 6.2.14를 고정해 쓴다(MIT, 런타임 의존성 없음).
+8. **라이브러리(결정 8, RQ-029).** Mailo는 `jose` 6.2.18를 고정해 쓴다(MIT, 런타임 의존성 없음).
    - 이유: 암호 형식(JWE 키 암호화, AES-GCM AAD 처리, HMAC 서명 검증)을 직접 만들면 형식 설계와 보안 검토 부담이 생긴다. 표준 JOSE 구현을 쓰면 호출처(Java의 nimbus-jose-jwt 등)와 상호 운용된다.
    - 사용 범위: `compactDecrypt`, `decodeProtectedHeader`, `flattenedVerify`뿐이다. 암호화(`CompactEncrypt`)는 테스트가 호출처 역할로만 쓴다. 허용 알고리즘은 호출마다 명시한다.
    - 확인한 것: 테스트는 `jose`로 만든 JWE를 Mailo가 복호화하고, JWS는 `jose` 없이 직접 서명한 값을 `jose` 검증이 받는다. nimbus-jose-jwt와의 상호 운용은 확인하지 않았다.
