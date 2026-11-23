@@ -12,12 +12,12 @@
 
 상태 어휘는 `미착수`·`진행 중`·`검증 완료`·`보류`다(`mail-sending.md`의 "용어와 진행 상태"). 이 표는 RQ별 상태를 요약한 것이고 기준은 각 RQ의 수용 조건 체크다. 검증 완료 30건, 진행 중 9건, 미착수 0건, 보류 0건이다. 4단계 발송 우선순위는 RQ-033~037이 검증 완료이고 RQ-038이 진행 중이다. 5단계 요청별 만료 시간(RQ-039)은 문서 조건이 검토로만 확인돼 진행 중이다.
 
-근거로 쓴 실행 결과는 단위 602건(31개 파일, `pnpm test`, 2026-11-23, 5단계 반영 뒤), 통합 363건(25개 파일, `pnpm test:integration`, 같은 날, 실제 PostgreSQL 17과 로컬 `smtp-server`)이고 실패는 0건이다. 4단계·5단계 묶음에서는 컨테이너·볼륨·NFS·샘플 스크립트를 다시 실행하지 않았다(해당 영역 변경 없음). 아래 스크립트 결과는 그 전 묶음의 실행 값이다. `pnpm test:nfs` 31건(같은 호스트 NFS loopback, NFSv4.1·4.2 각각)은 3단계 마무리 실행 값이다. 같은 날 `nfs-kernel-server` 2.6.1을 설치해 `scripts/nfs/run.sh`를 기본값(NFSv4.1 클라이언트)으로 다시 실행했고 31건이 통과했다(4.2 기본값 전체 재실행은 하지 않았다). 볼륨 스크립트(`scripts/volume/`, a~g, acl·group 포함)와 컨테이너 스크립트(`scripts/container/`, SIGKILL 중복 발송·SIGTERM 종료)는 2026-11-23에 읽기 전용 루트·`cap_drop`·digest 고정 이미지(M9)와 로그 형식 변경(M10) 뒤 다시 실행해 모두 기대와 일치했다. `apps/mailo/scripts/nfs/verify-docker-volume.sh`(Docker NFS 볼륨, 같은 호스트 loopback)는 같은 날 처음 실행해 통과 13, 실패 0이었다(스크립트 검증이라 수용 조건 `[x]`는 올리지 않았다). GitHub Actions 워크플로(`.github/workflows/ci.yml`, `docs/operations/ci.md`)는 작성하고 `actionlint`로 문법을 확인했으나 GitHub에서 실행하지 않았다. `검증 완료`는 로컬 SMTP 서버와 PostgreSQL 기준이다.
+근거로 쓴 실행 결과는 단위 602건(31개 파일, `pnpm test`, 2026-11-23, 5단계 반영 뒤), 통합 363건(25개 파일, `pnpm test:integration`, 같은 날, 실제 PostgreSQL 17과 로컬 `smtp-server`)이고 실패는 0건이다. 4단계·5단계 묶음에서는 컨테이너·볼륨·NFS·샘플 스크립트를 다시 실행하지 않았다(해당 영역 변경 없음). 아래 스크립트 결과는 그 전 묶음의 실행 값이다. `pnpm test:nfs` 31건(같은 호스트 NFS loopback, NFSv4.1·4.2 각각)은 3단계 마무리 실행 값이다. 같은 날 `nfs-kernel-server` 2.6.1을 설치해 `scripts/nfs/run.sh`를 기본값(NFSv4.1 클라이언트)으로 다시 실행했고 31건이 통과했다(4.2 기본값 전체 재실행은 하지 않았다). 볼륨 스크립트(`scripts/volume/`, a~g, acl·group 포함)와 컨테이너 스크립트(`scripts/container/`, SIGKILL 중복 발송·SIGTERM 종료)는 2026-11-23에 읽기 전용 루트·`cap_drop`·digest 고정 이미지(M9)와 로그 형식 변경(M10) 뒤 다시 실행해 모두 기대와 일치했다. `apps/mailo/scripts/nfs/verify-docker-volume.sh`(Docker NFS 볼륨, 같은 호스트 loopback)는 같은 날 처음 실행해 통과 13, 실패 0이었다(스크립트 검증이라 수용 조건 `[x]`는 올리지 않았다). GitHub Actions 워크플로(`.github/workflows/ci.yml`, `docs/operations/ci.md`)는 GitHub에서 여러 번 성공했다. dev 최근 성공은 run 45185115879(`ab7d879`, 2026-11-23, `static`·`integration`·`container`)다. `nfs` 잡은 run 45127889424(`c75052a`, 2026-11-23, 수동)에서 1회 통과했고 범위는 같은 러너 안의 loopback NFS다. schedule 실행 기록은 없다. `검증 완료`는 로컬 SMTP 서버와 PostgreSQL 기준이다.
 
 | RQ | 제목 | 상태 | 남은 미검증 |
 | -- | ---- | ---- | ----------- |
 | RQ-001 | REST 입력 채널 | 검증 완료 | 등록 중간 실패 주입 테스트 없음(단일 `INSERT`라는 구조 근거) |
-| RQ-002 | 파일 입력 채널 | 진행 중 | 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, 실제 NAS에서의 Docker local 드라이버 NFS 볼륨(`docker-compose.nfs-example.yml`, 같은 호스트 loopback은 스크립트로 확인함), `hard` mount에서 NAS 정지 시 폴러(코드 읽기 결과만 있음), rootless Docker, GitHub 러너에서 `nfs` 잡 통과(첫 실행은 테스트 단계에서 실패, 수정 뒤 로컬은 31건 통과, 러너 재실행 전). 볼륨·NFS 검증은 스크립트·별도 jest 설정이다 |
+| RQ-002 | 파일 입력 채널 | 진행 중 | 실제 NAS 제품, 서버 재시작·failover, NFSv3·4.0·Kerberos, bind mount, 실제 NAS에서의 Docker local 드라이버 NFS 볼륨(`docker-compose.nfs-example.yml`, 같은 호스트 loopback은 스크립트로 확인함), `hard` mount에서 NAS 정지 시 폴러(코드 읽기 결과만 있음), rootless Docker, GitHub 러너의 ESTALE 경로(`nfs` 잡은 2026-11-23 run 45127889424에서 1회 통과, 러너 ESTALE 표본 0/40). 볼륨·NFS 검증은 스크립트·별도 jest 설정이다 |
 | RQ-003 | DB 비공유 | 진행 중 | "설정에 사용처 DB 정보 없음"·"사용처용 DB 계정 없음"의 자동 검증 없음(설정 읽기) |
 | RQ-004 | 보장 범위 | 검증 완료 | 여러 relay 인스턴스 동시 실행·전송 도중 강제 종료는 재현하지 않음(샘플 relay는 단일 인스턴스로 실행) |
 | RQ-005 | SMTP 발송 | 진행 중 | 실제 Gmail·Workspace SMTP, 서버 전환 |
@@ -33,14 +33,14 @@
 | RQ-015 | 상태 조회 | 검증 완료 | 보존 기간이 지난 Key의 404를 조회 호출까지 이어 검증한 테스트 없음 |
 | RQ-016 | `SENT` 의미 | 검증 완료 | |
 | RQ-017 | 최종 실패 인지 | 검증 완료 | 피드 지연은 헬스 필드로만 노출(외부 메트릭 시스템 없음) |
-| RQ-018 | 영속 큐 | 검증 완료 | jest의 `PENDING` 재시작 테스트는 앱 인스턴스를 닫고 다시 만든 것이다(컨테이너 SIGKILL·SIGTERM 재시작은 스크립트로 관찰, CI 연결은 작성만 하고 GitHub에서 미실행) |
+| RQ-018 | 영속 큐 | 검증 완료 | jest의 `PENDING` 재시작 테스트는 앱 인스턴스를 닫고 다시 만든 것이다(컨테이너 SIGKILL·SIGTERM 재시작은 스크립트로 관찰. 스크립트는 CI `container` 잡으로 GitHub 러너에서도 성공했다, 예: run 45185115879) |
 | RQ-019 | Worker 중복 점유 방지 | 검증 완료 | 실제 다중 프로세스 장시간 동작 없음 |
-| RQ-020 | 처리 중단 복구 | 검증 완료 | 실제 kill은 스크립트 관찰이며 jest 자동 테스트에 없다. CI `container` 잡에 연결했으나 GitHub에서 미실행 |
+| RQ-020 | 처리 중단 복구 | 검증 완료 | 실제 kill은 스크립트 관찰이며 jest 자동 테스트에 없다. CI `container` 잡으로 GitHub 러너에서 실행돼 성공했다(예: run 45185115879). SIGKILL 스크립트는 관찰만 기록해 중복 재현 여부와 무관하게 성공한다 |
 | RQ-021 | 비즈니스 트랜잭션과의 분리 | 검증 완료 | 샘플(`samples/spring-boot-relay/`)은 로컬 PostgreSQL·로컬 SMTP·JDK 21 기준이고 jest·CI에 없음 |
 | RQ-022 | 선택적 봉투 암호화 | 검증 완료 | nimbus-jose-jwt 10.10과는 JWE·JWS 한 조합씩 확인함(다른 버전·알고리즘·키 교체 중 이전 `kid`·큰 본문은 미확인), JWE 개인키 유출 대응 절차(미결정) |
 | RQ-023 | DB 본문 암호화 | 검증 완료 | |
-| RQ-024 | 파일 채널 접근 통제 | 진행 중 | 실제 NAS 제품, bind mount, rootless Docker·`userns-remap`, ACL 미지원 파일시스템, jest 통합 테스트 미포함(CI `container` 잡에 연결했으나 GitHub에서 미실행) |
-| RQ-025 | Docker 실행과 설정 | 진행 중 | `NODE_ENV=development` 컨테이너 기동, 이미지 검사(취약점·시크릿 스캔 없음), `stop_grace_period`와 lease 관계의 자동 검증, compose secrets 예시·`docker-compose.migrate-once.yml` 기동, TLS를 켠 PostgreSQL 접속(`MAILO_DB_SSLMODE`)(운영 구성 기동과 SIGTERM은 읽기 전용 루트로 로컬 Docker에서 확인함, GitHub 러너는 미확인) |
+| RQ-024 | 파일 채널 접근 통제 | 진행 중 | 실제 NAS 제품, bind mount, rootless Docker·`userns-remap`, ACL 미지원 파일시스템, jest 통합 테스트 미포함(볼륨 스크립트는 CI `container` 잡으로 GitHub 러너에서 성공했다, 예: run 45185115879) |
+| RQ-025 | Docker 실행과 설정 | 진행 중 | `NODE_ENV=development` 컨테이너 기동, 이미지 검사(취약점·시크릿 스캔 없음), `stop_grace_period`와 lease 관계의 자동 검증, compose secrets 예시·`docker-compose.migrate-once.yml` 기동, TLS를 켠 PostgreSQL 접속(`MAILO_DB_SSLMODE`)(운영 구성 기동과 SIGTERM은 읽기 전용 루트로 로컬 Docker에서 확인함. `verify-sigterm-file.sh`는 GitHub 러너 `container` 잡에서도 성공했다, 예: run 45185115879) |
 | RQ-026 | 영속 보관과 자동 복구 | 진행 중 | 컨테이너 재생성, 자동 재시작 정책(스크립트는 수동 `compose start`로 재기동) |
 | RQ-027 | 로그 | 진행 중 | 컨테이너 로그 본문·시크릿 노출 검사(컨테이너 로그 출력과 JSON 형식은 관찰함), 컨테이너에서 오류 로그 확인 |
 | RQ-028 | 호출처 레지스트리와 REST 인증 | 검증 완료 | |
@@ -62,7 +62,7 @@
 - 발송 우선순위(RQ-038, ADR-0009): 롤링 배포 중 구·신 인스턴스 혼용과 롤백 실행, 대용량 테이블과 쓰기 부하 중의 `0005`(`CREATE INDEX CONCURRENTLY`) 적용 시간, 캐시가 차가운 상태의 점유 지연, 실제 다중 프로세스·장시간 부하에서의 등급 효과. 점유 쿼리 성능은 수동 측정이다(ADR-0009 구현 중 확정 3).
 - 실제 Gmail·Workspace SMTP(RQ-005·006·009).
 - 실제 NAS 제품과 그 서버 재시작·failover(RQ-002·024). 같은 호스트 loopback만 확인했다.
-- GitHub 호스티드 러너의 `nfs` 잡 통과. 2026-11-23 첫 실행에서 `static`·`integration`·`container` 잡은 성공했다. `nfs` 잡은 NFS 서버 설치·mount 준비까지 성공하고 테스트 단계에서 실패했으며(호출처 UID가 `caller-client.mjs` 경로를 통과하지 못함), 수정 뒤 재실행 전이다. 수정한 소스로 로컬 `run.sh`는 31건 통과했다(`docs/operations/ci.md`).
+- GitHub 호스티드 러너의 `nfs` 잡 반복 실행과 schedule 실행. 러너 통과는 1회다(2026-11-23, run 45127889424, `c75052a`, 31건, 같은 러너 loopback NFS). 그 실행에서 ESTALE 표본은 0/40이라 러너에서 ESTALE 경로는 검증되지 않았다(`docs/operations/ci.md` "NFS 잡").
 - 실제 Gmail의 `Message-ID` 중복 처리(RQ-013). SIGKILL 재발송은 로컬 가짜 SMTP로 관찰했다.
 - 실제 NAS 제품에서의 Docker local 드라이버 NFS 볼륨(`docker-compose.nfs-example.yml`, RQ-002·024)과 `hard` mount에서 서버를 멈췄을 때의 폴러 정지 감지(`filePoller.lastPollAt`). 같은 호스트 loopback 기준 컨테이너 수집은 `verify-docker-volume.sh`로 확인했다(2026-11-23, 통과 13).
 - compose `secrets:` 예시, `docker-compose.migrate-once.yml`, TLS를 켠 PostgreSQL 접속(RQ-025).
