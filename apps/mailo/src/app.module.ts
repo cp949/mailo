@@ -28,6 +28,7 @@ import { HealthModule } from "./health/index.js";
 import { HttpModule } from "./http/index.js";
 import { IntakeModule } from "./intake/index.js";
 import { APP_LOGGER, type AppLogger } from "./logging/index.js";
+import { OpsModule } from "./ops/index.js";
 import { QueueModule } from "./queue/index.js";
 import { SmtpModule, type MailSender } from "./smtp/index.js";
 import { createWorkerRunner } from "./worker/index.js";
@@ -95,6 +96,7 @@ export class AppModule {
         SmtpModule,
         EventsModule,
         HealthModule,
+        OpsModule,
       ],
       providers: [
         { provide: APP_LOGGER, useValue: options.logger },

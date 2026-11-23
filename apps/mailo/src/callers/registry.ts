@@ -96,6 +96,11 @@ export class CallerRegistryError extends Error {
 }
 
 const CALLER_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/** 호출처 ID 형식(레지스트리 `id`와 `/ops/pauses/callers/{callerId}`가 같은 규칙을 쓴다). */
+export function isCallerId(value: string): boolean {
+  return CALLER_ID.test(value);
+}
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const ENTRY_FIELDS = new Set([
   "id",

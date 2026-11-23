@@ -7,8 +7,8 @@ import type { JobStatus } from "./types.js";
 export type CanceledBy = "CALLER" | "OPERATOR";
 
 /**
- * 취소 대상. `callerId` 범위 안에서 작업 ID나 Idempotency-Key로 고른다.
- * 관리 토큰 경로(다음 단계)는 같은 함수에 호출처 범위를 풀어 쓰는 입력을 더한다.
+ * 호출처 API의 취소 대상. `callerId` 범위 안에서 작업 ID나 Idempotency-Key로 고른다.
+ * 호출처 범위를 푸는 관리 토큰 경로는 `OperatorCancelTarget`을 쓴다.
  */
 export type CancelTarget =
   | { callerId: string; jobId: string }
@@ -24,11 +24,31 @@ export type CancelResult =
   /** 없거나 다른 호출처의 작업이다. 두 경우를 구분하지 않는다. */
   | { kind: "not_found" };
 
-// 대상 조건만 다르고 나머지는 같다. 값은 모두 바인드 파라미터로 넘긴다.
-const TARGET_SQL = {
-  id: "caller_id = $1 AND id = $2::uuid",
-  key: "caller_id = $1 AND idempotency_key = $2",
-} as const;
+/**
+ * 관리 토큰 경로의 취소 대상. 호출처 범위를 풀고 작업 ID만으로 고른다(ADR-0011 결정 4).
+ * 호출처 API 경로(`CancelTarget`)와 입력 모양을 달리해 호출처 키 경로에서 범위가 풀리는 일이 없게 한다.
+ */
+export type OperatorCancelTarget = { jobId: string };
+
+// 대상 조건만 다르고 나머지는 같다. 값은 모두 바인드 파라미터로 넘기고 `from`은 첫 대상 파라미터의 번호다.
+interface PreparedTarget {
+  where: (from: number) => string;
+  values: readonly string[];
+}
+
+function prepare(target: CancelTarget | OperatorCancelTarget): PreparedTarget {
+  if (!("callerId" in target))
+    return { where: (n) => `id = $${n}::uuid`, values: [target.jobId] };
+  return "jobId" in target
+    ? {
+        where: (n) => `caller_id = $${n} AND id = $${n + 1}::uuid`,
+        values: [target.callerId, target.jobId],
+      }
+    : {
+        where: (n) => `caller_id = $${n} AND idempotency_key = $${n + 1}`,
+        values: [target.callerId, target.idempotencyKey],
+      };
+}
 
 /**
  * 대기 중인 작업을 취소한다(RQ-040, ADR-0011 결정 4). `PENDING`·`RETRY_WAIT`만 `CANCELED`로 바꾼다.
@@ -47,50 +67,65 @@ export async function cancelJob(
   target: CancelTarget,
   canceledBy: CanceledBy,
 ): Promise<CancelResult> {
-  const [where, value] =
-    "jobId" in target
-      ? ([TARGET_SQL.id, target.jobId] as const)
-      : ([TARGET_SQL.key, target.idempotencyKey] as const);
+  return withTransaction(pool, (client) =>
+    cancelWithin(client, prepare(target), canceledBy),
+  );
+}
 
-  return withTransaction(pool, async (client) => {
-    const failureReason = `CANCELED_BY_${canceledBy}`;
-    const updated = await client.query<{
-      id: string;
-      caller_id: string;
-      idempotency_key: string;
-      attempts: number;
-      recipients: JsonValue;
-    }>(
-      `UPDATE mail_jobs SET
-         status = 'CANCELED', failure_reason = $3, finished_at = now(),
-         body_ciphertext = NULL, body_nonce = NULL, body_key_version = NULL, body_deleted_at = now()
-       WHERE ${where} AND status IN ('PENDING', 'RETRY_WAIT')
-       RETURNING id, caller_id, idempotency_key, attempts, recipients`,
-      [target.callerId, value, failureReason],
-    );
-    const row = updated.rows[0];
-    if (row) {
-      await recordJobEvent(client, {
-        type: "JOB_CANCELED",
-        callerId: row.caller_id,
-        jobId: row.id,
-        idempotencyKey: row.idempotency_key,
-        failureReason,
-        attemptCount: row.attempts,
-        recipients: row.recipients,
-      });
-      return { kind: "canceled", jobId: row.id } as const;
-    }
+/**
+ * 관리 토큰 경로의 취소(RQ-044, ADR-0011 결정 4·6). 호출처 범위 없이 작업 ID로 취소하고 `OPERATOR`로 기록한다.
+ * 호출자가 연 트랜잭션 안에서 실행한다. 감사 기록을 같은 트랜잭션에 쓰려는 것이다.
+ * 이미 `CANCELED`·취소 불가·없음이면 아무것도 쓰지 않으므로 호출자는 `canceled`일 때만 감사를 쓴다.
+ */
+export function cancelJobAsOperator(
+  client: pg.PoolClient,
+  target: OperatorCancelTarget,
+): Promise<CancelResult> {
+  return cancelWithin(client, prepare(target), "OPERATOR");
+}
 
-    // 갱신하지 않았다. 잠금 대기 뒤 커밋된 현재 상태를 읽어 이유를 가른다(READ COMMITTED).
-    const current = await client.query<{ id: string; status: JobStatus }>(
-      `SELECT id, status FROM mail_jobs WHERE ${where}`,
-      [target.callerId, value],
-    );
-    const found = current.rows[0];
-    if (!found) return { kind: "not_found" } as const;
-    if (found.status === "CANCELED")
-      return { kind: "already_canceled", jobId: found.id } as const;
-    return { kind: "not_cancelable", status: found.status } as const;
-  });
+async function cancelWithin(
+  client: pg.PoolClient,
+  { where, values }: PreparedTarget,
+  canceledBy: CanceledBy,
+): Promise<CancelResult> {
+  const failureReason = `CANCELED_BY_${canceledBy}`;
+  const updated = await client.query<{
+    id: string;
+    caller_id: string;
+    idempotency_key: string;
+    attempts: number;
+    recipients: JsonValue;
+  }>(
+    `UPDATE mail_jobs SET
+       status = 'CANCELED', failure_reason = $1, finished_at = now(),
+       body_ciphertext = NULL, body_nonce = NULL, body_key_version = NULL, body_deleted_at = now()
+     WHERE ${where(2)} AND status IN ('PENDING', 'RETRY_WAIT')
+     RETURNING id, caller_id, idempotency_key, attempts, recipients`,
+    [failureReason, ...values],
+  );
+  const row = updated.rows[0];
+  if (row) {
+    await recordJobEvent(client, {
+      type: "JOB_CANCELED",
+      callerId: row.caller_id,
+      jobId: row.id,
+      idempotencyKey: row.idempotency_key,
+      failureReason,
+      attemptCount: row.attempts,
+      recipients: row.recipients,
+    });
+    return { kind: "canceled", jobId: row.id } as const;
+  }
+
+  // 갱신하지 않았다. 잠금 대기 뒤 커밋된 현재 상태를 읽어 이유를 가른다(READ COMMITTED).
+  const current = await client.query<{ id: string; status: JobStatus }>(
+    `SELECT id, status FROM mail_jobs WHERE ${where(1)}`,
+    [...values],
+  );
+  const found = current.rows[0];
+  if (!found) return { kind: "not_found" } as const;
+  if (found.status === "CANCELED")
+    return { kind: "already_canceled", jobId: found.id } as const;
+  return { kind: "not_cancelable", status: found.status } as const;
 }

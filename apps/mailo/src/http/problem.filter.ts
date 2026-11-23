@@ -5,6 +5,7 @@ import {
   type ArgumentsHost,
   type ExceptionFilter,
 } from "@nestjs/common";
+import type { ValidationErrorItem } from "../validation/index.js";
 import { ProblemException, problems } from "./problem.js";
 import type { HttpRequest, HttpResponse } from "./types.js";
 
@@ -40,13 +41,11 @@ export class ProblemExceptionFilter implements ExceptionFilter {
     if (exception instanceof ProblemException) return exception;
     // Express가 경로 파라미터의 퍼센트 인코딩을 풀지 못해 던진 오류(예: `/jobs/%`).
     // Nest 어댑터가 URIError를 BadRequestException("Failed to decode param ...")으로 바꿔 전달한다.
-    // 경로 파라미터는 `/jobs/{jobId}`와 `/jobs/{jobId}/cancel`의 jobId뿐이라 `/jobs/` 아래만 validation-failed로 보고 나머지는 404다.
+    // 경로 파라미터는 `/jobs/{jobId}`·`/jobs/{jobId}/cancel`의 jobId와 `/ops/jobs/{jobId}`·`/ops/pauses/callers/{callerId}`뿐이다.
+    // 이 경로만 validation-failed로 보고 나머지는 404다(ADR-0011 결정 7).
     if (isParamDecodeError(exception)) {
-      return req.url?.startsWith("/jobs/")
-        ? problems.validationFailed([
-            { parameter: "jobId", code: "INVALID_FORMAT" },
-          ])
-        : problems.notFound();
+      const errors = paramDecodeErrors(req.url);
+      return errors ? problems.validationFailed(errors) : problems.notFound();
     }
     if (exception instanceof HttpException) {
       // 라우트 없음 등 Nest가 던진 오류. 메시지는 버리고 상태 코드만 계약 type에 대응시킨다.
@@ -65,6 +64,18 @@ export class ProblemExceptionFilter implements ExceptionFilter {
     });
     return problems.serviceUnavailable();
   }
+}
+
+/** 퍼센트 디코딩에 실패한 경로 파라미터의 위치. 경로 파라미터가 없는 경로는 null이다. */
+function paramDecodeErrors(
+  url: string | undefined,
+): ValidationErrorItem[] | null {
+  if (url === undefined) return null;
+  if (url.startsWith("/jobs/") || url.startsWith("/ops/jobs/"))
+    return [{ parameter: "jobId", code: "INVALID_FORMAT" }];
+  if (url.startsWith("/ops/pauses/callers/"))
+    return [{ parameter: "callerId", code: "INVALID_FORMAT" }];
+  return null;
 }
 
 function isParamDecodeError(exception: unknown): boolean {

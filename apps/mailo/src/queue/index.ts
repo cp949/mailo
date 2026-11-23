@@ -2,9 +2,11 @@ export { QueueModule } from "./queue.module.js";
 export { register } from "./register.js";
 export {
   cancelJob,
+  cancelJobAsOperator,
   type CancelResult,
   type CancelTarget,
   type CanceledBy,
+  type OperatorCancelTarget,
 } from "./cancel.js";
 export {
   BACKLOG_COUNT_LIMIT,
@@ -62,6 +64,7 @@ export {
 } from "./retry-policy.js";
 export {
   findJobById,
+  findJobByIdForOperator,
   findJobByKey,
   findJobIdByKey,
   findLastErrors,

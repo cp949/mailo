@@ -15,6 +15,7 @@ export type {
 } from "./bearer-auth.js";
 export {
   CallerRegistryError,
+  isCallerId,
   loadCallerRegistryFile,
   parseCallerRegistry,
 } from "./registry.js";

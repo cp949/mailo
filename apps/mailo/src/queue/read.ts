@@ -19,6 +19,8 @@ export interface JobLastError {
 
 export interface JobView {
   id: string;
+  /** 작업의 호출처. 호출처 응답에는 내지 않고 운영자 읽기(`/ops/jobs/{jobId}`)가 쓴다. */
+  callerId: string;
   idempotencyKey: string;
   status: JobStatus;
   /** 등록한 우선순위 등급(RQ-037). 도입 전 작업은 `NORMAL`이다. DB 순위 숫자는 내보내지 않는다. */
@@ -37,6 +39,7 @@ export interface JobView {
 
 interface JobRow {
   id: string;
+  caller_id: string;
   idempotency_key: string;
   status: JobStatus;
   priority: number;
@@ -54,7 +57,7 @@ interface JobRow {
 
 // 마지막 오류는 SENT가 아닌 가장 최근 시도다. SENT 작업도 이전 시도의 오류를 보여 준다.
 const SELECT_JOB = `
-  SELECT j.id, j.idempotency_key, j.status, j.priority, j.attempts, j.created_at, j.expires_at,
+  SELECT j.id, j.caller_id, j.idempotency_key, j.status, j.priority, j.attempts, j.created_at, j.expires_at,
          j.finished_at, j.failure_reason,
          le.classification AS le_classification, le.response_code AS le_response_code,
          le.enhanced_code AS le_enhanced_code, le.finished_at AS le_finished_at,
@@ -74,6 +77,7 @@ const SELECT_JOB = `
 function toView(row: JobRow): JobView {
   return {
     id: row.id,
+    callerId: row.caller_id,
     idempotencyKey: row.idempotency_key,
     status: row.status,
     priority: priorityFromRank(row.priority),
@@ -105,6 +109,21 @@ export async function findJobById(
     `${SELECT_JOB} WHERE j.caller_id = $1 AND j.id = $2`,
     [callerId, jobId],
   );
+  const row = rows[0];
+  return row ? toView(row) : null;
+}
+
+/**
+ * 호출처 범위 없이 작업 ID로 조회한다. 운영자 읽기(`GET /ops/jobs/{jobId}`)만 쓴다(ADR-0011 결정 7).
+ * 호출처 API 경로가 쓰지 않도록 `findJobById`와 이름을 나눴다. 없으면 null.
+ */
+export async function findJobByIdForOperator(
+  db: Queryable,
+  jobId: string,
+): Promise<JobView | null> {
+  const { rows } = await db.query<JobRow>(`${SELECT_JOB} WHERE j.id = $1`, [
+    jobId,
+  ]);
   const row = rows[0];
   return row ? toView(row) : null;
 }
