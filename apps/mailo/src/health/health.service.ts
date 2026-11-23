@@ -51,7 +51,7 @@ export interface ReadyResult {
     sendControls?: { allPaused: boolean; pausedCallerCount: number };
     /**
      * 운영자 토큰 호출에만 있다. 호출처 전체의 점유 대상 작업 적체(RQ-031).
-     * `dueCount`는 상한(10000)에서 멈추고 `dueCountTruncated`가 true이면 더 있다.
+     * `dueCount`는 계정별 값을 합쳐도 상한(10000)에서 멈추고 `dueCountTruncated`가 true이면 더 있다(ADR-0013 결정 3 아).
      */
     queue?: {
       dueCount: number;

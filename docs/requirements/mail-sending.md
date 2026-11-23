@@ -2048,7 +2048,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 **요구사항:**
 
 - 마이그레이션 `0012`(`mail_jobs_account_priority_claim_idx (account_id, priority DESC, next_attempt_at, id)`), `0013`(`mail_jobs_account_claim_idx (account_id, next_attempt_at, id)`), `0014`(`mail_attempts_account_quota_idx (account_id, finished_at) WHERE counted AND stage IS DISTINCT FROM 'WORKER'`)는 `CREATE INDEX CONCURRENTLY IF NOT EXISTS`다. `0012`·`0013`의 부분 조건은 `status IN ('PENDING','RETRY_WAIT')`다. `0015`·`0016`은 기존 점유 인덱스 둘(`mail_jobs_priority_claim_idx`, `mail_jobs_claim_idx`)을 `DROP INDEX CONCURRENTLY IF EXISTS`로 지운다. 이번 릴리스의 마지막 마이그레이션이다. 파일마다 첫 줄 `-- mailo:no-transaction`, 문장 하나, 멱등이다(ADR-0013 결정 4).
-- `queue.dueCount`·등급별 적체·예약 건수는 구성한 계정마다 상수 계정 쿼리로 읽고 합산한다. 계정별 상한(10000)에서 멈춘 값의 합이라 N>1이면 `dueCount`가 10000을 넘을 수 있고 `dueCountTruncated`는 어느 한 계정이라도 잘렸는지다. 구성 밖 계정의 작업은 세지 않는다. 계정이 하나이면 값과 문장 수가 이전과 같다(ADR-0013 결정 3 아).
+- `queue.dueCount`·등급별 적체·예약 건수는 구성한 계정마다 상수 계정 쿼리로 읽고 합산한다. 계정별로 읽은 값을 합친 뒤에도 응답 계약(`maximum: 10000`)의 상한 10000으로 자르고, 합이 상한을 넘거나 어느 한 계정이 상한에 닿았으면 `dueCountTruncated`가 true다(ADR-0013 구현 중 확정 6). 구성 밖 계정의 작업은 세지 않는다. 계정이 하나이면 값이 이전과 같고 문장 수도 `getQueueBacklog` 1, `getQueueDepth` 2로 이전과 같다(`sending` 수를 첫 계정의 `scheduled` 문장에 함께 담는다). N개이면 각각 N, 2N문장이다.
 - 구성 밖 계정 점검(`countOrphanAccountJobs`)은 계정 인덱스를 건너뛰며 읽어 테이블 크기가 아니라 구성 밖 계정의 대기 건수에 비례한다.
 - 배포 순서와 롤백은 `docs/operations/deployment.md` "SMTP 계정 도입 배포 순서"다.
 
@@ -2056,7 +2056,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0013은 2026-11-24에 승인됐다.
 
 - [x] 0001~0011 위에 `0012`~`0016`만 순서대로 적용되고 재실행은 아무것도 적용하지 않는다. 새 인덱스 셋이 유효하고 정의가 결정 4와 같다. 레거시 인덱스 둘이 지워지고 다른 인덱스는 남는다. 파일 다섯 개가 표식·문장 하나·멱등 형태이고 직접 다시 실행해도 오류가 없다.
 - [x] 작은 데이터에서 `enable_seqscan = off`로 계정 조건 점유 쿼리가 새 우선순위·대기 순서 인덱스를, 사용량 쿼리가 새 시도 인덱스를 쓸 수 있다(계획 선택은 자동 테스트로 고정하지 못한다).
-- [x] 건수 쿼리의 합산: `dueCount` 합과 `oldest` 최댓값, 계정별 상한 합과 `truncated`(어느 한 계정), 구성 밖 계정 제외, 계정 하나에서 문장 하나·N개에서 N문장, 중복 ID 한 번, `getQueueDepth`의 `scheduled` 합·`sending` 전체. 기존 `getQueueBacklog`·`getQueueDepth` 테스트는 계정 인자만 더해 같은 단언으로 통과한다.
+- [x] 건수 쿼리의 합산: `dueCount` 합과 `oldest` 최댓값, 합이 상한을 넘어도 10000으로 자르고 `truncated` true(계정 둘 6000건씩, 등급별·`getQueueDepth`의 `due`·`scheduled` 포함)·정확히 상한이면 false, 구성 밖 계정 제외, `getQueueBacklog`는 계정 하나에서 1문장·N개에서 N문장이고 `getQueueDepth`는 하나에서 2문장·N개에서 2N문장, 중복 ID 한 번, `getQueueDepth`의 `scheduled` 합·`sending` 전체. 기존 `getQueueBacklog`·`getQueueDepth` 테스트는 계정 인자만 더해 같은 단언으로 통과한다.
 - [x] `countOrphanAccountJobs`: 대기·점유 중인 구성 밖 계정만 계정별로 센다(종결·구성 안 계정 제외).
 - [x] 로컬 단일 측정(ADR-0013 구현 중 확정 2026-11-24 묶음 B 항목 8): 74.5만 행에서 점유 쿼리·건수 쿼리·사용량 쿼리가 모두 새 인덱스를 쓰고 약 0.03~2.3ms였다. 구성 밖 계정 점검은 읽는 buffers가 16300(순차 스캔, 약 35ms)에서 69로 줄었고 실행 시간은 기본 설정(JIT 켜짐)에서 약 21ms, `jit = off`에서 0.6ms였다.
 - [ ] 레거시 인덱스 삭제 뒤 구버전 인스턴스의 점유 성능(ADR-0013 M8, 한 쿼리 측정)과 롤링 배포·롤백 실행을 확인하지 않았다.

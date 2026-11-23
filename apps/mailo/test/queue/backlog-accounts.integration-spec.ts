@@ -54,7 +54,7 @@ describe("PostgreSQL 통합: 계정별 적체 건수의 합산 (RQ-031, ADR-0013
     await db.pool.query(
       `INSERT INTO mail_jobs (id, caller_id, idempotency_key, fingerprint, fingerprint_key_version,
                               expires_at, recipients, account_id, status, next_attempt_at)
-       SELECT gen_random_uuid(), 'bulk', $1 || '-' || g, '\\x00', 1, now() + interval '1 day', '{}'::jsonb,
+       SELECT gen_random_uuid(), 'bulk', $1 || '-' || $3 || '-' || g, '\\x00', 1, now() + interval '1 day', '{}'::jsonb,
               $1, $3, ${nextAttempt}
          FROM generate_series(1, $2) g`,
       [accountId, n, status],
@@ -78,27 +78,51 @@ describe("PostgreSQL 통합: 계정별 적체 건수의 합산 (RQ-031, ADR-0013
     expect(backlog.byPriority.URGENT.dueCount).toBe(0);
   });
 
-  it("계정마다 상한(10000)에서 멈추므로 합친 dueCount는 상한을 넘을 수 있고 truncated는 어느 한 계정이라도 잘렸는지다", async () => {
+  it("계정별 값을 합쳐도 계약의 상한(10000)을 넘지 않는다. 합이 상한을 넘으면 truncated가 true다(계정 둘 6000건씩)", async () => {
+    await bulk("default", 6000, "PENDING", "now() - interval '1 minute'");
+    await bulk("marketing", 6000, "PENDING", "now() - interval '1 minute'");
+
+    const backlog = await getQueueBacklog(db.pool, ["default", "marketing"]);
+
+    expect(backlog.dueCount).toBe(BACKLOG_COUNT_LIMIT);
+    expect(backlog.truncated).toBe(true);
+    expect(backlog.byPriority.NORMAL).toMatchObject({
+      dueCount: BACKLOG_COUNT_LIMIT,
+      truncated: true,
+    });
+    for (const p of ["LOW", "HIGH", "URGENT"] as const)
+      expect(backlog.byPriority[p]).toMatchObject({
+        dueCount: 0,
+        truncated: false,
+      });
+  });
+
+  it("한 계정이 상한을 넘은 경우도 상한으로 멈추고 truncated가 true다", async () => {
     await bulk(
       "default",
       BACKLOG_COUNT_LIMIT + 5,
       "PENDING",
       "now() - interval '1 minute'",
     );
-    await bulk(
-      "marketing",
-      BACKLOG_COUNT_LIMIT + 5,
-      "PENDING",
-      "now() - interval '1 minute'",
-    );
+    await bulk("marketing", 3, "PENDING", "now() - interval '1 minute'");
 
     const backlog = await getQueueBacklog(db.pool, ["default", "marketing"]);
 
-    expect(backlog.dueCount).toBe(2 * BACKLOG_COUNT_LIMIT);
-    expect(backlog.truncated).toBe(true);
-    expect(backlog.byPriority.NORMAL).toMatchObject({
-      dueCount: 2 * BACKLOG_COUNT_LIMIT,
+    expect(backlog).toMatchObject({
+      dueCount: BACKLOG_COUNT_LIMIT,
       truncated: true,
+    });
+  });
+
+  it("합이 정확히 상한이면 truncated가 false다", async () => {
+    await bulk("default", 6000, "PENDING", "now() - interval '1 minute'");
+    await bulk("marketing", 4000, "PENDING", "now() - interval '1 minute'");
+
+    const backlog = await getQueueBacklog(db.pool, ["default", "marketing"]);
+
+    expect(backlog).toMatchObject({
+      dueCount: BACKLOG_COUNT_LIMIT,
+      truncated: false,
     });
   });
 
@@ -128,6 +152,32 @@ describe("PostgreSQL 통합: 계정별 적체 건수의 합산 (RQ-031, ADR-0013
     const backlog = await getQueueBacklog(db.pool, ["default", "default"]);
 
     expect(backlog.dueCount).toBe(1);
+  });
+
+  it("getQueueDepth도 due·scheduled 합이 상한(10000)을 넘지 않고 truncated가 true다", async () => {
+    for (const account of ["default", "marketing"])
+      await bulk(account, 6000, "RETRY_WAIT", "now() + interval '1 hour'");
+    for (const account of ["default", "marketing"])
+      await bulk(account, 6000, "PENDING", "now() - interval '1 minute'");
+
+    const depth = await getQueueDepth(db.pool, ["default", "marketing"]);
+
+    expect(depth.due).toEqual({ count: BACKLOG_COUNT_LIMIT, truncated: true });
+    expect(depth.scheduled).toEqual({
+      count: BACKLOG_COUNT_LIMIT,
+      truncated: true,
+    });
+  });
+
+  it("getQueueDepth의 문장 수는 계정이 하나면 2(예전과 같음), N개면 2N이다(sending은 scheduled와 한 문장)", async () => {
+    await due("default");
+    const one = countingPool(db.pool);
+    await getQueueDepth(one.pool, ["default"]);
+    expect(one.count()).toBe(2);
+
+    const three = countingPool(db.pool);
+    await getQueueDepth(three.pool, ["default", "marketing", "billing"]);
+    expect(three.count()).toBe(6);
   });
 
   it("getQueueDepth의 scheduled는 계정별 합이고 sending은 계정을 가리지 않는 전체 점유 중 수다", async () => {

@@ -1598,7 +1598,7 @@ components:
               type: integer
               minimum: 0
               maximum: 10000
-              description: '`PENDING`·`RETRY_WAIT`이고 `next_attempt_at`이 지난 작업 수. 상한 10000.'
+              description: '`PENDING`·`RETRY_WAIT`이고 `next_attempt_at`이 지난 작업 수. SMTP 계정이 여럿이면 계정별로 센 값의 합이다. 상한 10000이고 합이 넘으면 10000으로 자르고 `dueCountTruncated`가 true다.'
             dueCountTruncated:
               type: boolean
               description: 실제로 상한보다 많다.

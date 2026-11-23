@@ -2,23 +2,23 @@ import type { Queryable } from "../db/index.js";
 import { PRIORITIES, PRIORITY_RANK, type Priority } from "./priority.js";
 
 /**
- * 계정 하나당 `dueCount`를 세는 상한. 이 수를 넘으면 정확한 수를 세지 않고 `truncated`로 알린다.
- * 상한은 계정마다 걸리므로 계정이 둘 이상이면 합친 `dueCount`가 이 값을 넘을 수 있다(ADR-0013 결정 3 아).
+ * `dueCount`를 세는 상한. 이 수를 넘으면 정확한 수를 세지 않고 `truncated`로 알린다.
+ * 계정마다 이 상한으로 읽고 합친 뒤에도 같은 상한으로 자른다. 응답 계약(`openapi.yaml`의 `maximum: 10000`)을 지키려는 것이다.
+ * 합이 상한을 넘으면 값은 상한이고 `truncated`는 true다("상한 이상"이라는 포화 의미가 그대로다, ADR-0013 구현 중 확정 6).
  */
 export const BACKLOG_COUNT_LIMIT = 10_000;
 
 export interface QueueBacklog {
   /**
-   * 점유 대상인 작업 수(`PENDING`·`RETRY_WAIT`이고 `next_attempt_at`이 지남). 구성한 계정의 값을 합친 수다.
-   * 계정마다 `BACKLOG_COUNT_LIMIT`에서 멈추므로 계정이 하나면 최대 그 값이고 둘 이상이면 넘을 수 있다.
+   * 점유 대상인 작업 수(`PENDING`·`RETRY_WAIT`이고 `next_attempt_at`이 지남). 구성한 계정의 값을 합친 수이고 최대 `BACKLOG_COUNT_LIMIT`다.
    */
   dueCount: number;
-  /** 어느 한 계정이라도 `dueCount`가 상한에 닿아 실제로는 더 많을 수 있다. */
+  /** 어느 한 계정이라도 상한에 닿았거나 합이 상한을 넘어 실제로는 더 많을 수 있다. */
   truncated: boolean;
   /** 가장 오래 기다린 작업이 점유 가능해진 뒤 지난 초(계정 중 가장 큰 값). 대기 작업이 없으면 null. */
   oldestDueAgeSeconds: number | null;
   /**
-   * 등급별 값(RQ-037). 네 등급이 모두 키로 있다. 계정마다 등급마다 `dueCount`와 같은 상한·후보 조건으로 따로 세고 합친다.
+   * 등급별 값(RQ-037). 네 등급이 모두 키로 있다. 계정마다 등급마다 `dueCount`와 같은 상한·후보 조건으로 따로 세고 합친 뒤 상한으로 자른다.
    * 등급별 합은 `dueCount`와 다를 수 있다(상한이 등급마다 걸린다).
    */
   byPriority: Record<
@@ -112,20 +112,23 @@ export async function getQueueBacklog(
       );
     }
   }
-  for (const priority of PRIORITIES)
-    byPriority[priority].oldestDueAgeSeconds = ageSeconds(
-      byPriority[priority].oldestDueAgeSeconds,
-    );
+  // 합친 값도 계약의 상한을 넘지 않게 자르고 잘렸으면 truncated로 알린다.
+  for (const priority of PRIORITIES) {
+    const entry = byPriority[priority];
+    entry.truncated ||= entry.dueCount > BACKLOG_COUNT_LIMIT;
+    entry.dueCount = Math.min(entry.dueCount, BACKLOG_COUNT_LIMIT);
+    entry.oldestDueAgeSeconds = ageSeconds(entry.oldestDueAgeSeconds);
+  }
 
   return {
-    dueCount,
-    truncated,
+    dueCount: Math.min(dueCount, BACKLOG_COUNT_LIMIT),
+    truncated: truncated || dueCount > BACKLOG_COUNT_LIMIT,
     oldestDueAgeSeconds: ageSeconds(oldest),
     byPriority,
   };
 }
 
-/** 큐 깊이(ADR-0012 결정 4). `due`·`scheduled`는 계정마다 `BACKLOG_COUNT_LIMIT`에서 멈춘 값의 합이다. */
+/** 큐 깊이(ADR-0012 결정 4). `due`·`scheduled`는 계정별 값의 합이고 `BACKLOG_COUNT_LIMIT`로 자른다. */
 export interface QueueDepth {
   /** 점유 가능(`getQueueBacklog`의 전체 값과 같다). */
   due: { count: number; truncated: boolean };
@@ -140,8 +143,9 @@ export interface QueueDepth {
 /**
  * 큐 깊이를 읽는다. `/metrics`의 `mailo_queue_jobs`가 쓴다(RQ-049, ADR-0012 결정 4·5, ADR-0013 결정 3 아).
  * - `due`는 `getQueueBacklog`에서 가져와 헬스 `queue.dueCount`와 같은 값이다.
- * - `scheduled`는 계정마다 `mail_jobs_account_claim_idx`를 `next_attempt_at > now()` 범위로 상한+1까지만 읽고 합친다.
- * - `sending`은 `mail_jobs_sending_caller_idx`(부분 인덱스) 전용 스캔이다. 계정으로 나누지 않는다.
+ * - `scheduled`는 계정마다 `mail_jobs_account_claim_idx`를 `next_attempt_at > now()` 범위로 상한+1까지만 읽고 합친 뒤 상한으로 자른다.
+ * - `sending`은 `mail_jobs_sending_caller_idx`(부분 인덱스) 전용 스캔이다. 계정으로 나누지 않고 첫 계정의 `scheduled` 문장에 함께 담는다.
+ * 문장 수는 계정이 N개이면 `getQueueBacklog` N + `scheduled` N이다. N=1이면 2로 묶음 A 이전과 같다.
  * 읽기만 하고 잠그지 않는다. 시각은 DB `now()`다(ADR-0002 결정 10).
  * `PENDING`은 `next_attempt_at` 기본값이 `now()`라 항상 due이고, 미래로 바꾸는 쿼리는 `RETRY_WAIT` 전이뿐이다(`queue/complete.ts`).
  */
@@ -152,27 +156,42 @@ export async function getQueueDepth(
   const backlog = await getQueueBacklog(db, accountIds);
   let scheduled = 0;
   let scheduledTruncated = false;
-  for (const accountId of new Set(accountIds)) {
-    const { rows } = await db.query<{ scheduled: number }>(
-      `SELECT count(*)::int AS scheduled FROM (
-         SELECT 1 FROM mail_jobs
-          WHERE status IN ('PENDING', 'RETRY_WAIT') AND next_attempt_at > now()
-            AND account_id = $2::text
-          ORDER BY next_attempt_at
-          LIMIT $1) s`,
-      [BACKLOG_COUNT_LIMIT + 1, accountId],
+  let sending = 0;
+  const ids = [...new Set(accountIds)];
+  for (const [index, accountId] of ids.entries()) {
+    // `sending`은 계정과 무관한 전체 수라 첫 계정의 문장에서만 읽는다(CASE의 다른 가지는 실행하지 않는다).
+    const { rows } = await db.query<{
+      scheduled: number;
+      sending: number | null;
+    }>(
+      `SELECT (SELECT count(*) FROM (
+                 SELECT 1 FROM mail_jobs
+                  WHERE status IN ('PENDING', 'RETRY_WAIT') AND next_attempt_at > now()
+                    AND account_id = $2::text
+                  ORDER BY next_attempt_at
+                  LIMIT $1) s)::int AS scheduled,
+              CASE WHEN $3::boolean
+                   THEN (SELECT count(*) FROM mail_jobs WHERE status = 'SENDING')::int END AS sending`,
+      [BACKLOG_COUNT_LIMIT + 1, accountId, index === 0],
     );
     const n = rows[0]?.scheduled ?? 0;
-    scheduled += Math.min(n, BACKLOG_COUNT_LIMIT);
+    scheduled += n;
     scheduledTruncated ||= n > BACKLOG_COUNT_LIMIT;
+    if (index === 0) sending = rows[0]?.sending ?? 0;
   }
-  const sending = await db.query<{ sending: number }>(
-    `SELECT count(*)::int AS sending FROM mail_jobs WHERE status = 'SENDING'`,
-  );
+  if (ids.length === 0) {
+    const r = await db.query<{ sending: number }>(
+      `SELECT count(*)::int AS sending FROM mail_jobs WHERE status = 'SENDING'`,
+    );
+    sending = r.rows[0]?.sending ?? 0;
+  }
   return {
     due: { count: backlog.dueCount, truncated: backlog.truncated },
-    scheduled: { count: scheduled, truncated: scheduledTruncated },
-    sending: sending.rows[0]?.sending ?? 0,
+    scheduled: {
+      count: Math.min(scheduled, BACKLOG_COUNT_LIMIT),
+      truncated: scheduledTruncated || scheduled > BACKLOG_COUNT_LIMIT,
+    },
+    sending,
     backlog,
   };
 }

@@ -404,10 +404,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 
 - 점유·차단기·정지·24시간 할당이 계정 단위다. 한 계정의 차단기 `open`이나 SMTP 지연이 다른 계정의 발송을 막지 않는다. 차단기 임계값과 대기 시간은 모든 계정이 공유하는 `MAILO_BREAKER_*` 값이다.
 - Worker는 `MAILO_WORKER_CONCURRENCY`(C)를 계정에 나눈다. 계정마다 한 인스턴스가 동시에 쓰는 슬롯 상한 `cap_a`는 계정의 `concurrency`이고 생략하면 `max(1, C − (N − 1))`이다(N은 계정 수). C=4, N=2이면 한 계정은 3슬롯이다. 상한은 인스턴스별이라 계정 하나의 전체 동시 전송 수는 인스턴스 수 × `cap_a` 이하다. 다른 계정이 한가해도 `cap_a`를 넘지 못한다. 처리량이 필요하면 C를 올리거나 `concurrency`를 준다. 계정 수가 C보다 많으면 기동을 거부한다.
-- `sendQuota24h`가 있는 계정은 최근 24시간의 시도 수와 점유 중 수가 한도에 닿으면 점유를 멈춘다(대표 작업 포함, 시도가 24시간 밖으로 밀려나면 재개). 단위는 메시지 시도 수이고 수신자 수로 가중하지 않는다. 호출처 `sendQuota24h`와 함께 걸리면 더 작은 쪽이다. 계정 할당을 쓰면 `MAILO_RECORD_RETENTION_SECONDS`가 24시간 이상이어야 한다(미만이면 기동 실패). 인스턴스가 여럿이어도 계정 advisory lock으로 초과하지 않는다(통합 테스트는 한 인스턴스 안의 동시 호출 12개로 확인했다).
+- `sendQuota24h`가 있는 계정은 최근 24시간의 시도 수와 점유 중 수가 한도에 닿으면 점유를 멈춘다(대표 작업 포함, 시도가 24시간 밖으로 밀려나면 재개). 단위는 메시지 시도 수이고 수신자 수로 가중하지 않는다. 인스턴스가 여럿이고 `sendQuota24h`가 있는 계정은 다른 인스턴스가 계정 advisory lock을 잡고 있으면 그 인스턴스의 이번 점유를 건너뛰고 다음 poll(`MAILO_WORKER_POLL_MS` 안팎)까지 기다리므로 점유가 지연될 수 있다(부하를 측정하지 않았다). 호출처 `sendQuota24h`와 함께 걸리면 더 작은 쪽이다. 계정 할당을 쓰면 `MAILO_RECORD_RETENTION_SECONDS`가 24시간 이상이어야 한다(미만이면 기동 실패). 인스턴스가 여럿이어도 계정 advisory lock으로 초과하지 않는다(통합 테스트는 한 인스턴스 안의 동시 호출 12개로 확인했다).
 - 계정 정지는 `mail_send_controls`의 `scope_type = 'account'` 행을 점유가 읽어 그 계정을 멈춘다. 정지를 쓰고 지우는 REST·CLI·감사는 구현 묶음 C라 지금은 직접 SQL로만 넣을 수 있다. 구버전은 `account` 범위를 읽지 않는다. 계정 정지에 기대어 롤백하지 않는다.
 - 새 로그: `account_quota_exceeded`·`account_quota_recovered`, `send_paused`·`send_resumed`의 `scope: "account"`, `claim_failed`의 `accountId`, `worker_started`의 `accounts`. 모두 계정 ID와 한도 수치만 싣는다. `account_limits_not_enforced`는 없다.
-- `/health/ready`의 `queue.dueCount`는 구성한 계정별 값(각각 10000에서 멈춤)의 합이다. 계정이 둘 이상이면 10000을 넘을 수 있고 `dueCountTruncated`는 어느 한 계정이라도 잘렸는지다. 구성에서 빠진 계정의 작업은 점유되지 않아 세지 않는다.
+- `/health/ready`의 `queue.dueCount`는 구성한 계정별 값(각각 10000에서 멈춤)의 합이다. 합이 10000을 넘으면 10000으로 자르고 `dueCountTruncated`를 true로 둔다(계약의 상한 10000 유지, 등급별 값도 같다). `dueCountTruncated`는 어느 한 계정이라도 상한에 닿았거나 합이 상한을 넘었는지다. 구성에서 빠진 계정의 작업은 점유되지 않아 세지 않는다.
 - 아직 없다: `/metrics`의 `account_id` 라벨은 모든 작업을 `default`로 센다. `/health/ready`·`/ops`·CLI에 계정 정보가 없다(구현 묶음 C). 호출처 동시 상한(`maxConcurrentSends`)은 묶음 D다.
 
 #### 평문 SMTP 모드
