@@ -11,6 +11,7 @@
 - 파일이 입력 폴더에서 사라지지 않으면 `file_poll` 로그의 `unreadable`을 본다. 권한 문제다.
 - 파일 거부는 이벤트의 `reasonCode`로 원인을 고른다. 원본은 삭제되므로 호출처가 보유한 원본과 `fileName`·`sha256`을 대조한다.
 - 피드 지연은 단독 장애 신호가 아니다. 새 이벤트가 없어도 `lagSeconds`가 커진다.
+- Prometheus로 보는 경우 `/metrics`의 읽는 순서는 "지표 해석"이다. 전역 값은 `max`, counter는 `rate`로 읽는다.
 
 ## 먼저 볼 것
 
@@ -44,6 +45,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | 등록이 400 `RECIPIENT_DOMAIN_NOT_ALLOWED`다, 파일이 `VALIDATION_FAILED`로 거부된다 | "수신 도메인 거부" |
 | 운영 CLI가 0이 아닌 코드로 끝난다 | "운영 CLI 종료 코드" |
 | `/health/ready`가 503 | DB 연결(`readiness_check_failed`) |
+| Prometheus 타깃이 `down`이다, `/metrics`가 401·403이다, 지표 값이 이상하다, `mailo_metrics_collect_ok`가 0이다 | "지표 해석" |
 | 기동하지 않는다 | `key-management.md`의 오류 표, `deployment.md`의 제약 표, "만료 시각"의 기동 오류 |
 
 ## 전역 차단기가 open일 때
@@ -469,6 +471,45 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 
 그 밖의 Worker 로그: `smtp_plaintext_enabled`(warn, `auth`, `message`, 기동 때 한 번. `MAILO_SMTP_SECURITY=none`이라 인증 정보와 본문이 평문으로 나간다. `deployment.md` "평문 SMTP 모드"), `worker_started`, `worker_paused`(`inFlight`, 종료 신호 직후 새 점유 중지), `worker_stopping`, `worker_stopped`(`drained`), `job_completed`(`jobId`, `status`, `classification`, `probe`), `poll_loop_crashed`, `maintenance_loop_crashed`.
 
+## 지표 해석
+
+근거: RQ-049~052, ADR-0012. 지표 목록과 스크레이프 설정은 `deployment.md` "지표"다. 아래 PromQL은 `promtool`의 문법 검사를 통과한 규칙(`deployment.md` "알림 규칙 예시")의 조건을 풀어 쓴 것이다. 임계값은 추정이다.
+
+읽는 규칙:
+
+- 전역 gauge(`mailo_queue_`, `mailo_breaker_`, `mailo_send_paused`, `mailo_caller_`, `mailo_ops_audit_`)는 어느 인스턴스가 내도 같은 DB 값이다. 인스턴스가 여럿이면 `max by (...)`로 읽는다. `sum`은 인스턴스 수만큼 곱해진다. 인스턴스 사이에 최대 `MAILO_METRICS_CACHE_SECONDS`(기본 5초)만큼 어긋날 수 있다.
+- counter(`*_total`)는 이 프로세스가 한 일이다. `sum by (...) (rate(...))`나 `increase`로 읽는다. 재시작하면 0에서 다시 시작한다(`process_start_time_seconds`가 바뀐다).
+- 타깃은 인스턴스마다 둔다. 로드 밸런서 하나를 타깃으로 두면 counter가 줄었다 늘어 `rate`가 틀린다.
+
+증상별:
+
+| 증상 | 원인 후보 | 확인 |
+| ---- | --------- | ---- |
+| 타깃이 `down`이고 오류가 `HTTP status 403 Forbidden` | Prometheus 설정에 관리 토큰이 있다 | 토큰 파일을 읽기 토큰(`MAILO_OPS_TOKEN`)으로 바꾼다. 관리 토큰은 `/metrics`에서 403이다 |
+| 타깃이 `down`이고 오류가 `HTTP status 401 Unauthorized` | 토큰이 틀렸거나 호출처 API 키다, 또는 서버에 `MAILO_OPS_TOKEN`이 없다 | 서버 환경 변수와 토큰 파일. 호출처 키는 401이다 |
+| 타깃이 `down`이고 오류가 `404` | 구버전 인스턴스다. 롤링 배포 중이다 | 모든 인스턴스를 새 버전으로 바꾼 뒤 타깃에 추가한다 |
+| 타깃이 `down`이고 연결 오류 | 인스턴스가 죽었거나 주소·포트·방화벽 문제다 | `/health/live`. 기본 compose는 `127.0.0.1`만 연다 |
+| `mailo_metrics_collect_ok{group}`이 0 | 그 그룹의 DB 읽기가 실패했다(시간 초과, 연결, 권한). 응답에는 그 그룹의 전역 지표가 없다 | 로그의 `metrics_collect_failed`(`group`, `error`). 같은 그룹이 연속 실패하는 동안 로그는 한 번이다. 모든 그룹이 0이면 DB 연결 문제다("DB 연결 문제"). 인스턴스 값은 계속 나온다 |
+| `mailo_queue_oldest_due_age_seconds`가 커진다 | 점유가 안 되거나 느리다 | 차단기(`mailo_breaker_state`), 정지(`mailo_send_paused_all`·`mailo_caller_paused`), 할당(`mailo_caller_quota_used` / `_limit`), Worker(`mailo_worker_last_poll_age_seconds`, `mailo_worker_state`). `LOW`만 커지면 우선순위 경로의 정상 동작일 수 있다("등급별 적체") |
+| `mailo_queue_jobs{state="due"}`가 있는데 `mailo_attempts_total`이 늘지 않는다 | 차단기 `open`, 발송 정지, 할당 초과, Worker 정지 중 하나다 | 위 표와 같다. `MailoNoProgress` 규칙이 이 조합이다 |
+| `mailo_queue_jobs_truncated`가 1 | 상한(10000)에 닿았다. 실제로는 더 많다 | 건수는 10000에서 멈춘다. `mailo_queue_oldest_due_age_seconds`로 적체 정도를 본다 |
+| `mailo_breaker_state{state="open"}`가 1 | SMTP 계정 단위 장애다 | `mailo_breaker_reason_info`의 `reason`(`QUOTA_DAILY`, `AUTH_FAILED` 등)과 "전역 차단기가 open일 때" |
+| `mailo_attempt_errors_total`의 `result="account"`가 늘고 `reason`이 `daily_limit` | 일일 한도에 닿았다 | "전역 차단기가 open일 때" |
+| `mailo_attempt_errors_total`의 `stage="data"`가 늘고 `result="transient"` | DATA 단계 일시 오류·타임아웃이다. 타임아웃이면 결과 불명일 수 있다 | "결과 불명 실패" |
+| `mailo_attempt_errors_total`의 `result="internal"`이 늘고 `stage="worker"` | Mailo 내부 오류(복호화 실패, 잘못된 작업 데이터)다. SMTP에 닿지 않았고 차단기는 바뀌지 않는다 | `job_internal_error` 로그의 `error`(이름·코드만). 키 설정(`key-management.md`)을 확인한다 |
+| `mailo_lease_recovered_total`이 늘었다 | 전송 중 프로세스가 죽었거나 결과 기록이 lease 안에 끝나지 않았다. 같은 메일이 두 번 갈 수 있다(RQ-013) | "lease 만료" |
+| `mailo_jobs_finished_total{status="failed"}` 비율이 높다 | 영구 오류나 시도 소진이다 | `result="permanent"`의 `stage`, 이벤트의 `failureReason`. 호출처별로 `by (caller_id)`를 본다 |
+| `mailo_jobs_finished_total{status="expired"}`가 늘고 정지·할당이 걸려 있다 | 정지 중에도 TTL이 흘러 `EXPIRED`가 쌓인다 | "발송 정지", "호출처 할당 초과" |
+| `mailo_caller_latest_event_age_seconds`가 크다 | 그 호출처의 새 종결 이벤트가 오래 없었다. 소비자의 처리 지연이 아니다 | "피드 지연 해석" |
+| `mailo_event_cursor_gap_total`이 늘었다 | 호출처가 보존 기간(기본 30일)보다 오래 폴링하지 않았다 | "이벤트 피드 공백" |
+| `mailo_ops_audit_rows`가 커진다 | 감사 행이 쌓인다. 자동 삭제가 없다 | `GET /ops/audit`로 누가 무엇을 했는지 본다. 삭제 정책은 정하지 않았다 |
+| `mailo_metrics_dropped_samples_total`이 0이 아니다 | 지표 값 검증 실패나 시리즈 상한(지표당 2000)이다 | 로그의 `metrics_series_limit`(`metric`). 정상이면 0이다. 코드 결함의 신호일 수 있다 |
+| `mailo_file_poller_last_poll_ok`가 0 | 마지막 파일 폴링에 오류가 있었다 | `file_poll_failed`·`file_ingest_failed`, "unreadable 파일" |
+| `caller_id="unregistered"` 시리즈가 있다 | 레지스트리에서 뺀 호출처의 작업이 큐에 남아 처리됐다 | 레지스트리와 큐의 `caller_id`를 대조한다. 가짜 호출처 ID로 시리즈를 늘릴 수 없게 한 묶음이다 |
+
+- 같은 지표를 인스턴스마다 보고 싶으면 인스턴스 값(`mailo_worker_`, `process_*`, counter)을 쓴다. 전역 gauge를 인스턴스별로 비교하면 TTL 어긋남만 보인다.
+- 값의 해석에서 확인하지 않은 것은 `deployment.md`의 "검증하지 않은 것"이다. 알림이 발화하는 조건과 임계값은 부하에서 확인하지 않았다.
+
 ## 검증하지 않은 것
 
 - "발송 정지"의 SQL은 스키마와 대조했고 통합 테스트(`test/queue/send-controls.integration-spec.ts`, `test/http/ops.integration-spec.ts`)가 동작을 확인한다. 점유 쿼리 비용 수치는 로컬 단일 측정이고 다중 인스턴스·운영 크기에서는 측정하지 않았다.
@@ -478,4 +519,5 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 - "이벤트 피드 공백"의 SQL은 통합 테스트(`test/events/event-purges.integration-spec.ts`, `test/http/rest-event-gap.integration-spec.ts`)가 동작을 확인한다. 30일이 실제로 지난 경우는 DB 시각을 당겨 만든 테스트 데이터로만 확인했다.
 - "수신 도메인 거부"와 "운영 CLI 종료 코드"는 통합 테스트(`test/http/rest-recipient-domains.integration-spec.ts`, `test/file-channel/recipient-domains.integration-spec.ts`, `test/cli/`)가 확인한다. 운영 환경 로그·거부 기록은 확인하지 않았다.
 - 실제 Gmail의 응답 코드·텍스트로 `lastReason` 분류를 대조하지 않았다(ADR-0007 구현 중 확정 2).
+- "지표 해석"은 지표 이름과 라벨을 코드의 카탈로그와 대조했고 `/metrics` 통합 테스트(`test/http/metrics-*.integration-spec.ts`, `test/e2e/metrics-counters.integration-spec.ts`)가 값을 확인한다. 위 증상 표의 원인 후보와 조치는 부하나 실제 장애에서 확인하지 않았다.
 - 긴 트랜잭션의 원인 목록(`pg_dump`, prepared transaction)은 일반 지식이며 Mailo 피드로 재현하지 않았다.

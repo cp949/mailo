@@ -37,7 +37,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0009](../adr/0009-claim-priority.md): 우선순위 등급, 점유 경로(우선순위·대기 순서), 지문의 `policy.priority`, 배포·롤백 순서. ADR-0002 구현 중 확정 2의 점유 인덱스·순서를 이어받는다.
 - [ADR-0010](../adr/0010-per-request-job-ttl.md): 요청별 만료 시간 `ttlSeconds`, 허용 범위와 상한 설정, 지문의 `policy.ttlSeconds`, 만료 의미, 보존 기간 기동 검사, 배포 순서. ADR-0002 결정 7의 요청별 지정 미결정을 정한다.
 - [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 결과 불명 표시(`outcomeUncertain`), 배포·롤백 순서. 구현 묶음 A(작업 취소, RQ-040·041), 묶음 B(토큰 분리, 발송 정지, 감사, `/ops` REST, 관리 취소, RQ-042~044), 묶음 C(피드 공백, 수신 도메인 허용 목록, CLI, RQ-045~047), 묶음 D(`outcomeUncertain`, RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다.
-- [ADR-0012](../adr/0012-metrics-endpoint.md): `GET /metrics`(읽기 토큰만, 관리 토큰 403), 전역 gauge와 인스턴스 counter 구분, 라벨 규칙과 시리즈 상한, TTL 캐시·단일 비행, 수동 텍스트 직렬화, 감사 행 수 지표. 구현 전이다.
+- [ADR-0012](../adr/0012-metrics-endpoint.md): `GET /metrics`(읽기 토큰만, 관리 토큰 403), 전역 gauge와 인스턴스 counter 구분, 라벨 규칙과 시리즈 상한, TTL 캐시·단일 비행, 수동 텍스트 직렬화, 감사 행 수 지표. 구현했다(RQ-049~052).
 
 ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 
@@ -65,6 +65,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 8단계 관측성 `/metrics` 반영 뒤): `pnpm test` 단위 765건(42개 파일), `pnpm test:integration` 통합 662건(44개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합은 한 번의 묶음으로 실행했고 실패한 파일이 없었다. 기존 테스트의 단언은 한 곳만 바꿨다(취소 결과 `canceled`에 `callerId` 필드가 더해져 `queue/cancel.integration-spec.ts`의 기대값 두 곳이 새 필드를 포함한다, ADR-0012 구현 중 확정 1). Dockerfile·종료 순서·파일 채널 I/O·`docker-compose.yml`은 바꾸지 않았다(`.env.example`은 주석만 더했다). `scripts/container/verify-metrics.sh`를 실행했다(read_only 컨테이너에서 `/metrics` 응답·토큰 행렬·`promtool check metrics`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 실제 Prometheus 스크레이프와 `promtool check rules`는 일회성 확인이다(ADR-0012 구현 중 확정 11). `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-049~052 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 D `outcomeUncertain` 반영 뒤): `pnpm test` 단위 709건(38개 파일, 이 묶음은 단위 테스트를 더하지 않았다), `pnpm test:integration` 통합 590건(40개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. `Job`의 키 목록을 고정한 단언에 새 필드 `outcomeUncertain`이 없었기 때문이고(RQ-048이 정한 계약 필드) 기대 키 목록에 필드를 더한 뒤 그 파일(58건)이 통과했다. 샘플은 Gradle 단위 34건 통과(`EventFeedPollerApplyTest`에 1건 더함), `samples/spring-boot-relay/verify/run-e2e.sh` 통과 123·실패 0(S3에 새 필드 검사 3항목을 더했다, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 샘플의 main 코드는 바꾸지 않았다. 마이그레이션·Dockerfile·compose·종료 순서·파일 채널 I/O는 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(RQ-048 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI 반영 뒤): `pnpm test` 단위 709건(38개 파일), `pnpm test:integration` 통합 564건(38개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 한 번의 검증 묶음이고 같은 소스에서 다시 실행하지 않았다. Dockerfile·compose·종료 순서·파일 채널 I/O는 바꾸지 않았고 `.env.example`은 주석만 더했다(`config/compose-consistency.spec.ts`가 새 변수 이름을 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 120·실패 0(S16 신규 18항목, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 읽기 전용 루트 컨테이너(`--read-only --cap-drop ALL --security-opt no-new-privileges`) 안의 CLI 실행을 1회 확인했다(`docker run`·`docker exec`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(해당 영역 변경 없음, RQ-045~047 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 B 운영 토큰·발송 정지·감사·`/ops` 반영 뒤): `pnpm test` 단위 622건(33개 파일), `pnpm test:integration` 통합 513건(32개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. 호출처 키 `/health/ready`의 응답 동등 비교에 새 필드 `sendPaused`가 없었기 때문이고(ADR-0011 구현 중 확정 17) 기대값에 필드를 더한 뒤 그 파일(58건)이 통과했다. 이 뒤 독립 리뷰 지적 2건(운영자 작업 응답의 거부 수신자 노출, `/ops` 경로 파라미터 디코딩 오류가 인증보다 먼저 나가는 문제, ADR-0011 구현 중 확정 19·20)을 고치고 전체 검증을 다시 실행해 위 수치를 얻었다. Dockerfile·종료 순서·파일 채널 I/O는 바꾸지 않았고 `docker-compose.yml`은 주석만 더했다. `scripts/container/verify-sigterm-file.sh`를 1회 실행했다(컨테이너 안에서 `0001`~`0008`을 적용하고 기동한 뒤 SIGTERM 종료 코드 0, 재기동 뒤 1000통 중복·유실 없음, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `verify-sigkill-duplicate.sh`는 실행하지 않았다. `scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-042~044 판정 근거).
@@ -91,6 +92,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 | 4단계 | 발송 우선순위(RQ-033~038, ADR-0009) |
 | 5단계 | 요청별 만료 시간(RQ-039, ADR-0010) |
 | 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041), 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044), 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI(RQ-045~047), 묶음 D 결과 불명 표시(RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다 |
+| 8단계 | 관측성(ADR-0012). `GET /metrics`(RQ-049), 이름·라벨 규칙(RQ-050), 전역 gauge(RQ-051), 인스턴스 counter·gauge(RQ-052). 마이그레이션 없음 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -98,7 +100,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 1단계 구현 상태(2026-11-23 갱신):
 
 - 구현·테스트 완료: REST 등록·조회·이벤트 피드·헬스, 큐(점유·lease·sweep·보존 삭제), Worker, SMTP 분류, 전역 차단기, DB 본문 암호화, 호출처별 API 키.
-- 피드 지연 메트릭(RQ-017): 인증된 `/health/ready`의 `eventFeed` 필드로 구현했다. 로그·외부 메트릭 시스템으로는 내보내지 않는다.
+- 피드 지연 메트릭(RQ-017): 인증된 `/health/ready`의 `eventFeed` 필드로 구현했다. 8단계에서 최신 이벤트의 경과 초를 `/metrics`의 `mailo_caller_latest_event_age_seconds`로도 낸다(RQ-051). 로그로는 내보내지 않는다.
 - 미실행 검증: 컨테이너 재생성(RQ-026), 실제 Gmail·Workspace SMTP(RQ-005·009). 컨테이너 기동·SIGTERM·SIGKILL은 `scripts/container/`로 2026-11-23에 실행했다(RQ-013·018·020·025).
 - 앱 전체 경로를 잇는 종단 테스트(`e2e/mail-flow.integration-spec.ts`) 7건은 위 통합 테스트 실행에서 통과했다.
 - 미검증 목록: 실제 Gmail·Workspace SMTP, 실제 NAS 제품(NFS loopback만 확인), 2단계·3단계 RQ. SIGKILL로 인한 실제 중복 발송은 2026-11-23 컨테이너에서 관찰했다(RQ-013).
@@ -642,7 +644,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 - `events/events.integration-spec.ts`: 미커밋 트랜잭션 때문에 커밋 순서가 뒤바뀐 이벤트를 건너뛰지 않음, 한 트랜잭션의 `id`가 99에서 100으로 넘어가는 이벤트를 limit 2·3·5로 끝까지 읽어도 빠짐·중복이 없음(정렬이 문자열 순이면 건너뛴다), 호출처 격리와 `type` 필터, 잘못된 cursor 거부, 수집 거부의 멱등 기록과 이벤트.
 - `queue/maintenance.integration-spec.ts`: sweep의 `EXPIRED` 전이와 이벤트가 같은 트랜잭션이라 이벤트 쓰기 실패 시 전이도 롤백. `queue/claim-complete.integration-spec.ts`, `queue/circuit-breaker.integration-spec.ts`: 종결 전이와 이벤트.
 - `events/events.integration-spec.ts`: 피드 지연 계산(이벤트 없음 null, 최신 반환 이벤트 기준, 다른 호출처 제외, 피드에 보이지 않는 미커밋 이벤트 제외). `http/rest-intake.integration-spec.ts`: `/health/ready`의 `eventFeed`(호출처별, 인증 없음은 생략). cursor 페이지 이어 읽기와 `hasMore`, 호출처 격리, 이벤트 모양. `db/migrator.integration-spec.ts`: 서버 버전 13 이상. `docker-compose.yml`은 `postgres:17-alpine`이다.
-- 피드 지연 메트릭은 인증된 `/health/ready`의 `eventFeed`로 구현했다. 로그·외부 메트릭 시스템으로는 내보내지 않는다. 해석은 `docs/operations/troubleshooting.md`의 "피드 지연 해석"이다.
+- 피드 지연 메트릭은 인증된 `/health/ready`의 `eventFeed`로 구현했다. `/metrics`에도 같은 뜻의 `mailo_caller_latest_event_age_seconds`가 있다(RQ-051). 로그로는 내보내지 않는다. 해석은 `docs/operations/troubleshooting.md`의 "피드 지연 해석"이다.
 
 ## 7. 큐와 영속성
 
@@ -1706,6 +1708,135 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 - 샘플 e2e(`samples/spring-boot-relay/verify/run-e2e.sh` S3, 2026-11-24, 스크립트 검증): 서버가 새 필드를 보내는 상태에서 샘플 outbox 흐름이 그대로 통과했다. `JOB_FAILED` payload의 `outcomeUncertain`이 `false`로 남고 `JOB_SENT` payload에는 없다.
 - 남은 미검증: `true`가 되는 실제 Gmail 응답 경로(가짜 SMTP의 연결 끊김만 확인), 서버가 응답했지만 Mailo가 받지 못한 경우, 저장소 밖 호출처가 새 필드를 무시하는지.
 
+## 15. 관측성: `GET /metrics`
+
+결정은 [ADR-0012](../adr/0012-metrics-endpoint.md)다. RQ-049가 인증·응답 형식·호환성을, RQ-050이 이름·분류·라벨·시크릿 규칙을, RQ-051이 DB를 읽는 전역 gauge를, RQ-052가 인스턴스 counter·gauge를 다룬다. 알림 전송은 범위 밖이다(RQ-029). 알림 규칙은 예시로만 `docs/operations/deployment.md`에 둔다.
+
+### RQ-049 `/metrics` 인증과 응답 형식
+
+- [ ] **진행 상태:** 진행 중 (8단계)
+
+**요구사항:**
+
+- `GET /metrics`는 Prometheus 텍스트 형식(0.0.4)으로 응답한다(ADR-0012 결정 2). `Content-Type: text/plain; version=0.0.4; charset=utf-8`, `Cache-Control: no-store`다.
+- 읽기 토큰(`MAILO_OPS_TOKEN`)만 200이다. 관리 토큰은 403(`forbidden`)이고 호출처 API 키·자격 없음·모르는 값은 401이다(ADR-0012 결정 1). ADR-0011 결정 1의 "관리 토큰은 읽기 권한을 포함한다"는 이 endpoint에서만 예외다.
+  - `MAILO_OPS_TOKEN`이 없으면 어떤 값도 읽기 권한이 아니라 401이다. 관리 토큰만 설정돼 있으면 그 토큰은 403이다.
+  - 인증은 라우트 매칭 전 미들웨어(`/metrics` 이하 모든 경로)가 먼저 하고 컨트롤러의 `MetricsReadGuard`가 같은 판정을 한 번 더 한다. `/metrics/%` 같은 경로가 인증보다 먼저 오류를 내지 않는다(ADR-0011 구현 중 확정 20과 같다).
+- 인증 오류 외에는 항상 200이다. DB 수집이 실패해도 200이고 실패한 그룹의 시리즈만 빠지며 `mailo_metrics_collect_ok{group}`이 0이다(RQ-051).
+- 요청 로그는 debug다. 스크레이프가 인스턴스마다 info 줄을 만들지 않는다. 토큰 값은 로그·응답에 쓰지 않는다(RQ-027).
+- 호환성: 마이그레이션이 없다. 새 npm 의존성이 없다(직렬화를 직접 쓴다, ADR-0012 결정 7). `/health/ready`의 응답·판정·인증·쿼리는 바뀌지 않는다(ADR-0012 결정 9). 새 환경 변수는 `MAILO_METRICS_CACHE_SECONDS`(정수, 기본 5, 1~60) 하나다. 새 로그 이벤트는 `metrics_collect_failed`·`metrics_series_limit` 둘이다. 새 오류 `type`은 없다.
+- 구버전 인스턴스는 `/metrics`가 없어 404다. 모든 인스턴스를 새 버전으로 바꾼 뒤 스크레이프 타깃에 추가한다.
+
+**수용 조건:**
+
+- [x] 읽기 토큰 200, 관리 토큰 403, 호출처 키·헤더 없음·모르는 값·Bearer 아닌 형식 401, `MAILO_OPS_TOKEN` 없음 401(관리 토큰만 있으면 그 토큰 403). 읽기 토큰으로 업무 endpoint를 부르면 여전히 401이다.
+- [x] `/metrics/%`는 자격 없음 401·관리 토큰 403·읽기 토큰 404이고, 쿼리의 잘못된 퍼센트 인코딩은 인증 결과를 바꾸지 않는다.
+- [x] 응답 헤더, 끝 개행, 모든 시리즈 줄의 형식, 지표마다 HELP·TYPE 한 번, 중복 시리즈 없음, HEAD 동작.
+- [x] 직렬화: HELP·TYPE 줄, 라벨 값 이스케이프(`\`, `"`, 줄바꿈), 값 표기(`NaN`·`+Inf`·`-Inf`), 중복·카탈로그 밖 시리즈 거부.
+- [x] `/metrics` 요청 로그는 debug이고 토큰 값이 로그에 없다.
+- [x] `MAILO_METRICS_CACHE_SECONDS`는 1~60의 정수만 받고 생략하면 5다. 범위 밖이면 변수 이름으로 기동을 거부한다.
+- [ ] 실제 Prometheus 서버가 이 응답을 스크레이프하고 `promtool check metrics`·`check rules`가 통과한다. 자동 테스트가 아니다.
+- [ ] 롤링 배포 중 구·신 인스턴스 혼용(구버전 404는 코드 읽기 결과)과 롤백을 실행하지 않았다.
+
+**판정 근거:**
+
+- `http/metrics-auth.integration-spec.ts`(PostgreSQL, 실제 앱): 인증 행렬, 경로 디코딩 순서, 응답 형식, 요청 로그, 토큰 비노출. `metrics/serialize.spec.ts`(단위): 직렬화. `config/load-config.spec.ts`: `MAILO_METRICS_CACHE_SECONDS`.
+- 컨테이너 확인(2026-11-24, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다): `scripts/container/verify-metrics.sh`가 `read_only` 컨테이너에서 읽기 토큰 200·관리 토큰 403·무토큰 401·호출처 키 401과 응답 헤더를 관찰했고 `promtool check metrics`가 지적 없이 통과했다. 실제 Prometheus(`v2.55.1`)가 읽기 토큰 타깃을 스크레이프했고 관리 토큰 타깃은 403으로 `down`이었다(ADR-0012 구현 중 확정 11).
+- RED 확인(2026-11-24): 구현 전 `http/metrics-auth.integration-spec.ts`는 16건 중 14건이 실패했다(`/metrics` 라우트 없음). `metrics/*.spec.ts`는 `src/metrics/index.js`를 찾지 못해 로드에 실패했다.
+- 구현: `callers/bearer-auth.ts`의 `MetricsReadGuard`, `callers/ops-auth-middleware.ts`의 `createMetricsAuthMiddleware`, `health/metrics.controller.ts`, `metrics/serialize.ts`.
+
+### RQ-050 지표 이름·분류·라벨·시크릿 규칙
+
+- [x] **진행 상태:** 검증 완료 (8단계)
+
+**요구사항:**
+
+- 지표는 전역 gauge, 인스턴스 counter, 인스턴스 gauge, 프로세스(`process_*` 3개)로 나눈다. 이름·종류·분류·라벨 이름·허용 값은 `metrics/catalog.ts` 한 곳에 둔다(ADR-0012 결정 3·4).
+  - 전역 지표는 gauge뿐이고 `mailo_queue_`·`mailo_breaker_`·`mailo_send_paused`·`mailo_caller_`·`mailo_ops_audit_` 접두를 쓴다. 합칠 때 `max by (...)`를 쓰고 `sum`을 쓰지 않는다.
+  - counter는 인스턴스·프로세스 분류이고 이름이 `_total`로 끝난다. gauge는 `_total`로 끝나지 않는다. 시간 값은 `_seconds`다.
+  - HELP 첫 단어는 "전역." 또는 "인스턴스."다. `instance` 라벨은 앱이 붙이지 않는다(Prometheus 타깃 라벨).
+- 허용 라벨 이름은 `caller_id`, `account_id`, `reason`, `state`, `priority`, `result`, `stage`, `status`, `group`뿐이다(ADR-0012 결정 6). 카탈로그 밖의 라벨 이름은 기동 때 던진다.
+- 값 규칙: `caller_id`는 형식을 지키고 기동 때 읽은 레지스트리에 있는 값이거나 `unregistered` 하나다. `account_id`는 단계 7 전에 `default`다. 닫힌 열거는 카탈로그의 표로 바꾸고 표 밖의 값은 `unknown`(`reason`은 `other`)으로 세거나, 대체 값이 없으면 버리고 `mailo_metrics_dropped_samples_total`에 센다.
+- 지표 하나의 시리즈는 2000개까지다(추정). 넘으면 새 시리즈를 만들지 않고 `dropped_samples`를 올리며 `metrics_series_limit`(warn, 지표 이름만)을 한 번 남긴다.
+- 수신자·발신 주소, 제목·본문, `Idempotency-Key`, 작업 ID, 요청 ID, lease 토큰, SMTP 응답 코드·텍스트, SMTP 사용자 주소, 파일 이름, 토큰·API 키, 오류 메시지를 라벨·값으로 쓰지 않는다(RQ-027).
+
+**수용 조건:**
+
+- [x] 카탈로그 전체에 이름 형식·중복 없음, 전역은 gauge, counter는 인스턴스·프로세스와 `_total`, 접두, HELP 첫 단어, `_seconds`, 허용 라벨 9개, 금지 라벨 이름 없음을 단위 테스트가 검사한다.
+- [x] 카탈로그 밖의 라벨 이름 등록은 던진다. ADR-0012 결정 4의 지표 이름이 모두 있다.
+- [x] counter 저장소: 같은 라벨의 증가 합산, `account_id` 기본값, `unregistered` 묶음(형식 오류 포함), 열거 fallback, fallback 없는 값·모르는 라벨 이름·gauge 이름의 폐기와 `dropped_samples`, 증가량 검증, 시리즈 상한 2000과 상한 알림 한 번.
+- [x] 레지스트리 밖 호출처의 작업이 DB에 많아도 gauge의 `caller_id` 시리즈는 레지스트리 호출처뿐이다. 정지 개수에는 센다.
+- [x] canary: 본문·제목·수신자·Key·SMTP 응답 텍스트·SMTP 비밀번호·작업 ID·읽기 토큰·관리 토큰·호출처 API 키가 `/metrics` 응답과 로그에 없다.
+
+**판정 근거:**
+
+- `metrics/catalog.spec.ts`, `metrics/store.spec.ts`(단위), `http/metrics-gauges.integration-spec.ts`의 "라벨 카디널리티"·"요청 값 비노출", `e2e/metrics-counters.integration-spec.ts`의 canary 항목(PostgreSQL, 실제 앱·Worker).
+- 구현: `metrics/catalog.ts`, `metrics/store.ts`, `app.module.ts`의 `AppMetricsModule`(레지스트리와 로거 연결).
+
+### RQ-051 전역 gauge와 DB 수집
+
+- [ ] **진행 상태:** 진행 중 (8단계)
+
+**요구사항:**
+
+- 전역 gauge는 DB 상태와 DB `now()`로만 계산한다(ADR-0002 결정 10, ADR-0012 결정 5). 예외는 `mailo_caller_quota_limit`(이 인스턴스의 레지스트리 값)과 `account_id` 라벨(상수)이다.
+- 값(ADR-0012 결정 4): 큐 깊이 `due`·`scheduled`·`sending`(`due`·`scheduled`는 10000에서 멈추고 `_truncated`가 1이 된다), 등급별 가장 오래 기다린 점유 가능 작업의 나이(대기가 없으면 0), 차단기 상태(원핫)와 사유, 전체·호출처 정지, 호출처 할당 한도·사용량(설정한 호출처만), 호출처별 최신 이벤트 경과 초(이벤트가 없으면 시리즈 없음), 감사 행 수(100000에서 멈춤)·상한 도달·가장 오래된 행의 나이.
+- `mailo_queue_jobs{state="due"}`는 헬스의 `queue.dueCount`와 같은 `getQueueBacklog`에서 나온다.
+- 수집은 TTL 캐시(`MAILO_METRICS_CACHE_SECONDS`)와 단일 비행으로 한다. 인스턴스당 DB 조회는 TTL마다 최대 1회이고 풀 연결은 1개다. 실패한 그룹도 TTL 동안 재사용한다.
+- 그룹(`queue`·`breaker`·`controls`·`quota`·`feed`·`audit`)은 연결 하나로 순차 실행하고 그룹마다 `BEGIN READ ONLY`와 `SET LOCAL statement_timeout = 2000`을 건다. 쓰기·행 잠금·advisory lock이 없어 점유·완료 경로의 잠금 순서(작업 행 → 차단기 행)에 끼지 않는다. 전체 상한은 5초다.
+- 한 그룹이 실패하면 그 그룹의 시리즈만 응답에서 빼고 `collect_ok{group}`을 0으로 낸다. 연결을 얻지 못하면 모든 그룹이 0이다. `metrics_collect_failed`(warn)는 그룹 이름과 오류 이름·코드만 담고 연속 실패 동안 반복하지 않는다.
+- 종결 건수는 DB로 세지 않는다(상태별 `count(*)`를 받치는 인덱스가 없다). 인스턴스 counter가 맡는다(RQ-052).
+
+**수용 조건:**
+
+- [x] 작업 상태별 건수(`due`·`scheduled`·`sending`, 종결 상태 제외)와 등급별 가장 오래된 대기 나이, 10001건에서 `truncated`, 정확히 10000건은 `truncated` 아님.
+- [x] 헬스의 `queue.dueCount`·등급별 나이와 같은 값이다. 같은 DB를 쓰는 앱 둘의 전역 gauge가 같다(나이는 1초 오차).
+- [x] 차단기 세 상태와 사유(헬스 `lastReason`과 같은 어휘, closed에서는 사유 시리즈 없음), 전체·호출처 정지(레지스트리 밖 정지 포함), 할당 한도·사용량(포화 포함)·할당 없는 호출처 제외, 최신 이벤트 나이, 감사 통계(상한 100001행에서 100000과 truncated).
+- [x] 동시 스크레이프 20건이 풀 연결 1회만 쓴다. TTL 안에는 DB를 다시 읽지 않고(캐시된 값) TTL 뒤에는 다시 읽는다. 수집 뒤 풀 연결이 모두 반환된다.
+- [x] 수집 쿼리는 `BEGIN READ ONLY` 6회와 `SET LOCAL statement_timeout` 6회이고 `FOR UPDATE`·advisory lock·쓰기 문장이 없다.
+- [x] 한 그룹의 쿼리가 실패(테이블 없음, `statement_timeout`)해도 HTTP 200이고 그 그룹만 빠지며 `collect_ok`가 0이다. 연결을 얻지 못하면 모든 그룹이 0이고 전역 gauge가 빠지지만 인스턴스 값은 나온다. 실패 로그는 한 번이고 오류 메시지·테이블 이름이 없다.
+- [x] 읽기 함수는 읽기 전용 트랜잭션에서 돈다. 호출처·이벤트 대상이 비면 쿼리하지 않는다.
+- [ ] 운영 크기(수백만 행)·다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프에서 쿼리 비용과 풀 점유(예비 연결 4개 가정)를 확인하지 않았다. 로컬 단일 측정(작업 150만 행)은 ADR-0012 구현 중 확정에 있다.
+
+**판정 근거:**
+
+- `http/metrics-gauges.integration-spec.ts`, `queue/metrics-reads.integration-spec.ts`(PostgreSQL). 캐시·단일 비행 테스트는 캐시나 단일 비행을 끄면 실패하는 것을 확인했다(변경 확인, 2026-11-24).
+- 쿼리 비용: 임시 schema에서 `EXPLAIN (ANALYZE, BUFFERS)` 1회씩(작업 150만 행 규모까지). 결과는 ADR-0012 "구현 중 확정".
+- 구현: `health/metrics-collector.ts`, `health/metrics-samples.ts`, `queue/backlog.ts`의 `getQueueDepth`, `queue/quota-usage.ts`, `events/event-store.ts`의 `getFeedLagsForCallers`, `ops/audit.ts`의 `getAuditStats`.
+
+### RQ-052 인스턴스 counter와 gauge
+
+- [x] **진행 상태:** 검증 완료 (8단계)
+
+**요구사항:**
+
+- counter는 이 프로세스가 한 일이고 재시작하면 0에서 다시 시작한다. 커밋 뒤에 올리므로 커밋과 증가 사이에 프로세스가 죽으면 그 한 건을 놓친다(ADR-0012 결정 4).
+- 증가 시점(ADR-0012 결정 4·7):
+  - `mailo_attempts_total{caller_id,account_id,result}`: 결과 기록이 적용됐을 때(`LEASE_LOST`로 버린 결과는 세지 않는다). `internal`은 `AttemptOutcome.internal`이 true인 결과다.
+  - `mailo_attempt_errors_total{account_id,result,stage,reason}`: 실패 결과마다. `reason`은 `account`일 때만 `none`이 아니다.
+  - `mailo_jobs_finished_total{caller_id,account_id,status}`: 이 인스턴스가 커밋한 종결 전이(결과 기록, 만료 sweep, lease 복구, 호출처·관리 토큰 취소). 멱등 반복 취소는 세지 않는다.
+  - `mailo_claim_polls_total{result}`, `mailo_claimed_jobs_total`, `mailo_lease_recovered_total`, `mailo_file_channel_files_total{caller_id,result}`, `mailo_event_cursor_gap_total{caller_id}`.
+- `queue/`는 `metrics/`를 import하지 않는다. 종결 전이를 만드는 경로는 반환 형식을 바꾸지 않고 커밋 뒤 관찰자 콜백(`sweepExpired`, `recoverExpiredLeases`, `claim`의 `onLeaseRecovered`)으로 알린다. 취소 결과는 호출처 ID를 담는다. 주입하지 않은 앱은 세지 않는다.
+- 인스턴스 gauge: Worker 상태(원핫)·진행 중 전송·마지막 점유 경과·연속 점유 실패·점유 루프 사망, 파일 폴러 상태, `collect_ok`, `snapshot_age`. `process_start_time_seconds`·`process_resident_memory_bytes`·`process_cpu_seconds_total`을 낸다.
+
+**수용 조건:**
+
+- [x] 실제 Worker와 가짜 SMTP: 성공(`sent`), 일시 오류 451(`transient`·`data`), 영구 오류 550(`permanent`·`failed`), 계정 상태 오류(`account`·`mail_from`·`daily_limit`과 차단기 gauge), 내부 오류(`internal`·`worker`), RCPT 단계 오류의 `stage`가 라벨로 나온다. 성공은 `attempt_errors`를 올리지 않는다. 종결이 아닌 실패는 `finished`를 올리지 않는다.
+- [x] `claim_polls`의 `claimed`·`empty`, `claimed_jobs`가 오른다.
+- [x] lease 회수(새 Worker가 회수, `RETRY_WAIT`로 돌아간 회수는 종결로 세지 않는다)와 만료 sweep(`expired`)이 오른다.
+- [x] 호출처 취소와 관리 토큰 취소가 `canceled`를 올리고 멱등 반복은 올리지 않는다. 관리 토큰 취소는 작업의 호출처로 센다.
+- [x] cursor 공백 감지 요청마다 `event_cursor_gap_total`이 오른다.
+- [x] 파일 채널 `registered`·`duplicate`·`rejected`가 오르고 파일 이름이 라벨에 없다. 폴러 gauge가 켜짐·동작·호출처 수를 낸다.
+- [x] 라벨 규칙: 결과·stage·reason 매핑, 모르는 stage는 `unknown`, 레지스트리 밖 호출처는 `unregistered`, `LEASE_LOST` 제외. `dropped_samples`는 정상 경로에서 0이다.
+- [x] Worker·파일 폴러가 없는 앱은 `worker_state{state="disabled"}`가 1이고 `in_flight` 시리즈가 없다. `process_*` 3개가 나온다.
+
+**판정 근거:**
+
+- `e2e/metrics-counters.integration-spec.ts`(PostgreSQL, 실제 앱·Worker·파일 폴러·로컬 `smtp-server`), `worker/metrics.spec.ts`(단위), `queue/metrics-reads.integration-spec.ts`의 관찰자 항목(커밋 뒤 호출, 롤백 때 미호출, 관찰자 예외 무시).
+- RED 확인(2026-11-24): 계측 전 `e2e/metrics-counters.integration-spec.ts`는 11건 모두 실패했다.
+- 구현: `worker/metrics.ts`, `worker/worker.ts`, `file-channel/poller.ts`, `intake/intake.service.ts`, `ops/ops.service.ts`, `queue/transitions.ts`.
+- 남은 미검증: 실제 Gmail 응답에서의 `stage`·`reason` 분포, 장시간 부하에서의 counter 정확도, 커밋과 증가 사이의 종료로 놓치는 한 건.
+
 ## 확정한 항목
 
 2026-11-23 판정으로 미결정에서 확정한 항목이다. 값은 해당 RQ와 ADR이 정한다.
@@ -1747,5 +1878,5 @@ NFS 통합 테스트 환경(3단계, 추정):
 | 계정 전체 발송 속도 제어 | 한도에 닿기 전에 계정 전체 발송 속도를 선제적으로 제한할지 여부. 한도 초과 응답은 ADR-0007이, 호출처별 할당은 RQ-032가 정했다. 한도 수치는 Google 문서 갱신으로 바뀔 수 있다 |
 | 발신자 필드 정책        | 결정됨(ADR-0008 구현 중 확정 12, RQ-028·RQ-030): From은 기본 발신 주소 + 호출처 `allowedFrom`만 허용하고 Reply-To는 형식만 검증한다. 필드 자체는 Key 지문 범위(RQ-011)에 포함한다. 미확인: Gmail 인증 모드에서 `allowedFrom` 주소를 send-as 별칭으로 등록해야 From이 유지되는지 |
 | SMTP Relay 송신 IP      | Workspace SMTP Relay가 IP 허용 방식이면 Docker 송신 IP 고정이 필요한지 확인 |
-| 비기능 요구             | 처리량 목표. 결정됨: 메트릭은 `GET /metrics`로 낸다(ADR-0012, 구현 전)  |
+| 비기능 요구             | 처리량 목표. 결정됨: 메트릭은 `GET /metrics`로 낸다(ADR-0012, RQ-049~052)  |
 | ADR 미확정 항목         | 차단기 키 구성(SMTP 구성이 여럿일 때), 실제 Gmail 응답 대조. lease·SMTP 타임아웃, 폴링 간격과 점유 수, 응답 텍스트 마스킹은 1단계 구현 중 확정했다(ADR-0002·0007의 "구현 중 확정"). 각 ADR의 미확정 절을 따른다 |

@@ -6,7 +6,13 @@
 
 2026-11-24에 제안했고 같은 날 사용자가 승인했다. 열린 질문이던 9건은 이 문서가 적은 권고대로 승인했다. 승인된 값은 "미결정·확인하지 않은 것"의 "승인된 결정" 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 8. 관측성"이다.
 
-구현 상태(2026-11-24): 구현 전.
+구현 상태(2026-11-24): 구현 완료(미검증 항목 있음). 결정 1~9를 구현하고 자동 테스트로 검증했다. 요구사항은 RQ-049(`/metrics` 인증과 응답 형식), RQ-050(이름·분류·라벨·시크릿 규칙), RQ-051(전역 gauge와 DB 수집), RQ-052(인스턴스 counter·gauge)다. 마이그레이션은 없다. 구현 중 확정한 세부와 결정 7 구현 배치와 다른 점은 "구현 중 확정" 절이다. `docs/api/openapi.yaml`에 `/metrics`와 `metricsReadAuth`를 더했다. `ReadyResponse`는 바뀌지 않았다.
+
+남은 미검증 항목은 다음과 같다. "미결정·확인하지 않은 것"의 "확인하지 않은 것"과 "구현 중 확정" 절이 자세히 적는다.
+
+- 운영 크기(수백만 행)의 쿼리 비용, 다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프, 예비 연결 4개 가정의 충분성.
+- 롤링 배포(구·신 혼용)와 롤백 실행. 구버전 404는 코드 읽기 결과다.
+- 장시간 부하에서의 counter 정확도, 실제 Gmail 응답의 `stage`·`reason` 분포.
 
 검증 범위는 코드 읽기와 PostgreSQL 17.11(로컬 compose)의 임시 schema 확인이다(2026-11-24).
 
@@ -275,6 +281,50 @@
 - e2e: 실제 Worker와 가짜 SMTP에서 `sent`·`transient`·`permanent`·`account` 결과와 `finished`·`claimed` 증가, `lease_recovered`, 취소, 파일 채널 처리 수를 확인한다.
 - 수동(L3 아님, 자동 테스트가 아니다): 100만 행 이상의 `EXPIRED`·`RETRY_WAIT` 분포에서 쿼리별 `EXPLAIN`, 실제 Prometheus 스크레이프와 `promtool check metrics`·`check rules`, 인스턴스 둘의 compose 스크레이프.
 
+## 구현 중 확정 (2026-11-24)
+
+구현하면서 ADR 문구와 달라지거나 문구가 정하지 않은 부분을 확정했다. 결정 문구는 고치지 않았다.
+
+1. **종결 전이 경로의 반환 형식을 넓히지 않고 커밋 뒤 관찰자 콜백으로 알린다(결정 7 구현 배치와 다르다).** 결정 7은 `sweepExpired`·`recoverExpiredLeases`의 반환 형식이 숫자에서 건수 맵으로 넓어진다고 적었다. 구현은 반환값(숫자)을 그대로 두고 선택 인자로 콜백을 받는다. 이유는 두 함수의 반환 숫자를 단언하는 기존 테스트(약 15곳)와 `drainBatches`의 배치 크기 판정을 바꾸지 않기 위해서다. 콜백은 트랜잭션이 커밋된 뒤 한 번 부르고 롤백되면 부르지 않으며 던져도 삼킨다(`queue/transitions.ts`의 `notifyTransitions`). 호출처와 전이 뒤 상태(`JobTransition`)만 넘기고 작업 ID·수신자는 넘기지 않는다.
+   - `sweepExpired(pool, batchSize, onTransitions?)`, `recoverExpiredLeases(pool, deps, limit, { exclusive?, onRecovered? })`, `ClaimOptions.onLeaseRecovered`(점유 앞단 복구).
+   - 결과 기록(`completeAttempt`)은 반환 형식을 바꾸지 않았다. Worker가 이미 `ClaimedJob.callerId`와 결과의 `status`를 갖는다.
+   - 취소 결과 `{ kind: "canceled", jobId }`에는 `callerId`를 더했다. 관리 토큰 취소는 호출처 범위가 없어 작업의 호출처를 알아야 한다. 기존 테스트 단언 두 곳이 새 필드를 포함하도록 바뀌었다(`queue/cancel.integration-spec.ts`).
+   - `queue/`는 `metrics/`를 import하지 않는다(결정 7). 이 방향은 그대로다.
+2. **`APP_METRICS`는 `createApp`이 아니라 `app.module.ts`의 전역 모듈이 만든다(결정 7 구현 배치와 다르다).** 호출처 ID 집합이 레지스트리에서 오는데 레지스트리는 Nest 프로바이더(`CALLER_REGISTRY`)라 `createApp`이 만들 때는 읽을 수 없다. `AppMetricsModule`(전역, `app.module.ts`의 비공개 클래스)이 `CALLER_REGISTRY`로 `createMetrics`를 부르고 `onSeriesLimit`을 앱 로거(`metrics_series_limit`, warn, `metric` 필드)에 연결한다. Worker·파일 폴러 팩토리, `IntakeService`, `OpsService`가 주입받는다. 주입하지 않은 객체 생성(테스트)은 `noopMetrics`다.
+3. **`/metrics` 인증은 가드 외에 라우트 앞 미들웨어가 먼저 한다(결정 1이 가드만 적었다).** `/metrics`에는 경로 파라미터가 없어 디코딩 순서 문제가 직접 생기지 않지만 `app.use("/metrics", ...)`가 `/metrics/%` 같은 하위 경로도 인증 뒤에 처리하게 한다(ADR-0011 구현 중 확정 20과 같은 방식). 가드는 같은 판정을 한 번 더 한다. 미들웨어가 거절한 요청은 `req.route`가 없어 요청 로그의 `route`가 `-`이고 info로 남는다. debug로 내리는 대상은 라우트에 닿은 `/metrics` 요청이다. 거절된 스크레이프(오설정)는 info로 보여야 하므로 이 차이를 그대로 둔다.
+4. **관리 토큰만 설정된 구성에서 관리 토큰은 403이다.** 결정 1은 "`MAILO_OPS_TOKEN`이 없으면 어떤 값도 읽기 권한이 아니므로 401"이라고 적었다. 구현은 호출처 키·모르는 값·자격 없음을 401, 판정이 `admin`인 토큰을 403으로 하므로 읽기 토큰이 없어도 관리 토큰은 403이다. 오설정이 403으로 드러난다는 결정 1의 목적과 같다. `MAILO_OPS_TOKEN`도 관리 토큰도 없는 구성은 모든 값이 401이다.
+5. **수집기의 실패 처리와 로그.**
+   - 그룹마다 한 트랜잭션이다(`BEGIN READ ONLY`, `SET LOCAL statement_timeout = 2000`, `COMMIT`). 쿼리가 실패하면 `ROLLBACK`으로 닫고 같은 연결로 다음 그룹을 이어 한다. `ROLLBACK`도 실패하거나 전체 5초를 넘기면 연결을 풀에서 버리고 끝나지 않은 그룹을 모두 실패로 센다. 전체 상한 뒤에는 새 그룹을 시작하지 않는다.
+   - `metrics_collect_failed`는 그룹이 성공에서 실패로 바뀔 때만 남긴다. 복구 로그는 새 이벤트가 되므로 만들지 않았다. 필드는 `group`과 `error`(`describeError`의 이름·코드)뿐이다.
+   - 캐시는 단조 시계(`performance.now()`)를 쓴다. 전역 gauge 값은 DB `now()`로만 계산하므로 인스턴스 시각이 값에 섞이지 않는다.
+   - `withBoundedClient`는 `health/bounded-client.ts`로 옮기고 연결 단위 `withBoundedConnection`과 트랜잭션 단위 `runReadOnly`로 나눴다. 헬스의 동작(3초·2초, 연결 폐기)은 바뀌지 않았다. 차단기 사유 변환(`LAST_REASON`)은 `health/breaker-reason.ts`로 옮겨 헬스와 지표가 같은 어휘를 쓴다.
+6. **값 표기.** 가장 오래 기다린 나이와 감사 나이는 정수 초이고 대기·행이 없으면 0이다(헬스는 없으면 null이다. 지표는 시리즈를 비우지 않고 0으로 낸다). `mailo_metrics_snapshot_age_seconds`는 0.1초 단위, `process_start_time_seconds`는 0.001초 단위, `process_cpu_seconds_total`은 사용자+시스템 CPU(초)다. 파일 채널이 꺼져 있으면 `mailo_file_poller_enabled`·`running`·`callers`는 0이고 마지막 폴링 시리즈는 없다.
+7. **파일 채널 counter의 `result`.** `registered`·`duplicate`·`rejected`·`unreadable`·`delete_failed`만 센다. 같은 거부의 반복(`rejected_repeat`)과 다른 인스턴스가 먼저 지운 파일(`gone`)은 세지 않는다. 한 파일이 등록되고 원본 삭제만 실패하면 `registered`와 `delete_failed`를 모두 올린다.
+8. **`claimed_jobs`와 drain.** 점유(`claim`)가 커밋됐으면 drain 시간 초과 뒤 늦게 돌아와 버린 점유도 `mailo_claimed_jobs_total`에 센다. 그 작업은 lease 복구가 다시 다룬다. 이 경우 `attempts_total`은 오르지 않는다.
+9. **로그 이벤트 둘.** `metrics_collect_failed`(warn, `group`·`error`), `metrics_series_limit`(warn, `metric`). 호출처 라벨이 레지스트리 ID로 막혀 있고 지표 하나는 호출처당 최대 5시리즈(`attempts_total`, `file_channel_files_total`)라서 시리즈 상한(2000)은 호출처가 약 400개를 넘어야 닿는다.
+10. **쿼리 비용 측정(2026-11-24, PostgreSQL 17.11 로컬 compose, 임시 schema, 쿼리마다 `EXPLAIN (ANALYZE, BUFFERS)` 1회, `VACUUM ANALYZE` 뒤).** 아래는 구현한 SQL이다. 두 규모를 쟀다. 큰 쪽은 작업 약 150만 행(`SENT` 125만, `PENDING` 15만, `RETRY_WAIT` 10만 중 5만은 예약 시각 미래, `SENDING` 40), 감사 10만 행, 이벤트 50만 행, 시도 30만 행이다.
+
+    | 쿼리 | 작은 규모(작업 30만 행) | 큰 규모 | 계획 |
+    | ---- | ----------------------- | ------- | ---- |
+    | `getQueueBacklog`(전체와 등급별, 헬스와 같은 문장) | 8.7ms | 10.1ms | `mail_jobs_claim_idx`·`mail_jobs_priority_claim_idx` 인덱스 전용 스캔, 상한 10001행 |
+    | `getQueueDepth`의 `scheduled`와 `sending` | 1.3ms | 1.3ms | `mail_jobs_claim_idx` 인덱스 전용 스캔(`next_attempt_at > now()`, 10001행에서 멈춤), `mail_jobs_sending_caller_idx` 인덱스 전용 스캔 |
+    | `getCallerQuotaUsage`(호출처 5개, 한도 10000) | 1.8ms | 6.3ms | `mail_attempts_quota_idx` 인덱스 전용 스캔, 호출처당 최대 한도만큼 |
+    | `getFeedLagsForCallers`(호출처 20개) | 0.2ms | 0.3ms | `mail_events_feed_idx` 역방향 스캔, 호출처당 1행 |
+    | `getAuditStats`(감사 2만 행 / 10만 행) | 2.0ms | 10.7ms | 행 수는 `Seq Scan`(상한 100001행에서 멈춤), 가장 오래된 행은 `mail_ops_audit_pkey` 1행 |
+    | `readSendControls`, `getBreakerState` | 0.01ms 미만 | 0.02ms 미만 | 행 수가 정지 범위 수·1행 |
+
+    - 전 쿼리가 `Heap Fetches: 0`이다(`VACUUM` 직후 값이다. autovacuum이 늦은 운영에서는 힙 접근이 늘 수 있다).
+    - 합이 한 자릿수에서 20ms 안팎이고 TTL마다 최대 1회다. 감사 행 수 쿼리는 상한(10만 행)에서 가장 비싸다(10.7ms, `Seq Scan`). 상한 앞에서 멈추므로 행이 더 늘어도 비용은 같다.
+    - 한계: 로컬 단일 실행이고 데이터가 메모리에 있는 `shared hit`뿐이다. 수백만 행·디스크 읽기·동시 쓰기 부하는 확인하지 않았다. 한도가 큰 호출처(최대 1000만)의 `quota` 그룹 비용도 확인하지 않았다.
+11. **실행한 확인(2026-11-24, 자동 테스트가 아니다).**
+    - 컨테이너(`scripts/container/verify-metrics.sh`, `read_only` 루트, `NODE_ENV` 기본): 읽기 토큰 200, 관리 토큰 403, 무토큰·호출처 키 401, `Content-Type: text/plain; version=0.0.4; charset=utf-8`. 메일 5통 발송 뒤 `attempts(sent)`·`finished(sent)` 5, `due` 0, `closed` 1, `collect_ok`가 모두 1, 시리즈 48개. 토큰·API 키·수신자·제목이 응답과 컨테이너 로그에 없었다. `promtool check metrics`(`prom/prometheus:v2.55.1`)가 지적 없이 통과했다.
+    - `promtool check rules`: 부록 B의 규칙 12개가 문법 검사를 통과했다(`prom/prometheus:v2.55.1`).
+    - 실제 Prometheus(`v2.55.1`, 같은 compose 네트워크, 부록 A와 같은 `authorization.credentials_file`, 간격만 5초): 읽기 토큰 타깃은 `up`이고 `mailo_queue_jobs`·`mailo_attempts_total{result="sent"}`(3)·`max by (account_id)`·`mailo_breaker_state`를 질의할 수 있었다. 관리 토큰을 쓴 타깃은 `server returned HTTP status 403 Forbidden`으로 `down`이었다. 부록 B의 규칙 12개가 모두 평가 상태 `ok`였고 알림은 발화하지 않았다. 토큰 파일의 끝 개행은 `credentials_file`이 허용했다(결정 7 "확인하지 않은 것"의 해당 항목을 해소한다).
+    - 위 확인은 한 번씩이다. 알림 규칙의 임계값과 `for:`는 여전히 추정이고 부하에서 확인하지 않았다.
+12. **ADR 문서 정정.** 부록 B의 코드 블록을 닫는 줄이 빠져 있어 추가했다. 내용은 그대로다.
+13. **단계 7과의 관계.** `account_id`는 모든 시리즈에서 `default`다. 단계 7이 계정을 늘리면 `createMetrics({ accountIds })`와 수집기의 `account` 상수를 계정 목록으로 바꾼다. 지표 이름과 라벨 이름은 바뀌지 않는다.
+14. **요구사항 번호.** 새 RQ는 RQ-049~052다. 8단계 구현 상태는 `docs/requirements/mail-sending.md`가 소유한다.
+
 ## 검토한 대안
 
 | 결정 | 대안 | 채택하지 않은 이유 |
@@ -423,3 +473,4 @@ groups:
       - alert: MailoAuditRowsHigh
         expr: max(mailo_ops_audit_rows) > 50000   # 임계값은 근거 없는 예시
         for: 1h
+```

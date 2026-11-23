@@ -12,6 +12,7 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 - `stop_grace_period`는 drain 상한(`MAILO_LEASE_SECONDS` − 10초) + 10초 이상이어야 한다. compose는 `MAILO_STOP_GRACE_PERIOD`(기본 150s)로 이 값을 정하고 앱에도 같은 값을 전달한다. 앱은 변수가 있으면 관계를 검사해 어긋나면 기동을 거부한다.
 - PostgreSQL 13 이상이 필요하다. compose는 `postgres:17-alpine`이다.
 - `mailo` 컨테이너는 읽기 전용 루트(`read_only`), 모든 capability 제거, `no-new-privileges`로 실행한다. 이미지의 `/repo`는 root 소유라 런타임(`node`)이 코드·`node_modules`·마이그레이션을 바꿀 수 없다.
+- 지표는 `GET /metrics`(Prometheus 텍스트 형식, 읽기 토큰 `MAILO_OPS_TOKEN`)로 낸다. 관리 토큰은 403이다. 알림은 Mailo가 보내지 않고 규칙 예시만 둔다("지표").
 - 앱의 로그는 모두 표준 출력의 한 줄 JSON(`ts`, `instance`, `level`, `event`, ...)이다("로그"). 기동 실패(`startup_failed`)와 `worker_fatal`도 같은 형식이다. 마이그레이션 CLI(`migrate-cli`)만 사람이 읽는 평문을 쓴다.
 - DB 쓰기 권한 계정은 Mailo 앱으로 최소화한다. DB 본문 AES-GCM의 AAD가 `job_id`뿐이라 쓰기 권한자의 `recipients` 변경은 막지 못한다(ADR-0008 구현 중 확정 10, `key-management.md`).
 - DB 암호화 키·지문 키·JWE 개인키를 DB 백업과 별도로 보관한다. 이 키 없이는 복원한 DB의 일부 기능이 동작하지 않는다("백업과 복구").
@@ -240,6 +241,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_OPS_TOKEN` | 없음(꺼짐) | 공백 없는 32자 이상 | 읽기 토큰. 시크릿(`_FILE` 지원). `GET /health/ready`의 운영자 응답과 `GET /ops/*`를 연다. 호출처 API 키로는 볼 수 없다. 업무 endpoint에는 쓸 수 없다(401) |
 | `MAILO_OPS_ADMIN_NAMES` | 없음(관리 기능 꺼짐) | 쉼표 구분 이름 최대 8개. 이름은 `[a-z][a-z0-9]{0,31}` | 관리 토큰 이름. 이름은 감사 기록의 `actor`가 된다. 형식 위반, 중복, 9개 이상은 기동을 거부한다. 값이 없으면 `/ops`의 변경 endpoint는 읽기 토큰에 403, 그 밖에 401이다 |
 | `MAILO_OPS_ADMIN_TOKEN_<이름 대문자>` | 이름 목록에 있으면 필수 | 공백 없는 32자 이상 | 이름마다 하나의 관리 토큰. 시크릿(`_FILE` 우선). 예: 이름 `oncall`은 `MAILO_OPS_ADMIN_TOKEN_ONCALL`. 읽기 권한을 포함한다. 이름 목록에 있는 이름의 토큰이 없거나 규칙에 어긋나면, 토큰 값이 읽기 토큰·다른 관리 토큰과 같으면, 호출처 API 키와 같으면 기동을 거부한다. 이름 목록에 없는 이름의 변수는 읽지 않는다 |
+| `MAILO_METRICS_CACHE_SECONDS` | 5 | 1~60 | `GET /metrics`의 전역 gauge가 DB 수집 결과를 다시 쓰는 시간 초. 인스턴스당 DB 조회는 이 시간마다 최대 1회다. 기본값은 추정이다. 두 인스턴스의 값은 이 시간만큼 어긋날 수 있으므로 알림 규칙의 `for:`는 이보다 충분히 길게 쓴다("지표") |
 | `MAILO_STOP_GRACE_PERIOD` | 없음(검사 안 함). compose는 `150s`를 넣는다 | `150s`, `2m30s`, `1h`(h·m·s·ms 조합) | 컨테이너 `stop_grace_period`와 같은 값. 있으면 drain 상한 + 10초 이상인지 기동 때 검사한다 |
 | `MAILO_CALLERS_FILE` | 없음(필수) | 파일 경로 | 호출처 레지스트리 JSON. 기동 때 한 번 읽는다(핫 리로드 없음) |
 
@@ -533,6 +535,164 @@ docker compose exec -e MAILO_CLI_TOKEN_FILE=/run/secrets/mailo_cli_token mailo n
 롤백: 위 순서로 레지스트리 필드를 빼고 앱만 이전 버전으로 되돌린다. 스키마는 되돌리지 않는다(되돌리려면 pg_dump 복원)
 ```
 
+## 지표
+
+근거: RQ-049~052, ADR-0012. Prometheus가 읽는 `GET /metrics`다. 알림은 Mailo가 보내지 않는다(RQ-029). 이 절의 규칙 예시는 Prometheus가 읽는 쪽의 설정이다.
+
+### 인증과 스크레이프 설정
+
+- 읽기 토큰(`MAILO_OPS_TOKEN`)만 200이다. 관리 토큰(`MAILO_OPS_ADMIN_TOKEN_<이름>`)은 403이고 호출처 API 키·헤더 없음·모르는 값은 401이다. `MAILO_OPS_TOKEN`을 설정하지 않으면 `/metrics`는 모든 값에 401이다.
+- Prometheus 설정에는 토큰이 평문 파일로 놓인다. 변경 권한이 있는 관리 토큰을 두지 않는다. 오설정이면 타깃이 `server returned HTTP status 403 Forbidden`으로 `down`이 된다.
+- Mailo는 TLS를 종단하지 않는다. Prometheus는 같은 호스트, 내부 망, TLS 프록시 뒤 중 하나로 접근한다(위 "compose 구성"과 같은 전제). 기본 compose는 `127.0.0.1`만 연다.
+- 타깃은 인스턴스마다 둔다. 로드 밸런서 주소 하나를 타깃으로 두면 요청이 인스턴스를 번갈아 가므로 counter가 줄었다 늘며 `rate()`가 틀린다.
+- 모든 인스턴스를 새 버전으로 바꾼 뒤 타깃에 추가한다. 구버전 인스턴스는 `/metrics`가 없어 404다(코드 읽기 결과, 롤링 배포는 실행하지 않았다).
+
+```yaml
+scrape_configs:
+  - job_name: mailo
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/mailo-ops-read-token
+    # 인스턴스마다 타깃을 둔다. 로드 밸런서 주소 하나를 쓰지 않는다.
+    static_configs:
+      - targets:
+          - mailo-1.internal:3000
+          - mailo-2.internal:3000
+```
+
+- 토큰 파일에는 `MAILO_OPS_TOKEN`의 값(읽기 토큰)을 둔다. 파일 끝의 개행은 `credentials_file`이 허용한다.
+- 확인한 것(2026-11-24): 같은 compose 네트워크에서 `prom/prometheus:v2.55.1`이 위 설정(간격만 5초)으로 컨테이너를 스크레이프했고 읽기 토큰 타깃은 `up`, 관리 토큰 타깃은 403으로 `down`이었다. `promtool check metrics`가 응답을 지적 없이 받았다. 스크레이프 간격 15초는 기본 캐시(5초)보다 길어 매번 새 DB 수집이 일어날 수 있다. 부하에서의 간격은 확인하지 않았다.
+
+### 응답과 이름 규칙
+
+- `Content-Type: text/plain; version=0.0.4; charset=utf-8`, `Cache-Control: no-store`다. 인증 오류 외에는 항상 200이다. DB 수집이 실패해도 200이고 실패한 그룹의 전역 지표가 빠지며 `mailo_metrics_collect_ok{group}`이 0이다.
+- 이름과 종류로 합치는 법을 알 수 있다. HELP 첫 단어도 "전역." 또는 "인스턴스."다.
+
+| 분류 | 종류 | 이름 | 합치는 법 |
+| ---- | ---- | ---- | --------- |
+| 전역 | gauge만 | `mailo_queue_`, `mailo_breaker_`, `mailo_send_paused`, `mailo_caller_`, `mailo_ops_audit_` 접두 | `max by (...)`. `sum`은 인스턴스 수만큼 곱해진다 |
+| 인스턴스 counter | counter만 | `mailo_*_total` | `sum by (...) (rate(...))`. 재시작하면 0에서 다시 시작한다 |
+| 인스턴스 gauge | gauge | `mailo_worker_`, `mailo_file_poller_`, `mailo_metrics_` 접두 | 인스턴스별로 본다 |
+| 프로세스 | counter·gauge | `process_start_time_seconds`, `process_resident_memory_bytes`, `process_cpu_seconds_total` | 인스턴스별로 본다. 시작 시각이 바뀌면 재시작이다 |
+
+- `instance` 라벨은 앱이 붙이지 않는다. Prometheus의 타깃 라벨이 준다. 앱 로그의 `instance`와 다른 값이다.
+- 라벨은 `caller_id`, `account_id`, `reason`과 값이 닫힌 열거(`state`, `priority`, `result`, `stage`, `status`, `group`)뿐이다. `caller_id`는 호출처 레지스트리에 있는 값이거나 `unregistered`다(레지스트리에서 뺀 호출처의 작업이 큐에 남아 있을 때). `account_id`는 `default` 하나다. 수신자·본문·제목·`Idempotency-Key`·작업 ID·SMTP 응답 코드와 텍스트·토큰은 어느 라벨에도 없다.
+- 지표 하나의 시리즈는 2000개까지다. 넘으면 새 시리즈를 만들지 않고 `mailo_metrics_dropped_samples_total`을 올리며 `metrics_series_limit`(warn, 지표 이름만)을 한 번 남긴다. 호출처가 약 400개를 넘어야 닿는다(계산).
+
+### 전역 gauge
+
+DB 상태와 DB `now()`로 계산한다. 인스턴스마다 `MAILO_METRICS_CACHE_SECONDS`(기본 5초) 동안 같은 수집 결과를 다시 쓰고 동시에 온 스크레이프는 수집 하나를 기다린다. 수집은 풀 연결 하나로 그룹(`queue`·`breaker`·`controls`·`quota`·`feed`·`audit`)을 읽기 전용 트랜잭션에서 차례로 읽는다. 쓰기와 행 잠금이 없다.
+
+| 이름 | 라벨 | 값 |
+| ---- | ---- | -- |
+| `mailo_queue_jobs` | `account_id`, `state`=`due`·`scheduled`·`sending` | 점유 가능, 재시도·예약 대기(`next_attempt_at`이 미래), 점유 중 건수. `due`·`scheduled`는 10000에서 멈춘다. `due`는 헬스 `queue.dueCount`와 같다 |
+| `mailo_queue_jobs_truncated` | `account_id`, `state`=`due`·`scheduled` | 1이면 해당 건수가 상한에 닿았다 |
+| `mailo_queue_oldest_due_age_seconds` | `account_id`, `priority`=`low`·`normal`·`high`·`urgent` | 등급별 가장 오래 기다린 점유 가능 작업의 경과 초. 대기가 없으면 0. 전체 값은 `max by (account_id)` |
+| `mailo_breaker_state` | `account_id`, `state`=`closed`·`open`·`half_open` | 현재 상태만 1 |
+| `mailo_breaker_reason_info` | `account_id`, `reason` | 상태가 `closed`가 아니고 사유가 있을 때만 1. 어휘는 헬스 `lastReason`과 같다 |
+| `mailo_send_paused_all`, `mailo_send_paused_callers` | 없음 | 전체 정지 0/1, 정지한 호출처 수(레지스트리에 없는 호출처 포함) |
+| `mailo_caller_paused` | `caller_id` | 레지스트리 호출처별 정지 0/1 |
+| `mailo_caller_quota_limit`, `mailo_caller_quota_used` | `caller_id` | `sendQuota24h`를 설정한 호출처만. 한도(이 인스턴스의 레지스트리 값)와 사용량(최근 24시간 시도 + 점유 중, 한도에서 멈춘다) |
+| `mailo_caller_latest_event_age_seconds` | `caller_id` | 피드에 보이는 최신 이벤트의 경과 초. 이벤트가 없으면 시리즈가 없다. 소비자의 처리 지연이 아니다. 새 이벤트가 없으면 시간이 지날수록 커진다 |
+| `mailo_ops_audit_rows`, `mailo_ops_audit_rows_truncated`, `mailo_ops_audit_oldest_age_seconds` | 없음 | 감사 행 수(100000에서 멈춤), 상한 도달 0/1, 가장 오래된 행의 경과 초(없으면 0). 삭제 정책은 정하지 않았다 |
+
+### 인스턴스 counter와 gauge
+
+| 이름 | 라벨 | 뜻 |
+| ---- | ---- | -- |
+| `mailo_attempts_total` | `caller_id`, `account_id`, `result`=`sent`·`transient`·`permanent`·`account`·`internal` | 기록한 시도 결과. `LEASE_LOST`로 버린 결과는 세지 않는다. `internal`은 SMTP에 닿기 전 Mailo 내부 오류다 |
+| `mailo_attempt_errors_total` | `account_id`, `result`, `stage`=`conn`·`tls`·`auth`·`mail_from`·`rcpt`·`data`·`worker`·`unknown`, `reason`=`none`·`daily_limit`·`rate_limit`·`connection`·`tls`·`auth`·`other` | 실패 시도의 분류. `reason`은 `result`가 `account`일 때만 `none`이 아니다 |
+| `mailo_jobs_finished_total` | `caller_id`, `account_id`, `status`=`sent`·`failed`·`expired`·`canceled` | 이 프로세스가 커밋한 종결 전이(결과 기록, 만료 sweep, lease 복구, 취소) |
+| `mailo_claim_polls_total` | `result`=`claimed`·`empty`·`error` | 점유 루프의 점유 호출 |
+| `mailo_claimed_jobs_total` | `caller_id`, `account_id` | 점유한 작업 수 |
+| `mailo_lease_recovered_total` | `account_id` | lease 만료로 회수한 작업 수. 중복 발송 가능성의 신호다(RQ-013) |
+| `mailo_file_channel_files_total` | `caller_id`, `result`=`registered`·`duplicate`·`rejected`·`unreadable`·`delete_failed` | 파일 채널이 처리한 파일 수 |
+| `mailo_event_cursor_gap_total` | `caller_id` | 이벤트 피드 cursor 공백을 감지한 요청 수 |
+| `mailo_metrics_dropped_samples_total` | 없음 | 시리즈 상한이나 값 검증 때문에 버린 증가 수. 정상이면 0이다 |
+| `mailo_worker_state` | `state`=`disabled`·`idle`·`running`·`paused`·`stopping`·`stopped` | Worker 상태(원핫) |
+| `mailo_worker_in_flight_jobs`, `mailo_worker_last_poll_age_seconds` | 없음 | 진행 중 전송 수, 점유 루프가 마지막으로 돈 뒤 경과 초. Worker가 꺼져 있거나 아직 안 돌았으면 시리즈가 없다 |
+| `mailo_worker_claim_failure_streak`, `mailo_worker_poll_loop_crashed` | 없음 | 연속 점유 실패 수, 점유 루프 사망 0/1(1이면 종료 코드 70으로 끝나는 중) |
+| `mailo_file_poller_enabled`, `_running`, `_callers` | 없음 | 파일 채널이 켜졌는가, 동작 중인가, 폴링 대상 호출처 수. 꺼져 있으면 0 |
+| `mailo_file_poller_last_poll_age_seconds`, `_last_poll_ok` | 없음 | 마지막 폴링 뒤 경과 초와 성공 여부. 아직 안 돌았으면 시리즈가 없다 |
+| `mailo_metrics_collect_ok` | `group` | 마지막 DB 수집에서 그룹이 성공했으면 1. 0이면 그 그룹의 전역 지표가 응답에 없다 |
+| `mailo_metrics_snapshot_age_seconds` | 없음 | 캐시된 DB 수집의 경과 초 |
+
+- counter는 커밋한 뒤에 오른다. 커밋과 증가 사이에 프로세스가 죽으면 그 한 건을 놓친다.
+- 종결 건수는 DB로 세지 않는다(상태별 `count(*)`를 받치는 인덱스가 없다). `mailo_jobs_finished_total`의 `increase`로 본다. 재시작과 인스턴스 교체를 `rate`·`increase`가 처리한다.
+- 평균 발송 처리 시간은 히스토그램이 필요해 정하지 않았다.
+
+### 알림 규칙 예시
+
+임계값은 모두 추정이고 부하에서 확인하지 않았다. `promtool check rules`가 문법을 통과시켰고(2026-11-24, `prom/prometheus:v2.55.1`) 실제 Prometheus가 컨테이너를 스크레이프하며 12개 규칙을 평가했다(모두 `ok`). 알림이 발화하는 조건은 실행해 확인하지 않았다. 전역 gauge는 `max by`로, counter는 `sum`과 `rate`·`increase`로 쓴다. `for:`는 캐시 TTL(기본 5초)보다 충분히 길다.
+
+```yaml
+groups:
+  - name: mailo
+    rules:
+      - alert: MailoInstanceDown
+        expr: up{job="mailo"} == 0
+        for: 2m
+
+      - alert: MailoBreakerNotClosed
+        expr: max by (account_id) (mailo_breaker_state{state=~"open|half_open"}) == 1
+        for: 10m
+
+      - alert: MailoQueueBacklogAge
+        expr: max by (account_id) (mailo_queue_oldest_due_age_seconds) > 600
+        for: 10m
+
+      - alert: MailoQueueTruncated
+        expr: max(mailo_queue_jobs_truncated{state="due"}) == 1
+        for: 15m
+
+      - alert: MailoNoProgress
+        expr: |
+          max(mailo_queue_jobs{state="due"}) > 0
+          and sum(rate(mailo_attempts_total[10m])) == 0
+          and max(mailo_send_paused_all) == 0
+          and max(mailo_breaker_state{state="closed"}) == 1
+        for: 15m
+
+      - alert: MailoFailedRatioHigh
+        expr: |
+          sum(increase(mailo_jobs_finished_total{status="failed"}[15m]))
+            / clamp_min(sum(increase(mailo_jobs_finished_total{status=~"sent|failed"}[15m])), 1) > 0.2
+          and sum(increase(mailo_jobs_finished_total{status="failed"}[15m])) >= 10
+        for: 5m
+
+      - alert: MailoSendPausedLong
+        expr: max(mailo_send_paused_all) == 1 or max(mailo_send_paused_callers) > 0
+        for: 30m   # 정지 중에도 TTL이 흘러 EXPIRED가 쌓인다
+
+      - alert: MailoWorkerStalled
+        expr: mailo_worker_last_poll_age_seconds > 60 or mailo_worker_poll_loop_crashed == 1
+        for: 2m
+
+      - alert: MailoMetricsCollectFailing
+        expr: mailo_metrics_collect_ok == 0
+        for: 5m
+
+      - alert: MailoCallerQuotaNearLimit
+        expr: |
+          max by (caller_id) (mailo_caller_quota_used)
+            / max by (caller_id) (mailo_caller_quota_limit) >= 0.9
+        for: 10m
+
+      - alert: MailoLeaseRecovered
+        expr: sum(increase(mailo_lease_recovered_total[15m])) > 0   # 중복 발송 가능성 신호(RQ-013)
+
+      - alert: MailoAuditRowsHigh
+        expr: max(mailo_ops_audit_rows) > 50000   # 임계값은 근거 없는 예시
+        for: 1h
+```
+
+- `MailoNoProgress`에서 `sum(rate(...)) == 0`은 시도 시리즈가 아직 없으면 빈 결과라 참이 되지 않는다. 인스턴스가 한 번도 시도하지 않은 상태에서는 발화하지 않는다(추정, 실행해 확인하지 않았다).
+- 발송 정지(`MailoSendPausedLong`)는 의도한 조작일 수 있다. 장기 정지가 `EXPIRED`를 만드는 점을 알리는 용도다.
+- 알림 대응은 `troubleshooting.md` "지표 해석"이다.
+
 ## 로그
 
 모든 로그는 표준 출력의 한 줄 JSON이다. Worker·파일 폴러·HTTP 요청·DB·헬스·Nest 내부 로그가 같은 로거 하나(`createApp`이 만든다)를 쓴다. 이전에는 Worker·파일 폴러만 JSON이고 나머지는 Nest 텍스트 줄이었다.
@@ -546,7 +706,7 @@ docker compose exec -e MAILO_CLI_TOKEN_FILE=/run/secrets/mailo_cli_token mailo n
 - 앞의 네 필드는 모든 줄에 있다: `ts`(ISO 8601 UTC), `instance`(`MAILO_INSTANCE_ID`, 없으면 호스트 이름 = 컨테이너 ID), `level`(`debug`·`info`·`warn`·`error`), `event`. 나머지는 이벤트마다 다르다. 호출자 필드가 이 네 값을 덮어쓰지 않는다.
 - `event: "http_request"`: 응답이 끝날 때 한 줄. 필드는 `requestId`, `method`, `route`(라우트 패턴, 예 `/jobs/:jobId`), `status`, `callerId`(인증 전에는 `null`), `durationMs`뿐이다. 쿼리 문자열, 경로 값, `Idempotency-Key`, 헤더, 본문은 없다(RQ-027). `requestId`는 오류 응답 본문의 `instance`(`urn:uuid:…`)와 같다.
 - `event: "nest_log"`: Nest 프레임워크와 `Logger`로 쓴 문자열 로그. `message`, `context`(클래스·모듈 이름), 오류 수준이면 Nest가 넘긴 `stack`이 있다. `stack`의 첫 줄에는 예외 메시지가 들어 있을 수 있다(이전 텍스트 출력과 같은 정보다).
-- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), `ops_pause_set`·`ops_pause_cleared`(info, `actor`·`scope`(`all`·`caller`)·`callerId`(`caller`일 때만), 상태를 바꾼 관리 요청만. 멱등 재요청은 남지 않는다), `ops_job_canceled`(info, `actor`·`jobId`), `event_cursor_gap`(warn, `callerId`만. `GET /events`가 `after` 뒤의 삭제를 발견한 응답마다 한 줄이고 헤더든 410이든 같다), Worker의 `send_paused`(warn)·`send_resumed`(info)(`scope`, `callerId`는 `caller`일 때만. 정지 상태가 바뀐 것을 관찰할 때 한 번만 남고 폴링마다 반복하지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
+- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), `ops_pause_set`·`ops_pause_cleared`(info, `actor`·`scope`(`all`·`caller`)·`callerId`(`caller`일 때만), 상태를 바꾼 관리 요청만. 멱등 재요청은 남지 않는다), `ops_job_canceled`(info, `actor`·`jobId`), `metrics_collect_failed`(warn, `group`·`error`. `/metrics`의 DB 수집 그룹이 성공에서 실패로 바뀔 때 한 번. 같은 그룹의 연속 실패 동안 반복하지 않는다), `metrics_series_limit`(warn, `metric`만. 지표 하나의 시리즈가 상한에 처음 닿았을 때 한 번), `event_cursor_gap`(warn, `callerId`만. `GET /events`가 `after` 뒤의 삭제를 발견한 응답마다 한 줄이고 헤더든 410이든 같다), Worker의 `send_paused`(warn)·`send_resumed`(info)(`scope`, `callerId`는 `caller`일 때만. 정지 상태가 바뀐 것을 관찰할 때 한 번만 남고 폴링마다 반복하지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
 - 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패는 `event: "startup_failed"`(필드 `error`는 예외 이름·코드, 설정 오류는 변수 이름만 담은 `message`)로 남는다. 설정을 읽기 전의 실패는 `instance`가 호스트 이름이다(`MAILO_INSTANCE_ID`를 아직 읽지 못했다).
 - 본문·제목·수신자 주소·SMTP 인증 정보·키는 어느 필드에도 넣지 않는다. 예외는 이름과 코드(`Error:57014`)만 쓴다(RQ-027). 이 규칙은 canary 문자열 테스트로 확인한다.
 - 로그 수집기가 인스턴스를 구분하려면 `instance`를 쓴다. 로그와 DB 행의 연결: 결과를 기록한 시도의 `instance`가 `mail_attempts.instance` 컬럼에 같은 값으로 남는다(128자까지). 로그의 `jobId`(`job_completed` 등)로 시도 행을 찾고 `instance`로 기록한 인스턴스를 확인한다. lease 회수로 쓴 `LEASE_EXPIRED` 시도, 0003 적용 전 행, 롤링 배포 중 이전 버전이 쓴 행은 NULL이다(점유한 인스턴스를 DB에 쓰지 않는다: lease는 `lease_token`으로만 다룬다). REST 응답에는 노출하지 않는다. 컨테이너를 다시 만들면 호스트 이름이 바뀌므로 고정 이름이 필요하면 `MAILO_INSTANCE_ID`를 준다.
@@ -624,6 +784,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 작업 취소 도입(`0006`·`0007`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기 시간(대용량·쓰기 부하). 구버전의 동작은 코드를 읽어 적었다.
 - 요청별 만료 시간 도입의 롤링 배포·롤백 실행, 긴 `MAILO_JOB_EXPIRY_MAX_SECONDS`에서의 대기 건수와 점유 지연.
 - 마이그레이션의 대용량 DB 적용 시간. `0005`(`CREATE INDEX CONCURRENTLY`)를 쓰기 부하 중에 적용한 시간도 측정하지 않았다.
+- `/metrics`(RQ-049~052): 운영 크기(수백만 행)·다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프에서의 쿼리 비용과 풀 점유(예비 연결 4개 가정), 롤링 배포(구버전 404는 코드 읽기 결과)와 롤백, 알림 규칙의 발화 조건과 임계값, 부하에서의 스크레이프 간격. 컨테이너·실제 Prometheus 스크레이프·`promtool`은 한 번씩 실행했다("지표").
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
 - `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).

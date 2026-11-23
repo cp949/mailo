@@ -168,11 +168,12 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 
 | 토큰 | 변수 | 권한 |
 | ---- | ---- | ---- |
-| 읽기 토큰 | `MAILO_OPS_TOKEN` | 읽기 endpoint만(`GET /ops/*`, 헬스 운영자 응답, 이후 `/metrics`) |
+| 읽기 토큰 | `MAILO_OPS_TOKEN` | 읽기 endpoint만(`GET /ops/*`, 헬스 운영자 응답, `GET /metrics`) |
 | 관리 토큰 | `MAILO_OPS_ADMIN_NAMES`에 이름, 이름마다 `MAILO_OPS_ADMIN_TOKEN_<이름 대문자>` | 읽기 권한 + 정지·재개·작업 취소 |
 
 - 관리 토큰은 사람(또는 역할)마다 하나씩 발급한다. 이름이 감사 기록의 `actor`가 되므로 공용 이름(`admin`)보다 `oncall`·`deploy`처럼 구분되는 이름을 쓴다. 이름은 `[a-z][a-z0-9]{0,31}`, 최대 8개다.
-- 읽기 토큰은 모니터링(Prometheus 설정 등)에 둔다. 변경 권한이 있는 관리 토큰은 모니터링 설정에 두지 않는다.
+- 읽기 토큰은 모니터링(Prometheus 설정 등)에 둔다. 변경 권한이 있는 관리 토큰은 모니터링 설정에 두지 않는다. `/metrics`는 이를 강제한다. 관리 토큰으로 `/metrics`를 부르면 403이고 Prometheus 타깃이 `down`이 된다(RQ-049, ADR-0012 결정 1).
+- Prometheus는 읽기 토큰을 `authorization.credentials_file`의 파일로 읽는다(`deployment.md` "지표"). 이 파일은 Prometheus 계정만 읽게 한다. 읽기 토큰을 교체하면 모든 Mailo 인스턴스를 다시 시작하고 Prometheus의 토큰 파일도 바꾼다. 인스턴스를 순서대로 다시 시작하는 동안 아직 이전 토큰인 인스턴스와 새 토큰인 인스턴스가 섞이므로 그 사이 한쪽 타깃은 401로 `down`이 된다(교체 중 두 값을 함께 쓰는 방법이 없다).
 - 발급: `openssl rand -base64 32`(44자). 공백 없는 32자 이상이어야 한다. 시크릿 파일 마운트(`<변수>_FILE`)로 준다(`deployment.md` "시크릿 주입").
 - 값이 서로 같거나 호출처 API 키와 같으면 기동하지 않는다. 호출처 키와의 비교는 레지스트리가 기동 때 읽은 해시로 한다.
 - 추가·교체·폐기는 변수를 바꾸고 모든 인스턴스를 다시 시작한다. 환경 변수는 기동 때 읽고 핫 리로드가 없다. 교체 중 이전·새 값을 함께 두는 방법은 없다. 이름을 새로 추가한 뒤(예: `oncall2`) 이전 이름을 목록에서 빼는 순서로 겹쳐 쓴다.
