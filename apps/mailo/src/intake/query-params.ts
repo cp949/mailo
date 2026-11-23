@@ -53,9 +53,11 @@ export interface EventsQuery {
   after: string | null;
   types: EventType[];
   limit: number;
+  /** `onGap=error`를 보냈으면 true. 공백이면 헤더 대신 410으로 답한다(ADR-0011 결정 9). */
+  errorOnGap: boolean;
 }
 
-/** `after`, `type`(반복 가능), `limit`을 검사한다. cursor 내용 검사는 `listEvents`가 하고, 여기서는 길이와 형태만 본다. */
+/** `after`, `type`(반복 가능), `limit`, `onGap`을 검사한다. cursor 내용 검사는 `listEvents`가 하고, 여기서는 길이와 형태만 본다. */
 export function parseEventsQuery(
   query: Record<string, unknown>,
 ): Parsed<EventsQuery> {
@@ -103,7 +105,15 @@ export function parseEventsQuery(
     }
   }
 
+  // `onGap`은 `error`만 받는다. 기본 동작은 파라미터를 생략하는 것이다.
+  let errorOnGap = false;
+  const rawOnGap = query["onGap"];
+  if (rawOnGap !== undefined) {
+    if (rawOnGap === "error") errorOnGap = true;
+    else errors.push({ parameter: "onGap", code: "INVALID_FORMAT" });
+  }
+
   return errors.length > 0
     ? { ok: false, errors }
-    : { ok: true, value: { after, types, limit } };
+    : { ok: true, value: { after, types, limit, errorOnGap } };
 }

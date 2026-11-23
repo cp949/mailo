@@ -13,6 +13,7 @@ export type ProblemType =
   | "not-found"
   | "idempotency-conflict"
   | "job-not-cancelable"
+  | "cursor-expired"
   | "payload-too-large"
   | "unsupported-media-type"
   | "service-unavailable";
@@ -55,6 +56,12 @@ const CATALOG: Record<
     status: 409,
     title: "Job not cancelable",
     detail: "발송 중이거나 이미 종결된 작업은 취소할 수 없다.",
+  },
+  "cursor-expired": {
+    status: 410,
+    title: "Cursor expired",
+    detail:
+      "cursor 뒤에서 보존 기간이 지나 삭제된 이벤트가 있다. after 없이 다시 읽고 종결되지 않은 작업은 GET /jobs로 확인한다.",
   },
   "payload-too-large": {
     status: 413,
@@ -128,6 +135,8 @@ export const problems = {
   /** `jobStatus`는 작업의 현재 상태다. RFC 9457의 `status`(HTTP 상태 코드)와 구분한다. */
   jobNotCancelable: (jobStatus: string) =>
     new ProblemException("job-not-cancelable", { extra: { jobStatus } }),
+  /** `GET /events?onGap=error`가 cursor 뒤의 삭제를 발견했을 때다. 본문은 고정 문구이고 cursor를 담지 않는다. */
+  cursorExpired: () => new ProblemException("cursor-expired"),
   payloadTooLarge: () =>
     new ProblemException("payload-too-large", {
       headers: { Connection: "close" },

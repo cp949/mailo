@@ -12,6 +12,7 @@ import { PG_POOL } from "../db/index.js";
 import {
   InvalidCursorError,
   findRejections,
+  hasEventGap,
   listEvents,
   type EventType,
 } from "../events/index.js";
@@ -139,10 +140,19 @@ export class IntakeService {
   /**
    * 호출처의 종결 이벤트 피드(ADR-0006 결정 2·7). 응답 모양은 `{events, nextCursor, hasMore}`다.
    * `hasMore`는 한 페이지가 가득 찼을 때만 다음 페이지를 한 건 더 읽어 확인한다.
+   *
+   * `after`가 있으면 cursor 뒤에서 이벤트가 삭제됐는지 판정한다(ADR-0011 결정 9, RQ-045).
+   * 공백이면 `event_cursor_gap`(warn)을 한 줄 남기고, `errorOnGap`이면 410이다. 아니면 `gap: true`로 알려 컨트롤러가 헤더를 붙인다.
+   * 판정은 이벤트를 읽은 뒤에 한다. 반대 순서면 두 조회 사이에 커밋된 삭제를 놓친다.
    */
   async listEvents(
     callerId: string,
-    query: { after: string | null; types: EventType[]; limit: number },
+    query: {
+      after: string | null;
+      types: EventType[];
+      limit: number;
+      errorOnGap: boolean;
+    },
   ) {
     let page;
     try {
@@ -159,6 +169,19 @@ export class IntakeService {
         ]);
       }
       throw error;
+    }
+
+    let gap = false;
+    if (query.after !== null) {
+      gap = await hasEventGap(this.pool, {
+        callerId,
+        after: query.after,
+        types: query.types,
+      });
+      if (gap) {
+        logger.warn({ event: "event_cursor_gap", callerId });
+        if (query.errorOnGap) throw problems.cursorExpired();
+      }
     }
 
     let hasMore = false;
@@ -186,9 +209,12 @@ export class IntakeService {
     ]);
 
     return {
-      events: page.events.map((e) => presentEvent(e, lastErrors, rejections)),
-      nextCursor: page.nextCursor,
-      hasMore,
+      body: {
+        events: page.events.map((e) => presentEvent(e, lastErrors, rejections)),
+        nextCursor: page.nextCursor,
+        hasMore,
+      },
+      gap,
     };
   }
 }

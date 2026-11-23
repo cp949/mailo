@@ -72,7 +72,7 @@ describe("PostgreSQL 통합: 마이그레이션 0008 운영 제어 (RQ-043·044,
     const other = await createTestDatabase();
     try {
       const applied = await runMigrations(other.pool, MIGRATIONS);
-      expect(applied.at(-1)).toBe("0008_ops_controls.sql");
+      expect(applied).toContain("0008_ops_controls.sql");
       const { rows } = await other.pool.query(
         `SELECT to_regclass('mail_send_controls') IS NOT NULL AS controls,
                 to_regclass('mail_ops_audit') IS NOT NULL AS audit`,

@@ -1,6 +1,11 @@
 import type pg from "pg";
 import { withTransaction } from "../db/index.js";
-import { recordJobEvent, type JsonValue } from "../events/index.js";
+import {
+  recordJobEvent,
+  recordPurgedJobEvents,
+  recordPurgedRejectionEvents,
+  type JsonValue,
+} from "../events/index.js";
 
 /**
  * 정리 배치 한 번의 행 수 상한. 한 트랜잭션이 1초 안팎에 끝나도록 잡은 추정값이다.
@@ -129,6 +134,8 @@ export interface RetentionResult {
  * - 작업 행: 종결 시각 기준. 종결되지 않은 작업의 Key는 지우지 않는다.
  *   `mail_attempts`와 작업의 `mail_events`는 외래 키 `ON DELETE CASCADE`로 함께 지운다.
  * - 수집 거부 기록: 생성 시각 기준. `INTAKE_REJECTED` 이벤트는 같은 방식으로 함께 지운다.
+ * - 같은 트랜잭션에서 지워지는 이벤트의 호출처·종류별 최대 `(txid, id)`를 삭제 표지에 올린다(ADR-0011 결정 9, RQ-045).
+ *   표지 갱신이나 삭제 중 하나가 실패하면 둘 다 롤백한다.
  * 삭제 뒤 같은 Key는 새 요청이다. 정리 잠금을 못 잡으면 0건이다.
  */
 export async function deleteExpiredRecords(
@@ -139,25 +146,54 @@ export async function deleteExpiredRecords(
   return withTransaction(pool, async (client) => {
     if (!(await tryMaintenanceLock(client, "records")))
       return { jobs: 0, rejections: 0 };
-    const jobs = await client.query(
-      `DELETE FROM mail_jobs WHERE id IN (
-         SELECT id FROM mail_jobs
-          WHERE finished_at IS NOT NULL
-            AND finished_at <= now() - make_interval(secs => $1::double precision)
-          LIMIT $2
-          FOR UPDATE SKIP LOCKED
-       )`,
+    // 지울 행을 먼저 잠그고(`SKIP LOCKED`) 이벤트 삭제 표지를 올린 뒤 지운다. 이벤트는 cascade로 지워져
+    // `RETURNING`에 나오지 않으므로 삭제 전에 읽어야 한다. 한 트랜잭션이라 표지와 삭제는 함께 커밋·롤백한다(ADR-0011 결정 9).
+    const jobIds = await client.query<{ id: string }>(
+      `SELECT id FROM mail_jobs
+        WHERE finished_at IS NOT NULL
+          AND finished_at <= now() - make_interval(secs => $1::double precision)
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED`,
       [retentionSeconds, batchSize],
     );
-    const rejections = await client.query(
-      `DELETE FROM mail_intake_rejections WHERE id IN (
-         SELECT id FROM mail_intake_rejections
-          WHERE created_at <= now() - make_interval(secs => $1::double precision)
-          LIMIT $2
-          FOR UPDATE SKIP LOCKED
-       )`,
+    const jobs = await deleteByIds(
+      client,
+      "mail_jobs",
+      "uuid",
+      jobIds.rows.map((r) => r.id),
+      recordPurgedJobEvents,
+    );
+    const rejectionIds = await client.query<{ id: string }>(
+      `SELECT id::text AS id FROM mail_intake_rejections
+        WHERE created_at <= now() - make_interval(secs => $1::double precision)
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED`,
       [retentionSeconds, batchSize],
     );
-    return { jobs: jobs.rowCount ?? 0, rejections: rejections.rowCount ?? 0 };
+    const rejections = await deleteByIds(
+      client,
+      "mail_intake_rejections",
+      "bigint",
+      rejectionIds.rows.map((r) => r.id),
+      recordPurgedRejectionEvents,
+    );
+    return { jobs, rejections };
   });
+}
+
+/** 표지를 올린 뒤 `ids` 행을 지운다. 호출자가 `ids`를 `FOR UPDATE`로 잡은 같은 트랜잭션의 client를 넘긴다. */
+async function deleteByIds(
+  client: pg.PoolClient,
+  table: "mail_jobs" | "mail_intake_rejections",
+  idType: "uuid" | "bigint",
+  ids: readonly string[],
+  markPurged: (db: pg.PoolClient, ids: readonly string[]) => Promise<void>,
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  await markPurged(client, ids);
+  const result = await client.query(
+    `DELETE FROM ${table} WHERE id = ANY($1::${idType}[])`,
+    [ids],
+  );
+  return result.rowCount ?? 0;
 }

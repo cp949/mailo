@@ -141,11 +141,12 @@ export class IntakeController {
   ): Promise<void> {
     const query = parseEventsQuery(req.query);
     if (!query.ok) throw problems.validationFailed(query.errors);
-    sendJson(
-      res,
-      200,
-      await this.intake.listEvents(req.callerId as string, query.value),
+    const { body, gap } = await this.intake.listEvents(
+      req.callerId as string,
+      query.value,
     );
+    // 공백 신호는 헤더로 낸다. 본문 스키마는 바꾸지 않고, 모르는 호출처는 헤더를 무시한다(ADR-0011 결정 9).
+    sendJson(res, 200, body, gap ? { "Mailo-Cursor-Gap": "true" } : {});
   }
 
   @Get("jobs/:jobId")
