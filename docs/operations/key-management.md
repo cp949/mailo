@@ -187,7 +187,7 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 - SMTP 비밀번호(`MAILO_SMTP_PASSWORD`): Google 앱 비밀번호 등. 교체는 시크릿을 바꾸고 Mailo를 재시작한다. 잘못된 값은 `AUTH` 사유로 차단기를 연다(`troubleshooting.md`).
 - SMTP 계정 비밀번호(`MAILO_SMTP_SECRET_<이름>`, RQ-053, ADR-0013 결정 1·5): 계정 파일(`MAILO_SMTP_ACCOUNTS_FILE`)의 `auth.secretVar`가 가리키는 변수다. 값은 `<변수>_FILE`(우선) 또는 `<변수>`로 받고 계정마다 변수가 따로다. 같은 변수를 두 계정이 쓰면 기동하지 않는다.
   - 교체: (1) 계정에서 새 앱 비밀번호를 만든다. 이전 값은 아직 유효하게 둔다. (2) 시크릿 파일을 새 값으로 바꾼다. (3) 인스턴스를 롤링 재시작한다. 재시작 중 인스턴스마다 이전·새 값이 섞이지만 둘 다 유효하다. (4) 모든 인스턴스가 바뀐 뒤 이전 앱 비밀번호를 폐기한다. Google 계정이 앱 비밀번호를 여럿 허용하는지는 확인하지 않았다.
-  - 잘못된 값은 그 계정의 작업만 `AUTH` 사유를 낸다. 묶음 B 전에는 `default` 계정만 구성할 수 있다(`deployment.md` "SMTP 계정"의 한계). `default` 계정의 차단기가 열린다.
+  - 잘못된 값은 그 계정의 작업만 `AUTH` 사유를 낸다. 그 계정의 차단기만 열리고 다른 계정은 계속 발송한다(`deployment.md` "SMTP 계정"의 계정 단위 점유).
   - 계정 ID를 바꾸려면 새 계정을 만들고 호출처를 옮긴다. 새 차단기 행이 생긴다. 이미 등록한 작업은 이전 계정 ID로 남는다.
   - 계정 파일에는 `user`·`from` 주소가 있다(비밀번호 값은 없다). `MAILO_SMTP_USER`와 같은 민감도로 다루고 읽기 전용으로 마운트한다. 로그·오류·지표에는 계정 ID만 쓴다.
   - 기동 오류: 변수가 없으면 `MAILO_SMTP_SECRET_<이름> 또는 MAILO_SMTP_SECRET_<이름>_FILE이 필요하다(accounts[i].auth.secretVar)`, `_FILE`을 읽지 못하면 `MAILO_SMTP_SECRET_<이름>_FILE이 가리키는 파일을 읽지 못했다(<errno>)`다. 값은 오류에 나오지 않는다.

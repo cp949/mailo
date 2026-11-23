@@ -6,10 +6,12 @@
 
 2026-11-24에 제안했고 같은 날 사용자가 승인했다. 열린 질문이던 11건은 이 문서가 적은 권고대로 승인했다. 승인된 값은 "미결정·확인하지 않은 것"의 "승인된 결정" 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 7. 다중 SMTP 계정"이다.
 
-구현 상태(2026-11-24): 묶음 A(계정 모델) 구현 완료(미검증 항목 있음). 묶음 B(계정 단위 점유), C(운영 표면), D(호출처 동시 상한)는 미착수다.
+구현 상태(2026-11-24): 묶음 A(계정 모델)와 묶음 B(계정 단위 점유) 구현 완료(미검증 항목 있음). 묶음 C(운영 표면), D(호출처 동시 상한)는 미착수다.
 
 - 묶음 A의 범위: 결정 1(계정 파일·`default` 출처·기동 검증), 결정 2(호출처 `accountId`, 등록 때 계정 고정, 구성 밖 계정의 작업), 결정 3 나의 차단기 키(계정 ID)와 기동 때 행 생성, 결정 4의 `0010`·`0011`, 결정 6(발신 주소 허용 집합). 요구사항은 RQ-053~056이다.
 - 묶음 A에서 구현하지 않은 것: 결정 3의 가·다·라·마·바·사·아(계정별 `claim`, 계정 정지, 24시간 할당, 슬롯 배분, 건수 쿼리), 결정 4의 `0012`~`0016`(인덱스 교체), 결정 5 전체. `default`가 아닌 계정은 묶음 B가 끝나기 전까지 앱이 기동을 거부한다(구현 중 확정 2026-11-24 리뷰 반영).
+- 묶음 B의 범위(2026-11-24 구현): 결정 3의 가·나·다·라·바·사·아(계정별 `claim`, 계정별 차단기 모드와 대표 작업, 계정 정지의 점유 적용, 24시간 할당, 슬롯 배분과 기동 검사, 건수 쿼리의 계정별 합), 결정 4의 `0012`~`0016`, 로그. 묶음 A의 비`default` 계정 기동 거부는 제거했다. 요구사항은 RQ-057~059다.
+- 묶음 B에서 구현하지 않은 것: 계정 정지를 쓰고 지우는 REST·CLI·감사와 `GET /ops/accounts`, `/metrics`·`/health/ready`의 계정 표면(결정 5 전체, 묶음 C), 호출처 동시 상한(결정 3 마, 묶음 D). 계정 정지는 `mail_send_controls`의 `account` 범위 행을 점유가 읽는 데까지다.
 - 구현하면서 정한 내용은 "구현 중 확정" 절에 모았다. 남은 미검증 항목은 RQ-053~056의 수용 조건과 이 문서의 "확인하지 않은 것"을 따른다.
 
 검증 범위는 코드 읽기와 PostgreSQL 17.11(로컬 compose)의 임시 schema 측정이다(2026-11-24).
@@ -464,3 +466,36 @@
 6. **같은 `from`.** 서로 다른 계정이 같은 `from`을 가져도 코드는 막지 않는다. 그 주소는 두 계정을 쓰는 호출처 모두의 허용 집합에 들어간다(`deployment.md`에 한 줄).
 7. **차단기 동작의 검증.** 비`default` 계정의 `open` 이후 점유·재시도 시각 동작은 현재 성립하지 않으므로 통과 테스트로 굳히지 않았다. RQ-054의 미완 항목으로 B에서 검증한다.
 
+### 2026-11-24 묶음 B
+
+결정 문구는 바꾸지 않는다. 구현하면서 정한 값과 결정의 해석을 적는다. 구현 순서 표와 어긋난 곳은 항목 2에 모았다.
+
+1. **`claim` 인터페이스.** `claim(pool, { accountId, ... })`가 계정 하나를 다룬다. `accountId`를 생략하면 `deps.breaker.breakerKey`(기본 `default`)다. 앱의 Worker는 계정마다 명시한다. 묶음 A의 `accountIds` 옵션은 사라졌다. 새 옵션은 `recoverLeases`(기본 true, lease 복구를 이 호출에서 할지), `accountQuota`(계정 24시간 할당), `onAccountQuota`(한도에 닿으면 `{ limit }`, 한도 안이면 `null`이고 락을 못 잡아 건너뛴 호출에는 부르지 않는다)다. 작업 쿼리는 `account_id = $n`이고 대표 작업 쿼리의 `j.account_id = b.breaker_key`는 그대로다. 호출 순서는 차단기 행 읽기 → 정지 읽기 → 모드 → (none이면 종료) → 계정 할당 → 호출처 할당 → 작업 쿼리다.
+2. **구현 순서·결정 문구와 어긋난 곳.**
+   - 결정 3 바는 "한 라운드에서 하나라도 점유했으면 바로 다음 라운드를 돈다"고 적었다. 구현은 "요청한 `limit`만큼 가득 점유한 계정이 하나라도 있으면" 바로 다음 라운드를 돈다. 하나라도 점유했다는 조건이면 계정이 하나일 때도 점유 뒤마다 빈 `claim`이 한 번 더 나가 N=1의 호출 수가 현행과 달라진다. 가득 점유했다는 조건은 N=1에서 현행(`claimed.length >= free`)과 같다.
+   - 결정 3 바의 "계정의 `claim` 오류는 그 계정에서만 지수 백오프"를 계정별 끝 시각(`claimBackoffUntil`)으로 구현했다. 그 시각 전에는 그 계정의 `claim`을 부르지 않는다. 호출한 계정이 모두 실패한 라운드는 연속 실패 횟수로 쉰다(N=1의 이전 동작). `WorkerStatus.claimFailureStreak`은 계정별 연속 실패 횟수의 최댓값이다. `mailo_claim_polls_total`은 라운드가 아니라 `claim` 호출마다 센다(N=1이면 같다).
+   - 결정 3 라는 "점유 건수 상한을 `min(남은 건수, 호출처 할당 남은 건수)`"로 줄인다고 적었다. 구현은 `limit = min(limit, 계정 남은 건수)`로 줄이고 호출처 할당은 기존대로 호출처마다 SQL에서 자른다. 결과는 같다.
+   - `account` 범위 정지를 쓰고 지우는 함수(`setPause`·`clearPause`)와 `SendScope`는 넓히지 않았다. REST·CLI·감사가 묶음 C이고, 넓히면 `ops/`의 `scope.type === "all" ? ... : caller` 분기가 계정을 호출처로 잘못 다루기 때문이다. 점유가 읽는 `readSendControls`만 `pausedAccountIds`를 더했다. `listPauses`·`getCallerPauseSummary`·`getSendControlsSummary`는 `account` 행을 내지 않는다(묶음 C).
+3. **재시도 시각.** `completeAttempt`의 재개 시각은 차단기가 open이고 `open_until`이 DB `now()`보다 미래일 때만 `open_until`이다. 그 밖(half_open의 늦은 실패, `open_until`이 이미 지난 open에서 늦게 도착한 실패)은 사유별 초기 대기 뒤다. 묶음 A는 지난 `open_until`을 그대로 `next_attempt_at`에 써서 같은 작업을 곧바로 다시 점유할 수 있었다. 이 경로는 default 계정에도 있었다. 계정별 `claim`에서는 open 뒤 점유가 대표 작업(probe)이라 연속 호출 루프는 생기지 않지만 같은 규칙으로 막았다. 재현·검증은 `queue/account-claim.integration-spec.ts`다.
+4. **슬롯 배분.** 순수 함수는 `worker/slots.ts`(`accountSlotCap`, `claimLimit`, `rotateFrom`)에 있고 상태는 Worker가 가진다. 계정이 둘 이상일 때만 `claimRandom`으로 시작점을 뽑는다(계정 하나에서는 난수를 뽑지 않아 기존 테스트의 난수 열이 바뀌지 않는다). 계정별 진행 중 건수는 `track`에서 센다. 기동 검사: 계정 수 N이 `MAILO_WORKER_CONCURRENCY`(C)보다 크면 `createWorker`가 `WorkerOptionsError("accounts")`로 거부한다(설정 로더가 이미 같은 조건을 거부한다). 계정의 `concurrency`가 1~C가 아니면 `accountConcurrency`, `sendQuota24h`가 양의 정수가 아니면 `accountQuota`, 계정 할당이 있는데 시도 기록 보존이 24시간 미만이면 `accountQuota.retention`이다(호출처 할당의 `callerQuotas.retention`과 같다).
+5. **계정 24시간 할당.** 사용량 쿼리는 `queue/quota-usage.ts`의 `ACCOUNT_QUOTA_USAGE_SQL`이다(`mail_attempts_account_quota_idx` 인덱스 전용 스캔과 `mail_jobs_lease_idx`의 `SENDING` 수). 락 클래스 상수 `ACCOUNT_QUOTA_LOCK_CLASS`는 7364224다(호출처 할당 7364222, 정리 7364223, 마이그레이터 1-인자 형식과 겹치지 않는다). "미결정·확인하지 않은 것"의 이 항목을 닫는다. 새 로그는 `account_quota_exceeded`(warn, `accountId`, `limit`)·`account_quota_recovered`(info, `accountId`)이고 상태가 바뀔 때만 남긴다. `send_paused`·`send_resumed`는 `scope: "account"`와 `accountId`를 싣는다. `claim_failed`에는 `accountId`가 붙는다. `worker_started`에는 `accounts`(계정 수)가 붙는다. `account_limits_not_enforced`는 없앴다. 모두 계정 ID·한도 수치만 싣는다.
+6. **건수 쿼리.** `getQueueBacklog(db, accountIds)`와 `getQueueDepth(db, accountIds)`는 구성한 계정마다 상수 계정 쿼리를 보내 합친다(계정 N개면 N문장, `getQueueDepth`는 `scheduled`가 N문장 더, `sending` 전체 수가 한 문장 더). 구성 밖 계정의 작업은 점유되지 않아 세지 않는다. `queue.dueCount`는 계정별 상한(10000)에서 멈춘 값의 합이라 N>1이면 10000을 넘을 수 있고 `truncated`는 어느 한 계정이라도 잘렸는지다. 인자는 필수다(생략을 허용하면 계정을 빠뜨린 호출이 조용히 0을 낸다). 호출 쪽은 `health/health.service.ts`와 `health/metrics-collector.ts`가 `config.smtpAccounts`의 ID를 넘긴다.
+7. **구성 밖 계정 점검.** `countOrphanAccountJobs`는 `account_id <> ALL(...)` 조건이 인덱스를 못 써서 테이블 전체를 읽었다. 구현은 계정 부분 인덱스의 `account_id`를 재귀 CTE로 건너뛰며(loose index scan) 대기 중인 계정 ID를 모은 뒤 구성 밖 계정만 센다. `SENDING`은 부분 인덱스에 없어 `mail_jobs_lease_idx`로 읽는다.
+8. **마이그레이션과 EXPLAIN.** `0012`~`0016`은 결정 4의 표와 같다. 파일 다섯 개는 모두 첫 줄 `-- mailo:no-transaction`, 문장 하나, 멱등이다. 로컬 단일 측정(PostgreSQL 17.11, compose, 임시 schema, 작업 74.5만 행: `SENT` 50만, `PENDING` 12.5만(`a1` 12만이 가장 오래됨), `RETRY_WAIT` 12만(6만은 미래), `SENDING` 40, 구성 밖 계정 5천, 시도 25만 행, 일반 `VACUUM ANALYZE` 뒤, 레거시 인덱스 삭제 상태, `EXPLAIN (ANALYZE, BUFFERS)` 한 번씩)은 다음과 같다. 계획은 모두 새 인덱스를 쓴다.
+
+   | 쿼리 | 실행 시간 | 계획 요점 |
+   | ---- | --------- | --------- |
+   | 우선순위 점유, 계정 `a2`, 호출처 2개 제외, `LIMIT 4` | 0.103ms | `mail_jobs_account_priority_claim_idx`, 읽은 행 4건 |
+   | 대기 순서 점유, 대기 12만 건 계정 `a1` | 0.052ms | `mail_jobs_account_claim_idx` |
+   | 점유 쿼리, 구성 밖 계정 조건 | 0.033ms | 계정 인덱스, 행 0 |
+   | 적체 전체 값(상한 10001), `a2` | 0.735ms | `mail_jobs_account_claim_idx` 인덱스 전용 스캔, 64 buffers |
+   | 적체 등급별 값(`LATERAL`), `a2` | 1.210ms | `mail_jobs_account_priority_claim_idx` 인덱스 전용 스캔 |
+   | 예약 건수(상한 10001), `a2` | 0.673ms | `mail_jobs_account_claim_idx` 인덱스 전용 스캔 |
+   | 계정 24시간 사용량, `a2`, 한도 10만 | 2.313ms | `mail_attempts_account_quota_idx` 인덱스 전용 스캔(5.0만 행) + `mail_jobs_lease_idx` |
+   | 구성 밖 계정 건수, 이전 쿼리(`<> ALL`) | 34.961ms | `mail_jobs` 병렬 순차 스캔, 16300 buffers(테이블 크기에 비례) |
+   | 구성 밖 계정 건수, 새 쿼리 | 21.0~21.4ms(JIT 켜짐, 컴파일 약 20ms), 0.6ms(`jit = off`) | 인덱스 건너뛰기 계정 수만큼(8번), 69 buffers. 재귀 CTE의 비용 추정이 `jit_above_cost`를 넘어 JIT가 켜졌다. 기동 때 한 번뿐이라 그대로 둔다 |
+
+   인덱스 크기는 `mail_jobs_account_priority_claim_idx`·`mail_jobs_account_claim_idx` 각 12MB, `mail_attempts_account_quota_idx` 1.9MB였다. 이 측정은 단일 실행이고 동시 쓰기 부하·운영 크기·통계가 오래된 상태는 없다. 통합 테스트는 작은 데이터에서 `enable_seqscan = off`로 새 인덱스를 "쓸 수 있는지"만 고정한다(계획 선택 자체는 자동 테스트로 고정하지 못한다).
+9. **N=1 문장 수.** 계정이 하나일 때 `claim` 한 번의 문장 수(BEGIN·COMMIT과 lease 복구 포함)는 묶음 A와 같다. closed 8, 호출처 할당 하나 10, open 대기 7, 전체 정지 7, 대표 작업 10이다. 이 값을 묶음 A의 `claim`으로 먼저 측정한 뒤 테스트(`queue/claim-query-count.integration-spec.ts`)로 고정하고 변경 뒤에도 같음을 확인했다. Worker의 라운드 단위 호출 수(lease 복구는 라운드마다 한 번)는 `worker/worker-accounts.integration-spec.ts`가 본다.
+10. **묶음 A 기동 거부 제거.** `assertDefaultAccountOnly`와 테스트 전용 옵션 `allowNonDefaultAccounts`를 지웠다. 제거 조건인 계정별 격리는 통합 테스트로 확인했다(계정 A의 차단기 open이 B의 점유를 막지 않고 반대도 같음, 비`default` 계정의 open → half_open → closed 전이, 계정 정지·할당·슬롯 격리, 앱 단위 e2e). 이 변경으로 바뀐 기존 테스트는 `e2e/multi-account.integration-spec.ts`의 "묶음 B 전의 방어"(기동 거부 단언)가 "비default 계정 구성의 기동"(기동 성공 단언)으로, `worker/account-startup.spec.ts`의 `account_limits_not_enforced` 경고 단언이 "남기지 않는다" 단언으로, `queue/claim-priority.integration-spec.ts`의 레거시 인덱스 존재 단언이 새 인덱스 존재 단언으로 바뀐 것이다. 모두 묶음 B가 없앤 동작을 단언하던 테스트다.
+11. **검증하지 않은 것(묶음 B).** 롤링 배포(구·신 혼용)와 롤백 실행, 레거시 인덱스 삭제 뒤 구버전 점유 성능(결정 4의 M8, 한 쿼리 측정만 있다), `CREATE INDEX CONCURRENTLY`·`DROP INDEX CONCURRENTLY`의 동시 쓰기 부하 아래 시간, 다중 인스턴스(4개 이상) 동시 부하의 poll 비용과 풀 점유, 계획 안정성(통계가 오래된 상태), 실제 Gmail·Workspace 계정 둘의 한도·동시 연결, 대표 작업 쿼리(`ORDER BY (j.id IS NOT DISTINCT FROM b.last_trip_job_id), ...`)는 정렬 첫 키가 식이라 계정 인덱스의 순서를 쓰지 못한다. 로컬 단일 측정(위와 같은 데이터, 대기 12만 건 계정 `a1`)에서 64.6ms였고 `mail_jobs_expiry_idx`로 대기 행을 읽어 정렬했다(외부 병합 5.3MB). 계정 대기 건수에 비례하고 open 대기가 끝날 때 한 번 나가는 쿼리이며 묶음 B는 이 쿼리를 바꾸지 않았다(묶음 A 이전에도 같은 형태였고 전체 대기에 비례했다). 대기 건수가 큰 계정에서 문제가 되면 후속 변경으로 다룬다. 계정 정지를 쓰는 표면이 없어 운영자가 계정을 정지하는 실제 경로는 묶음 C 전에는 직접 SQL뿐이다.

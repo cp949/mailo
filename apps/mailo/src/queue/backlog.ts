@@ -185,7 +185,8 @@ export async function getQueueDepth(
  * 계정 부분 인덱스(`mail_jobs_account_claim_idx`, 0013)의 앞 열 `account_id`를 재귀 CTE로 건너뛰며 대기 중인 계정 ID를 모은다
  * (loose index scan, 계정 수만큼 인덱스를 한 번씩 찾는다). 그다음 구성 밖 계정만 센다. 비용은 테이블 크기가 아니라
  * 구성 밖 계정의 대기 건수에 비례한다. 단순한 `account_id <> ALL(...)` 조건은 인덱스를 못 써서 테이블 전체를 읽는다
- * (2026-11-24 로컬 측정에서 작업 74만 행 약 35ms, 새 쿼리는 약 1ms 미만, 단일 측정).
+ * (2026-11-24 로컬 단일 측정, 작업 74.5만 행: 이전 쿼리는 약 35ms에 16300 buffers, 새 쿼리는 69 buffers이고 `jit = off`에서 0.6ms다.
+ 기본 설정에서는 비용 추정이 `jit_above_cost`를 넘어 JIT 컴파일이 더해져 약 21ms였다. 기동 때 한 번이라 그대로 둔다).
  * `SENDING`은 부분 인덱스에 없으므로 `mail_jobs_lease_idx`로 따로 읽는다(점유 중인 행은 동시성으로 막힌다).
  */
 export async function countOrphanAccountJobs(

@@ -273,9 +273,9 @@ SELECT priority, status, count(*) FROM mail_jobs
 -- 등급별 재시도 대기(아직 점유 대상이 아닌 작업)
 SELECT priority, count(*), min(next_attempt_at) FROM mail_jobs
  WHERE status IN ('PENDING', 'RETRY_WAIT') AND next_attempt_at > now() GROUP BY 1 ORDER BY 1 DESC;
--- 우선순위 점유 인덱스 유효성. valid가 false이거나 행이 없으면 아래 복구를 한다
+-- 계정 점유 인덱스 유효성. valid가 false이거나 행이 없으면 아래 복구를 한다(ADR-0013, 0012·0013)
 SELECT c.relname, i.indisvalid AS valid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
- WHERE c.relname = 'mail_jobs_priority_claim_idx';
+ WHERE c.relname IN ('mail_jobs_account_priority_claim_idx', 'mail_jobs_account_claim_idx');
 ```
 
 해석:
@@ -286,23 +286,23 @@ SELECT c.relname, i.indisvalid AS valid FROM pg_index i JOIN pg_class c ON c.oid
 
 인덱스 복구. 마이그레이션 실행기는 `-- mailo:no-transaction` 파일을 실행한 뒤 현재 schema에 `INVALID` 인덱스가 있으면 기록하지 않고 실패한다(fail-closed, `src/db/migrator.ts`). 오류 메시지에 인덱스 이름이 있다. `IF NOT EXISTS`가 `INVALID` 인덱스를 건너뛰고 적용으로 기록되는 것을 막기 위해서다. 이 실패는 앱 기동 실패(`migrate-cli` 종료)로 보인다.
 
-1. 오류 메시지의 인덱스를 지운다.
+1. 오류 메시지의 인덱스를 지운다. 계정 인덱스는 `mail_jobs_account_priority_claim_idx`(0012), `mail_jobs_account_claim_idx`(0013), `mail_attempts_account_quota_idx`(0014)다.
    ```sql
-   DROP INDEX CONCURRENTLY IF EXISTS mail_jobs_priority_claim_idx;
+   DROP INDEX CONCURRENTLY IF EXISTS mail_jobs_account_priority_claim_idx;
    ```
 2. `CONCURRENTLY`가 실패한 원인을 없앤다(잠금 대기 `55P03`이면 긴 트랜잭션을 확인한다).
-3. 마이그레이션을 다시 실행한다(컨테이너 재시작 또는 `pnpm --filter @cp949/mailo migrate`). `0005`가 다시 실행돼 기록된다.
+3. 마이그레이션을 다시 실행한다(컨테이너 재시작 또는 `pnpm --filter @cp949/mailo migrate`). 해당 파일(`0012`~`0014`)이 다시 실행돼 기록된다. `0015`·`0016`(레거시 인덱스 삭제)은 그 뒤에 실행된다.
 
 수동으로 만든 인덱스가 위 조회에서 `valid = false`이면 같은 방법으로 지우고 다시 만든다.
 
 ```sql
-CREATE INDEX CONCURRENTLY mail_jobs_priority_claim_idx
-  ON mail_jobs (priority DESC, next_attempt_at, id) WHERE status IN ('PENDING', 'RETRY_WAIT');
+CREATE INDEX CONCURRENTLY mail_jobs_account_priority_claim_idx
+  ON mail_jobs (account_id, priority DESC, next_attempt_at, id) WHERE status IN ('PENDING', 'RETRY_WAIT');
 ```
 
 ```txt
 위험도: 중간 (인덱스 재생성. 쓰기는 막지 않지만 큰 테이블에서 오래 걸린다)
-롤백: 불필요. 인덱스가 없는 동안 우선순위 점유가 느려질 뿐 동작은 같다
+롤백: 불필요. 인덱스가 없는 동안 계정 점유와 적체 건수가 느려질 뿐 동작은 같다
 ```
 
 ## 만료 시각
@@ -450,14 +450,20 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 | `account_orphan_jobs`(warn, `accountId`, `count`) | 구성에 없는 계정의 비종결 작업이 DB에 있다. 점유되지 않고 만료 시각에 `EXPIRED`가 된다 | 계정을 구성에 되돌리면 다시 발송된다. 의도한 제거면 기다리거나 취소한다. 다른 계정으로 옮기지 않는다 |
 | `account_unused`(info, `accountId`) | 어느 호출처도 쓰지 않는 계정 | 의도한 것인지 확인한다. 거부하지 않는다 |
 | `allowed_from_other_account`(warn, `callerId`) | 그 호출처의 `allowedFrom`이 다른 계정의 `from`과 같다 | 의도한 별칭 공유인지 확인한다. 거부하지 않는다 |
-| `account_limits_not_enforced`(warn, `accountId`) | `sendQuota24h`·`concurrency`를 설정했지만 쓰지 않는다(구현 묶음 B 전) | 한도에 기대지 않는다. 계정별 한도는 B 이후다 |
-| 기동 실패 `SMTP 계정 <ID>은 default가 아니라 이 버전에서 지원하지 않는다` | 계정 파일에 `default`가 아닌 계정이 있다. 묶음 B 전의 방어다 | 파일에서 `default`가 아닌 계정을 빼고 `default`만 정의한다. `callers.json`의 `accountId`도 `default`로 둔다 |
+| `account_quota_exceeded`(warn, `accountId`, `limit`) | 그 계정의 24시간 `sendQuota24h`에 닿아 그 계정의 점유가 멈췄다. 다른 계정은 계속 발송한다. 상태가 바뀔 때만 한 줄 남는다 | 한도 수치와 시도 수를 본다(아래 SQL). 24시간 안에 시도가 빠지면 `account_quota_recovered`(info)가 남고 다시 발송한다. 한도를 올리려면 파일을 고치고 재시작한다 |
+| `claim_failed`(error, `accountId`, `error`, `streak`) | 그 계정의 점유 쿼리가 실패했다. 그 계정만 지수 백오프(상한 30초)하고 다른 계정은 계속 점유한다 | `accountId`가 있는 줄만 본다. 같은 `accountId`가 계속되면 그 계정의 차단기 행이 없는지(`mail_circuit_breaker`) 본다. 모든 계정에서 나오면 DB 연결 문제다("DB 연결 문제") |
+| `send_paused`·`send_resumed`(`scope: "account"`, `accountId`) | `mail_send_controls`에 `account` 범위 행이 생기거나 사라졌다. 그 계정의 점유가 멈추거나 재개된다 | 계정 정지를 쓰고 지우는 REST·CLI는 아직 없다(구현 묶음 C). 직접 SQL로 넣은 행이다. 아래 SQL로 확인한다 |
+| 기동 실패 `invalid worker option (field=accounts)` | 구성한 계정 수가 `MAILO_WORKER_CONCURRENCY`보다 많다 | 계정을 줄이거나 `MAILO_WORKER_CONCURRENCY`를 올린다. 계정마다 슬롯 하나를 보장하는 조건이다 |
+| 기동 실패 `invalid worker option (field=accountConcurrency)`·`accountQuota`·`accountQuota.retention` | 계정의 `concurrency`가 1~`MAILO_WORKER_CONCURRENCY`가 아니거나, `sendQuota24h`가 양의 정수가 아니거나, 계정 할당이 있는데 시도 기록 보존이 24시간 미만이다 | 계정 파일의 값을 고치거나 `MAILO_RECORD_RETENTION_SECONDS`를 24시간 이상으로 둔다 |
 | `job_internal_error`(error)가 계속된다 | 작업이 고정한 계정의 발송기가 없는 등 Mailo 내부 오류. 차단기를 건드리지 않고 같은 작업이 3번째 시도에서 `FAILED`가 된다 | 정상 경로에서는 일어나지 않는다. 계정 구성과 `mail_jobs.account_id`를 확인한다 |
 | `account_orphan_check_failed`(warn, `error`) | 기동 때 구성 밖 계정 작업을 세는 쿼리가 실패했다 | 기동은 막지 않는다. DB 연결을 본다 |
 
 - 작업의 계정 확인(읽기): `SELECT account_id, status, count(*) FROM mail_jobs GROUP BY 1, 2 ORDER BY 1, 2;`
 - 계정별 차단기 행(읽기): `SELECT breaker_key, state, open_until, last_reason FROM mail_circuit_breaker ORDER BY 1;`. 행 키가 계정 ID다. 구성에 있는 계정의 행은 기동 때 만든다. 구성에서 빠진 계정의 행은 지우지 않는다.
 - 이 버전은 계정별 차단기 상태를 `/health/ready`·`/ops`·`/metrics`에 내지 않는다(구현 묶음 C). 위 SQL로 본다.
+- 계정 정지 행(읽기): `SELECT scope_id, paused_at, paused_by FROM mail_send_controls WHERE scope_type = 'account';`
+- 계정의 24시간 사용량(읽기, 한도 판정과 같은 조건): `SELECT count(*) FROM mail_attempts WHERE account_id = '<ID>' AND counted AND stage IS DISTINCT FROM 'WORKER' AND finished_at > now() - interval '24 hours';` 점유 중(`SENDING`)인 작업 수가 더해진다.
+- 한 계정이 느려질 때: 그 계정은 인스턴스당 슬롯 `cap_a`(계정의 `concurrency`, 없으면 `max(1, C − (N − 1))`)까지만 쥔다. 다른 계정은 남은 슬롯으로 계속 발송한다. 처리량이 모자라면 `MAILO_WORKER_CONCURRENCY`를 올리거나 계정에 `concurrency`를 준다.
 
 ## 호출처 할당 초과
 

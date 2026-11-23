@@ -111,8 +111,8 @@ services:
   - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX CONCURRENTLY`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다).
   - 실행기는 표식 파일을 실행한 뒤 기록 전에 현재 schema의 `INVALID` 인덱스(`pg_index.indisvalid = false`)를 조회한다. 있으면 기록하지 않고 인덱스 이름을 담은 오류로 실패한다. `IF NOT EXISTS`는 같은 이름의 `INVALID` 인덱스가 있으면 건너뛰고 성공하기 때문이다. 같은 schema에서 수동 `CREATE INDEX CONCURRENTLY`가 진행 중이어도 실패한다.
   - 같은 실행에서 앞서 적용한 파일은 이미 커밋돼 있다. 표식 파일이 실패해도 앞 파일은 롤백되지 않는다.
-  - 현재 파일 중 `0005_job_priority_claim_index.sql`만 표식 파일이다. 나머지(`0001`~`0004`, `0006`~`0011`)는 트랜잭션 실행이다.
-  - `0005`의 확인·복구 절차는 `troubleshooting.md` "등급별 적체"다.
+  - 현재 표식 파일은 `0005_job_priority_claim_index.sql`과 `0012`~`0016`이다. 나머지(`0001`~`0004`, `0006`~`0011`)는 트랜잭션 실행이다.
+  - 인덱스 생성(`0005`, `0012`~`0014`)의 확인·복구 절차는 `troubleshooting.md` "등급별 적체"다.
 - 잠금 대기: 기본(트랜잭션) 실행은 풀에 `lock_timeout`이 걸려 있으면 그 값(CLI는 10초)을 쓰고, 없으면(0) 10초를 `SET LOCAL`로 건다. 표식 파일은 같은 값을 세션 `SET`으로 걸고 끝나면 `RESET`한다. 마이그레이션이 다른 쿼리를 막는 잠금을 10초 넘게 기다리면 실패한다(`55P03`). 인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
 
 ### 마이그레이션 일회성 실행(선택)
@@ -217,15 +217,23 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 
 ### SMTP 계정 도입 배포 순서
 
-근거: RQ-053~056, ADR-0013 결정 2·4. 구현 묶음 A의 마이그레이션은 `0010`(`mail_jobs.account_id`)·`0011`(`mail_attempts.account_id`)이다. 둘 다 `ADD COLUMN ... NOT NULL DEFAULT 'default'`와 `ADD CONSTRAINT ... NOT VALID`다. 표를 다시 쓰지 않고 백필하지 않는다. 기존 행은 `default`로 보인다. 구버전은 컬럼을 열거해 읽고 쓰므로 새 컬럼을 무시하고, 컬럼 없는 `INSERT`는 `default`가 된다. `0012`~`0016`(인덱스 교체)은 묶음 B다.
+근거: RQ-053~056, ADR-0013 결정 2·4. 구현 묶음 A의 마이그레이션은 `0010`(`mail_jobs.account_id`)·`0011`(`mail_attempts.account_id`)이다. 둘 다 `ADD COLUMN ... NOT NULL DEFAULT 'default'`와 `ADD CONSTRAINT ... NOT VALID`다. 표를 다시 쓰지 않고 백필하지 않는다. 기존 행은 `default`로 보인다. 구버전은 컬럼을 열거해 읽고 쓰므로 새 컬럼을 무시하고, 컬럼 없는 `INSERT`는 `default`가 된다. `0012`~`0016`(계정 단위 점유 인덱스 추가와 기존 점유 인덱스 삭제)은 묶음 B이고 같은 절의 "묶음 B 마이그레이션"에서 다룬다.
 
-1. 마이그레이션 전에 `pg_dump`를 받는다("백업과 복구"). `0010`·`0011`을 적용한다(기동 때 자동 또는 `mailo-migrate`). 파일마다 `ALTER TABLE`이 `mail_jobs`·`mail_attempts`에 각각 `ACCESS EXCLUSIVE` 잠금을 잡는다. 150만 행 임시 schema에서는 1.2ms였다(ADR-0013 측정, 로컬 단일 실행). 이미 도는 긴 트랜잭션이 있으면 잠금을 기다리고 `lock_timeout`(기본 10초)을 넘기면 그 파일만 롤백되며 실행기가 실패한다. 다시 실행한다.
+1. 마이그레이션 전에 `pg_dump`를 받는다("백업과 복구"). 묶음 B 이미지로 바꾸면 `0010`~`0016`이 한 번에 적용된다(기동 때 자동 또는 `mailo-migrate`, 묶음 A를 이미 배포했다면 `0012`~`0016`만). `0012`~`0016`의 인덱스는 아래 "묶음 B 마이그레이션"이다. `0010`·`0011`은 파일마다 `ALTER TABLE`이 `mail_jobs`·`mail_attempts`에 각각 `ACCESS EXCLUSIVE` 잠금을 잡는다. 150만 행 임시 schema에서는 1.2ms였다(ADR-0013 측정, 로컬 단일 실행). 이미 도는 긴 트랜잭션이 있으면 잠금을 기다리고 `lock_timeout`(기본 10초)을 넘기면 그 파일만 롤백되며 실행기가 실패한다. 다시 실행한다.
 2. 모든 Mailo 인스턴스를 새 버전으로 바꾼다. 새 버전은 계정 `default`만으로 현행과 같다. 이 단계가 끝나기 전에 `default`가 아닌 계정의 작업이 생기면 안 된다. 구버전 점유는 `account_id`를 보지 않아 그 작업을 `default` SMTP로 보낸다.
 3. 계정 파일(`MAILO_SMTP_ACCOUNTS_FILE`)과 비밀 변수를 모든 인스턴스에 배포하고 재시작한다. 호출처 레지스트리는 아직 그대로다.
 4. 호출처 레지스트리에 `accountId`를 넣고 재시작한다. 모든 인스턴스가 3을 마친 뒤에만 한다. 구버전은 `accountId`를 모르는 필드로 거부해 기동하지 못하고, 새 버전도 계정 파일이 없으면 구성에 없는 계정이라 기동하지 못한다. 순서는 "코드 먼저, 레지스트리 나중"이다(ADR-0009 결정 10, ADR-0011 결정 10).
 5. 호출처별 전환은 레지스트리 항목 단위로 새 요청에만 적용된다. 이미 등록한 작업은 등록 때 계정으로 나간다. 같은 Key의 재전송은 기존 작업의 계정을 그대로 두고 200이나 409를 돌려준다.
 
-묶음 B 전에는 `default`가 아닌 계정을 구성할 수 없다("SMTP 계정"의 한계). 4에서 `accountId`를 `default`가 아닌 값으로 넣으려면 먼저 B를 배포한다.
+`default`가 아닌 계정은 묶음 B(`0012`~`0016`과 계정 단위 점유)를 배포한 뒤에만 구성한다. 3 이전에 모든 인스턴스가 묶음 B 이상이어야 한다. 묶음 B 이전 버전(묶음 A)은 비`default` 계정이 구성에 있으면 기동을 거부하지만, 그보다 더 이전 버전은 `account_id`를 보지 않는다.
+
+#### 묶음 B 마이그레이션(`0012`~`0016`)
+
+- `0012`·`0013`: 계정 단위 점유 인덱스(`mail_jobs_account_priority_claim_idx`, `mail_jobs_account_claim_idx`). `0014`: 계정 24시간 할당용 `mail_attempts_account_quota_idx`. 셋 다 `CREATE INDEX CONCURRENTLY IF NOT EXISTS`라 쓰기를 막지 않는다. 150만 행 임시 schema에서 328ms·292ms·170ms였다(ADR-0013 측정, 동시 쓰기 없음, 로컬 단일 실행). 동시 쓰기 부하에서의 시간은 측정하지 않았다.
+- `0015`·`0016`: 기존 점유 인덱스 `mail_jobs_priority_claim_idx`·`mail_jobs_claim_idx`를 `DROP INDEX CONCURRENTLY IF EXISTS`로 지운다. 새 인덱스와 함께 두면 계획이 기존 인덱스를 고르기 때문이다(ADR-0013 M5). 이번 릴리스의 마지막 마이그레이션이다.
+- 파일 일곱이 모두 순서대로 적용된다(컨테이너 기동 때 자동). `-- mailo:no-transaction` 파일이라 실패하면 기록되지 않고 다음 실행에서 다시 시도한다. `CONCURRENTLY`가 실패해 `INVALID` 인덱스가 남으면 실행기가 인덱스 이름을 담아 실패한다. `troubleshooting.md` "등급별 적체"의 "인덱스 복구"를 따른다.
+- 롤링 배포 중 영향: 인스턴스가 하나씩 새 버전으로 바뀌는 동안 아직 이전 버전(묶음 A 이전)이 도는 인스턴스는 지워진 인덱스 없이 점유한다. 정확성은 영향받지 않지만 점유와 적체 건수가 대기 건수에 비례해 느려진다(ADR-0013 M8: 대기 25만 건에서 한 쿼리 약 110~150ms, 한 쿼리 측정). 대기 건수가 작으면 무시할 수준이다. 롤링 배포를 실제로 실행해 확인하지 않았다. 대기가 많을 때는 인스턴스를 한꺼번에 바꾼다(짧은 중단을 받아들인다).
+- 묶음 B 코드는 새 인덱스가 없으면 점유가 느려질 뿐 동작은 같다. 마이그레이션이 실패하면 앱이 뜨지 않는다.
 
 계정 구성에서 빠진 계정의 작업은 점유되지 않고 만료 sweep이 `EXPIRED`로 만든다(`JOB_EXPIRED` 이벤트). 다른 계정으로 옮기지 않는다. 기동 때 구성 밖 계정의 비종결 작업이 있으면 `account_orphan_jobs`(warn, `accountId`, `count`)를 남긴다.
 
@@ -234,11 +242,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 1. 레지스트리에서 `accountId`를 빼고 재시작한다. 새 작업은 `default`다. 남기면 구버전이 기동하지 못한다.
 2. `default`가 아닌 계정의 비종결 작업이 0이 될 때까지 기다리거나 취소·만료시킨다. 확인 SQL: `SELECT count(*) FROM mail_jobs WHERE account_id <> 'default' AND status IN ('PENDING','RETRY_WAIT','SENDING')`. 남은 채 구버전으로 바꾸면 그 작업이 `default` SMTP로 나간다.
 3. 이전 버전으로 인스턴스를 바꾼다.
-4. 마이그레이션은 되돌리지 않는다. 컬럼과 제약은 구버전이 무시한다. 묶음 B의 레거시 인덱스 삭제 전에는 인덱스를 다시 만들 일이 없다.
+4. 마이그레이션은 되돌리지 않는다. 컬럼과 제약과 새 인덱스는 구버전이 무시한다. 묶음 B 이전 버전으로 되돌리면 지운 인덱스 둘을 다시 만든다(구버전의 점유가 이 인덱스를 쓴다. 대기 건수에 비례한 느려짐은 정확성에는 영향이 없다).
+
+   ```sql
+   CREATE INDEX CONCURRENTLY IF NOT EXISTS mail_jobs_claim_idx ON mail_jobs (next_attempt_at, id) WHERE status IN ('PENDING','RETRY_WAIT');
+   CREATE INDEX CONCURRENTLY IF NOT EXISTS mail_jobs_priority_claim_idx ON mail_jobs (priority DESC, next_attempt_at, id) WHERE status IN ('PENDING','RETRY_WAIT');
+   ```
 
 ```txt
-위험도: 중간 (0010·0011의 ACCESS EXCLUSIVE 잠금 대기. 순서를 어기면 default가 아닌 계정의 작업이 default SMTP로 나갈 수 있음)
-롤백: 레지스트리의 accountId를 빼고, default가 아닌 계정의 비종결 작업이 0이 된 뒤 앱만 이전 버전으로 되돌린다. 스키마는 되돌리지 않는다(되돌리려면 pg_dump 복원)
+위험도: 중간 (0010·0011의 ACCESS EXCLUSIVE 잠금 대기, 0015·0016의 인덱스 삭제로 구버전 점유 성능 저하. 순서를 어기면 default가 아닌 계정의 작업이 default SMTP로 나갈 수 있음)
+롤백: 레지스트리의 accountId를 빼고, default가 아닌 계정의 비종결 작업이 0이 된 뒤 앱만 이전 버전으로 되돌리고 지운 인덱스 둘을 다시 만든다. 컬럼과 새 인덱스는 되돌리지 않는다(되돌리려면 pg_dump 복원)
 ```
 
 ## 환경 변수
@@ -376,7 +389,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `auth` | 선택 | `user`와 `secretVar` 쌍. 생략하면 인증 없는 릴레이다. `user`는 주소가 아닌 값도 받는다 |
 | `from` | 조건부 | 주소 하나. 생략하면 `auth.user`를 쓰고, `auth`가 없거나 `user`가 주소가 아니면 거부한다 |
 | `timeoutSeconds` | 선택 | 1~3600이고 `MAILO_LEASE_SECONDS` 미만. 생략하면 `MAILO_SMTP_TIMEOUT_SECONDS`(기본 30) |
-| `sendQuota24h`, `concurrency` | 선택 | 형식만 검증한다. 구현 묶음 A는 점유에 쓰지 않는다(아래 "한계") |
+| `sendQuota24h`, `concurrency` | 선택 | 로더가 형식을 검증하고 Worker가 점유에 쓴다(아래 "계정 단위 점유"). `default`를 환경 변수로 정의하면 쓸 수 없다 |
 
 - 모르는 필드와 최상위의 `accounts` 밖 필드는 기동을 거부한다. 파일에는 비밀번호 값을 두지 않는다. 비밀 변수 이름만 둔다(호출처 레지스트리의 JWS 키와 같은 방식).
 - 비밀번호는 `<변수>_FILE`(우선) 또는 `<변수>`로 받는다. `_FILE`이 있으면 파일을 읽지 못해도 환경 변수로 돌아가지 않고 기동을 거부한다.
@@ -387,13 +400,15 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 - 어느 호출처도 참조하지 않는 계정은 허용한다. 기동 로그 `account_unused`(info, `accountId`)를 남긴다.
 - 서로 다른 계정이 같은 `from`을 가질 수 있다. 그 주소는 두 계정을 쓰는 호출처 모두의 허용 발신 주소 집합에 들어간다(집합이 합쳐진다). 코드는 이를 막지 않는다.
 
-한계(구현 묶음 A):
+계정 단위 점유(구현 묶음 B)와 한계:
 
-- 묶음 B 전에는 `default`가 아닌 계정을 지원하지 않는다. 계정 파일에 `default`가 아닌 계정이 있으면 앱(`main`·`createApp`)이 기동을 거부한다(`ConfigError`, 메시지에는 계정 ID만 싣는다). 계정 파일 로더와 호출처 `accountId` 검증은 `default`가 아닌 계정도 받으므로 B에서 거부만 지우면 된다. `default`만 정의하면 파일이든 환경 변수든 기존대로 기동한다.
-  - 이유: 묶음 A의 한 번의 점유 호출은 모든 계정을 다루고 차단기 모드를 `default` 행 하나로 정한다. 비`default` 계정의 차단기는 open에서 닫히지 않고, 계정 상태 오류의 재시도 시각이 과거로 기록돼 같은 작업을 즉시 다시 점유해 SMTP를 연속 호출할 수 있다.
-  - 계정별 점유·정지·24시간 할당과 레거시 인덱스 삭제는 묶음 B다(ADR-0013 구현 순서).
-- `sendQuota24h`·`concurrency`를 설정하면 기동 때 `account_limits_not_enforced`(warn)가 남는다. 값은 검증만 하고 쓰지 않는다.
-- `/metrics`의 `account_id` 라벨은 아직 모든 작업을 `default`로 센다. `/health/ready`와 `/ops`에는 계정 정보가 없다(묶음 C).
+- 점유·차단기·정지·24시간 할당이 계정 단위다. 한 계정의 차단기 `open`이나 SMTP 지연이 다른 계정의 발송을 막지 않는다. 차단기 임계값과 대기 시간은 모든 계정이 공유하는 `MAILO_BREAKER_*` 값이다.
+- Worker는 `MAILO_WORKER_CONCURRENCY`(C)를 계정에 나눈다. 계정마다 한 인스턴스가 동시에 쓰는 슬롯 상한 `cap_a`는 계정의 `concurrency`이고 생략하면 `max(1, C − (N − 1))`이다(N은 계정 수). C=4, N=2이면 한 계정은 3슬롯이다. 상한은 인스턴스별이라 계정 하나의 전체 동시 전송 수는 인스턴스 수 × `cap_a` 이하다. 다른 계정이 한가해도 `cap_a`를 넘지 못한다. 처리량이 필요하면 C를 올리거나 `concurrency`를 준다. 계정 수가 C보다 많으면 기동을 거부한다.
+- `sendQuota24h`가 있는 계정은 최근 24시간의 시도 수와 점유 중 수가 한도에 닿으면 점유를 멈춘다(대표 작업 포함, 시도가 24시간 밖으로 밀려나면 재개). 단위는 메시지 시도 수이고 수신자 수로 가중하지 않는다. 호출처 `sendQuota24h`와 함께 걸리면 더 작은 쪽이다. 계정 할당을 쓰면 `MAILO_RECORD_RETENTION_SECONDS`가 24시간 이상이어야 한다(미만이면 기동 실패). 인스턴스가 여럿이어도 계정 advisory lock으로 초과하지 않는다(통합 테스트는 한 인스턴스 안의 동시 호출 12개로 확인했다).
+- 계정 정지는 `mail_send_controls`의 `scope_type = 'account'` 행을 점유가 읽어 그 계정을 멈춘다. 정지를 쓰고 지우는 REST·CLI·감사는 구현 묶음 C라 지금은 직접 SQL로만 넣을 수 있다. 구버전은 `account` 범위를 읽지 않는다. 계정 정지에 기대어 롤백하지 않는다.
+- 새 로그: `account_quota_exceeded`·`account_quota_recovered`, `send_paused`·`send_resumed`의 `scope: "account"`, `claim_failed`의 `accountId`, `worker_started`의 `accounts`. 모두 계정 ID와 한도 수치만 싣는다. `account_limits_not_enforced`는 없다.
+- `/health/ready`의 `queue.dueCount`는 구성한 계정별 값(각각 10000에서 멈춤)의 합이다. 계정이 둘 이상이면 10000을 넘을 수 있고 `dueCountTruncated`는 어느 한 계정이라도 잘렸는지다. 구성에서 빠진 계정의 작업은 점유되지 않아 세지 않는다.
+- 아직 없다: `/metrics`의 `account_id` 라벨은 모든 작업을 `default`로 센다. `/health/ready`·`/ops`·CLI에 계정 정보가 없다(구현 묶음 C). 호출처 동시 상한(`maxConcurrentSends`)은 묶음 D다.
 
 #### 평문 SMTP 모드
 
@@ -881,7 +896,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 작업 취소 도입(`0006`·`0007`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기 시간(대용량·쓰기 부하). 구버전의 동작은 코드를 읽어 적었다.
 - 요청별 만료 시간 도입의 롤링 배포·롤백 실행, 긴 `MAILO_JOB_EXPIRY_MAX_SECONDS`에서의 대기 건수와 점유 지연.
 - 마이그레이션의 대용량 DB 적용 시간. `0005`(`CREATE INDEX CONCURRENTLY`)를 쓰기 부하 중에 적용한 시간도 측정하지 않았다.
-- SMTP 계정 도입(묶음 A, `0010`·`0011`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기(동시 쓰기 부하), 둘 이상의 실제 Gmail·Workspace 계정, 계정별 한도 수치. 구버전의 `accountId` 거부와 컬럼 무시는 코드 읽기와 통합 테스트(컬럼 없는 `INSERT`)로만 확인했다. 컨테이너 `read_only`에서 계정 파일 마운트와 `_FILE` 비밀 읽기는 실행하지 않았다.
+- SMTP 계정 도입(묶음 A·B, `0010`~`0016`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기와 `CREATE INDEX CONCURRENTLY`·`DROP INDEX CONCURRENTLY`의 동시 쓰기 부하 아래 시간, 레거시 인덱스 삭제 뒤 구버전 점유 성능(한 쿼리 측정만), 다중 인스턴스(4개 이상) 동시 부하의 poll 비용·풀 점유·계정 advisory lock 경합, 둘 이상의 실제 Gmail·Workspace 계정, 계정별 한도 수치. 구버전의 `accountId` 거부와 컬럼 무시는 코드 읽기와 통합 테스트(컬럼 없는 `INSERT`)로만 확인했다. 컨테이너 `read_only`에서 계정 파일 마운트와 `_FILE` 비밀 읽기는 실행하지 않았다.
 - `/metrics`(RQ-049~052): 운영 크기(수백만 행)·다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프에서의 쿼리 비용과 풀 점유(예비 연결 4개 가정), 롤링 배포(구버전 404는 코드 읽기 결과)와 롤백, 알림 규칙의 발화 조건과 임계값, 부하에서의 스크레이프 간격. 컨테이너·실제 Prometheus 스크레이프·`promtool`은 한 번씩 실행했다("지표").
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
