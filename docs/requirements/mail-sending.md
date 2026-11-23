@@ -35,8 +35,9 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0007](../adr/0007-smtp-stage-classification-and-circuit-breaker.md): SMTP 단계 기준 분류, 전역 차단기.
 - [ADR-0008](../adr/0008-jwe-jws-envelope-and-db-encryption.md): JWE·JWS 형식, DB 본문 암호화, 본문 삭제.
 - [ADR-0009](../adr/0009-claim-priority.md): 우선순위 등급, 점유 경로(우선순위·대기 순서), 지문의 `policy.priority`, 배포·롤백 순서. ADR-0002 구현 중 확정 2의 점유 인덱스·순서를 이어받는다.
+- [ADR-0010](../adr/0010-per-request-job-ttl.md): 요청별 만료 시간 `ttlSeconds`, 허용 범위와 상한 설정, 지문의 `policy.ttlSeconds`, 만료 의미, 보존 기간 기동 검사, 배포 순서. ADR-0002 결정 7의 요청별 지정 미결정을 정한다.
 
-ADR-0001~0009는 모두 승인됐다(2026-11-23).
+ADR-0001~0010은 모두 승인됐다(2026-11-23).
 
 ## 용어와 진행 상태
 
@@ -62,6 +63,7 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-23 5단계 요청별 만료 시간 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 363건(25개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. Dockerfile·compose·파일 채널 I/O·봉투 형식·샘플을 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e를 실행하지 않았다(RQ-039 판정 근거).
 - 검증 수치(2026-11-23 개발용 Mailpit profile 반영 뒤): `pnpm test` 단위 568건(31개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck` 통과, `pnpm lint` 경고·오류 0건. 소스 변경이 없어 통합 테스트는 다시 실행하지 않았다. compose 변경이라 `scripts/container/verify-sigterm-file.sh`(1000건, 종료 코드 0, 재기동 뒤 중복·유실 없음)·`verify-sigkill-duplicate.sh`(같은 Message-ID 2통, 기대대로)를 실행했다. `--profile mailpit`으로 띄운 별도 compose 프로젝트에서 Mailo→Mailpit 1건 발송을 수동 확인했다(RQ-029 판정 근거).
 - 검증 수치(2026-11-23 평문 SMTP 모드 반영 뒤): `pnpm test` 단위 563건(31개 파일), 실패 0건. 관련 통합 `e2e/smtp-plaintext.integration-spec.ts`·`e2e/mail-flow.integration-spec.ts` 9건(2개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck` 통과, `pnpm lint` 경고·오류 0건. 전체 통합·컨테이너·볼륨·NFS·샘플 e2e는 실행하지 않았다(RQ-005 판정 근거).
 - 검증 수치(2026-11-23 발송 우선순위 구현 리뷰 뒤, 다음 줄의 실행보다 나중): 다음 줄(4단계 반영 뒤) 실행과 코드 동작이 같고 문서·주석만 바뀐 상태에서 다시 실행한 결과다. 같은 코드의 앞선 전체 통합 실행은 실패 0건이었으므로 아래 1건은 간헐 실패로 본다(원인 미확정). `turbo --force`로 단위 547건(31개 파일), 타입 검사·린트·빌드를 새로 실행해 통과했다. 단위 실패와 린트 경고·오류는 0건이다. 관련 통합 58건(5개 파일)은 실패 0건이다. 전체 통합은 333건 중 332건 통과·1건 실패했다. 실패는 `worker/worker-quota.integration-spec.ts`의 무제한 발송 대기에서 `waitFor 시간 초과`였다. 소스 변경 없이 실패 파일만 재실행해 3건 모두 통과했다. 최초 실패 원인은 미확정이며 전체 통합을 한 번에 통과한 결과로 기록하지 않는다. 포맷·diff 공백 검사도 통과했다. 롤백 전 미확인 Key 처리와 점유 지연 설명을 정적 검토로 보완했다. 성능 측정·실제 롤백·NFS·컨테이너·볼륨·샘플 e2e는 이번 리뷰에서 실행하지 않았다. 기존 성능 수치는 이전 수동 측정 기록이다.
@@ -81,6 +83,7 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 | 2단계 | 파일 채널(같은 호스트 볼륨), JWS, JWE, 호출처별 발송 할당(RQ-032) |
 | 3단계 | NAS/NFS 통합 테스트, 사용처 연동 문서와 운영 문서 |
 | 4단계 | 발송 우선순위(RQ-033~038, ADR-0009) |
+| 5단계 | 요청별 만료 시간(RQ-039, ADR-0010) |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -117,6 +120,11 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 
 - 구현·검증 완료: 요청 `priority` 필드, 지문 `policy.priority`(도입 전 골든 값 고정), 점유 두 경로와 `MAILO_CLAIM_FIFO_RATIO`, 마이그레이션(`0004` 컬럼·CHECK, `0005` 인덱스, INVALID 인덱스 fail-closed), 조회 응답과 운영자 헬스 수치. RQ-033~037은 검증 완료다.
 - RQ-038은 진행 중이다. 점유 쿼리 성능은 측정해 기준(2배 이내)을 충족했으나 수동 측정이다(최대 1.08배, ADR-0009 구현 중 확정 3). 문서 갱신은 검토로만 확인했다. 롤링 배포·롤백 실행과 대용량 `0005` 적용은 확인하지 않았다.
+
+5단계 구현 상태(2026-11-23 갱신):
+
+- 구현·검증 완료: 요청 `ttlSeconds` 필드(하한 60, 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS`), 지문 `policy.ttlSeconds`(생략 요청의 도입 전 골든 값 고정), 등록 때 만료 시각 고정, 기동 검사(기본 TTL ≤ 상한 ≤ 기록 보존). 마이그레이션은 없다.
+- RQ-039는 진행 중이다. 문서 갱신은 검토로만 확인했다. 롤링 배포·롤백은 실행하지 않았다.
 
 ## 1. 입력 채널과 경계
 
@@ -345,7 +353,7 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - 기본값은 exponential backoff다. 모두 설정으로 바꿀 수 있고, 수치는 추정이다.
   - 기준 1분, 배수 2, 상한 1시간, jitter ±20% 균등.
   - 최대 시도 8회(첫 시도 포함).
-  - 만료 TTL 24시간.
+  - 만료 TTL 24시간. 요청은 `ttlSeconds`로 상한 안에서 바꿀 수 있다(RQ-039).
 - 기본값에서 대기 합은 약 2시간(1+2+4+8+16+32+60분)이다. 메시지 오류는 TTL 전에 횟수가 먼저 소진된다. 계정 상태 오류는 횟수를 쓰지 않으므로 긴 장애는 TTL에서 끝난다.
 
 **수용 조건:**
@@ -1282,6 +1290,63 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - 마이그레이션(자동 검증): `0004_job_priority.sql`의 DEFAULT 20과 CHECK, `0005_job_priority_claim_index.sql`의 유효한 부분 인덱스(`queue/claim-priority.integration-spec.ts` "스키마"), 도입 전 schema에서 `0004`·`0005` 적용(`http/rest-priority.integration-spec.ts`), INVALID 인덱스가 남은 재실행의 fail-closed(`db/migrator.integration-spec.ts`, ADR-0009 구현 중 확정 4).
 - 남은 미검증: 롤링 배포 중 구·신 인스턴스 혼용, 롤백 실행, 대용량 테이블의 `0005` 적용 시간과 쓰기 부하 중 적용, 캐시가 차가운 상태의 점유 지연.
 
+## 13. 요청별 만료 시간
+
+호출처가 요청마다 만료 시간을 상대값으로 정한다. 결정은 [ADR-0010](../adr/0010-per-request-job-ttl.md)이다.
+예약 발송(not-before)과 요청별 재시도 횟수·간격은 범위 밖이다.
+
+### RQ-039 요청별 만료 시간 지정
+
+- [ ] **진행 상태:** 진행 중 (5단계)
+
+**요구사항:**
+
+- 요청 필드(ADR-0010 결정 1·2):
+  - REST와 파일 요청의 최상위 필드에 정수 `ttlSeconds`를 선택적으로 받는다. 위치와 규칙은 `priority`(RQ-033)와 같다.
+  - 만료 시각은 등록 때 DB `now() + ttlSeconds`로 `expires_at`에 고정한다. 같은 Key로 다시 요청해도 바뀌지 않는다.
+  - 생략하면 `MAILO_JOB_EXPIRY_SECONDS`(RQ-008)를 쓴다.
+  - 절대 시각 필드는 받지 않는다(ADR-0002 결정 10).
+  - JWE `content`의 복호화 평문에 `ttlSeconds`가 있으면 `UNKNOWN_FIELD`다. 파일 JWS에서는 서명 대상이다.
+- 허용 범위(ADR-0010 결정 3):
+  - 정수 60 이상 `MAILO_JOB_EXPIRY_MAX_SECONDS` 이하다. 하한 60은 요청 필드에만 적용한다. `MAILO_JOB_EXPIRY_SECONDS`의 범위(1~31536000)는 그대로다.
+  - `MAILO_JOB_EXPIRY_MAX_SECONDS`의 기본값은 `MAILO_JOB_EXPIRY_SECONDS`의 실제 값이다. 범위는 1~31536000이다.
+  - 기동 때 `MAILO_JOB_EXPIRY_SECONDS` ≤ `MAILO_JOB_EXPIRY_MAX_SECONDS`를 검사한다.
+  - 정수가 아닌 값은 `INVALID_FORMAT`, 범위 밖 정수는 `OUT_OF_RANGE`다(ADR-0010 구현 중 확정 1). REST는 400(위치 `/ttlSeconds`), 파일은 `VALIDATION_FAILED` 수집 거부다. 응답·기록에 요청 값을 넣지 않는다(RQ-027).
+- 중복 등록(ADR-0010 결정 4, RQ-011):
+  - 지정했을 때만 지문 `policy.ttlSeconds`에 요청 값을 넣는다. 생략 요청의 지문은 도입 전과 바이트 단위로 같다. 형식 태그 `mailo-fp-v1`을 유지한다.
+  - 생략한 요청과 기본값을 명시한 요청은 다른 요청이다.
+  - 같은 Key에 다른 `ttlSeconds`(생략 포함)를 보내면 REST는 409, 파일은 `FINGERPRINT_MISMATCH` 수집 거부다. 기존 작업은 바꾸지 않는다.
+  - `priority`와 함께 쓰면 `policy` 키는 이름 순서로 정규화된다.
+- 만료 의미(ADR-0010 결정 5):
+  - 만료 시각 이후 새 시도를 시작하지 않는다. claim이 점유하지 않고 sweep이 `PENDING`·`RETRY_WAIT`를 `EXPIRED`로 바꾼다. 차단기 `open`·재시도 대기 중에도 같다.
+  - 전송 중에 만료 시각이 지나도 그 시도는 끝까지 간다. 성공하면 `SENT`, 재시도 대상 오류면 재시도하지 않고 `EXPIRED`다.
+- 보존 기간 기동 검사(ADR-0010 결정 6): `MAILO_RECORD_RETENTION_SECONDS` ≥ `MAILO_JOB_EXPIRY_MAX_SECONDS`다. 상한을 생략한 기존 설정은 검사 결과가 기존과 같다.
+- 조회·이벤트(ADR-0010 결정 7): 조회 응답의 기존 `expiresAt`이 계산된 만료 시각이다. 응답에 `ttlSeconds` 필드를 추가하지 않는다. 이벤트 payload에 TTL을 넣지 않는다.
+- 배포(ADR-0010 결정 8): 마이그레이션은 없다. 모든 Mailo 인스턴스를 갱신한 뒤 호출처가 `ttlSeconds`를 보낸다. 구 버전은 `UNKNOWN_FIELD`로 거부한다. 롤백 전에 호출처 전송을 먼저 끊는다.
+- 한계: 긴 TTL은 한도 차단이 길어져도 메일이 결국 나가게 할 뿐, 한도로 생긴 지연을 없애지 않는다. 이 한계를 호출처 연동 문서에 적는다.
+
+**수용 조건:**
+
+- [x] `ttlSeconds`를 지정하면 `expires_at`이 등록 때 DB `now() + ttlSeconds`다. 같은 Key 재요청이 만료 시각을 바꾸지 않는다.
+- [x] 생략하면 `MAILO_JOB_EXPIRY_SECONDS`를 쓰고 지문이 도입 전과 같다(골든 테스트).
+- [x] 하한 미만·상한 초과·정수 아님은 REST 400, 파일 수집 거부다. 오류에 요청 값을 넣지 않는다(RQ-027).
+- [x] REST와 파일 채널이 같은 규칙을 쓴다(`openRequest`·`toRegisterInput` 경유). 같은 Key에 다른 값(생략·기본값 명시 포함)은 REST 409, 파일 지문 불일치 거부이고 같은 값은 기존 작업이다.
+- [x] 만료 뒤 짧은 TTL 작업은 점유되지 않고 `EXPIRED`가 된다. 차단기 `open`·재시도 대기·Worker 경로를 포함한다. 전송 중 만료된 시도는 끝까지 가서 성공하면 `SENT`다.
+- [x] 상한·보존 기간 검사가 기동 때 동작한다. 기본 설정과 상한을 생략한 기존 설정은 기동을 거부하지 않는다.
+- [ ] OpenAPI, `caller-onboarding.md`, `deployment.md`(새 변수, 배포 순서), `troubleshooting.md`, `.env.example`을 갱신한다.
+
+**판정 근거:**
+
+- `envelope/open-request.spec.ts`(단위) "openRequest: 요청별 만료 시간": 생략 요청의 정규화 문자열·지문 골든 값(우선순위 도입 전 값과 같은 리터럴), 하한 60·상한 경계값의 REST·파일 수락과 `policy` `["ttlSeconds",<값>]`, 기본값 명시와 생략의 지문 차이, 값이 다르면 지문 차이, `priority`와 함께 쓴 요청의 정규화 문자열(키 이름 순서, 필드 순서 무관), 범위 밖 정수 4종 `OUT_OF_RANGE`, 정수 아님 6종과 무한대·NaN `INVALID_FORMAT`, 상한은 의존성 값을 따름, JWS 서명 대상, JWE 바깥 값 보존, JWE 평문 안은 `UNKNOWN_FIELD`, canary 비노출, `toRegisterInput`의 기본값 대체.
+- `config/load-config.spec.ts`(단위) "요청별 만료 상한": 상한 기본값이 기본 TTL의 실제 값, 명시값과 최대 31536000, 기본 TTL > 상한 거부와 같으면 수락, 범위 밖·정수 아님 5종 거부, 보존 < 상한 거부와 같으면 수락, 상한을 생략한 기존 설정(기본 TTL 15초, 30일)의 수락, 상한 생략 시 보존 < 기본 TTL 거부.
+- `http/rest-ttl.integration-spec.ts`(PostgreSQL): 하한·중간·상한 값의 `expires_at − created_at`과 응답·ID 조회의 `expiresAt` 일치, 생략은 기본 TTL이고 응답에 `ttlSeconds` 없음, 같은 값 재요청 200과 만료 시각 불변, 다른 값·지정 뒤 생략·생략 뒤 지정·생략 뒤 기본값 명시 409와 만료 시각 불변, `priority`와 함께 쓴 요청의 필드 순서 무관 200, 잘못된 값 8종 400 `/ttlSeconds`와 미등록·canary 비노출, 오류에 요청 값·상한 값 없음.
+- `file-channel/poller.integration-spec.ts`(PostgreSQL) "요청별 만료 시간": 생략·평문 JSON·JWS·JWE 파일의 TTL 저장, 잘못된 값 7종과 JWE 평문 안 `ttlSeconds`의 `VALIDATION_FAILED` 거부와 원본 삭제·canary 비노출, 같은 값 중복과 다른 값·생략의 `FINGERPRINT_MISMATCH`, 기존 만료 시각 불변.
+- `e2e/job-ttl.integration-spec.ts`(PostgreSQL, REST 등록): 짧은 TTL `PENDING`의 점유 제외와 sweep `EXPIRED`·`JOB_EXPIRED` 이벤트(payload에 TTL 없음), `RETRY_WAIT` 중 만료, 다음 재시도가 만료 뒤이면 결과 기록 때 `EXPIRED`, 차단기 `open`이 기본 TTL보다 길 때 긴 TTL 작업만 남아 닫힌 뒤 점유, 전송 중 만료된 시도의 `SENT`와 일시 오류 시 `EXPIRED`, Worker(메모리 발송기, 일시 오류)가 TTL 60초 작업을 `EXPIRED`로·기본 TTL 작업을 `RETRY_WAIT`로 처리.
+- RED 확인(2026-11-23): 구현 전 코드에서 신규 단위 테스트가 실패했다(기존 동작과 같은 일부 항목은 통과, 수는 기록하지 않았다). 신규 통합 테스트는 29건 중 26건이 실패했다(기존 동작과 같은 3건은 통과).
+- 구현: `envelope/request-schema.ts`(검증), `envelope/open-request.ts`(`requestPolicy`), `envelope/register-input.ts`, `config/load-config.ts`. 큐 SQL(`queue/register.ts`·`claim.ts`·`complete.ts`·`maintenance.ts`)은 바꾸지 않았다.
+- 문서(검토로만 확인, `[ ]` 유지): `docs/api/openapi.yaml`(`SendRequest.ttlSeconds`, 파일 요청, `OUT_OF_RANGE`, `Job.expiresAt`), `docs/api/README.md`, `docs/operations/caller-onboarding.md` "요청별 만료 시간", `deployment.md`(`MAILO_JOB_EXPIRY_MAX_SECONDS`, "요청별 만료 시간 도입 배포 순서"), `troubleshooting.md`, `key-management.md`, `.env.example`.
+- 남은 미검증: 롤링 배포 중 구·신 인스턴스 혼용과 롤백 실행, 긴 상한에서의 대기 건수와 점유 지연, 하한 60의 적정성.
+
 ## 확정한 항목
 
 2026-11-23 판정으로 미결정에서 확정한 항목이다. 값은 해당 RQ와 ADR이 정한다.
@@ -1299,6 +1364,7 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 | 이벤트 cursor           | RQ-017, ADR-0006                                       |
 | 구현 순서               | 구현 단계 절                                           |
 | 발송 우선순위           | RQ-033~038, ADR-0009                                   |
+| 요청별 만료 시간        | RQ-039, ADR-0010                                       |
 | NFS 통합 테스트 환경    | 아래                                                   |
 
 NFS 통합 테스트 환경(3단계, 추정):
@@ -1316,7 +1382,7 @@ NFS 통합 테스트 환경(3단계, 추정):
 | 항목                    | 내용                                                                |
 | ----------------------- | ------------------------------------------------------------------- |
 | 파일 채널 상세          | 결정됨: `link` 방식은 채택하지 않는다(ADR-0004 구현 중 확정 10·30·32, `rename`만 쓴다). 실제 NAS의 mount 옵션(NFS loopback 기준은 `docs/operations/nfs.md`에 정했고 실제 NAS는 미검증). 결정됨: 호출처 계정·폴더 모드는 default ACL 권장(ADR-0004 구현 중 확정 14·28, `docs/operations/caller-onboarding.md`), 스키마 필드명과 폴링 간격(30초)·임시 파일 정리 시간(1시간) 기본값은 2단계에서 정했다(ADR-0004 "구현 중 확정") |
-| 메시지별 정책           | 재시도 횟수·간격·만료 시간을 요청별로 지정할지 여부. 우선순위는 결정됨(RQ-033, ADR-0009) |
+| 메시지별 정책           | 재시도 횟수·간격을 요청별로 지정할지 여부. 결정됨: 우선순위(RQ-033, ADR-0009), 만료 시간(RQ-039, ADR-0010) |
 | 반송(Bounce)            | SMTP 수락 이후 반송까지 추적할지 여부                               |
 | 관리 기능               | 발송 이력 조회, 실패 작업 수동 재시도, `CANCELED` 상태              |
 | 계정 전체 발송 속도 제어 | 한도에 닿기 전에 계정 전체 발송 속도를 선제적으로 제한할지 여부. 한도 초과 응답은 ADR-0007이, 호출처별 할당은 RQ-032가 정했다. 한도 수치는 Google 문서 갱신으로 바뀔 수 있다 |

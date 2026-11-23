@@ -1273,6 +1273,155 @@ describe("파일 채널 폴러 (RQ-002, ADR-0004)", () => {
     });
   });
 
+  // 기본 TTL 86400과 상한 172800은 리터럴로 둔다. 생략·지정·상한을 서로 구분하려는 값이다.
+  describe("요청별 만료 시간 (RQ-039, ADR-0010)", () => {
+    const ttls = async (): Promise<Record<string, number>> =>
+      Object.fromEntries(
+        (
+          await pool.query<{ idempotency_key: string; ttl: number }>(
+            `SELECT idempotency_key, EXTRACT(EPOCH FROM expires_at - created_at)::int AS ttl
+               FROM mail_jobs`,
+          )
+        ).rows.map((r) => [r.idempotency_key, r.ttl]),
+      );
+
+    beforeEach(() => {
+      h.cleanup();
+      h = createFileHarness(pool, {
+        env: { MAILO_JOB_EXPIRY_MAX_SECONDS: "172800" },
+      });
+    });
+
+    it("생략은 기본 TTL이고 평문 JSON·JWS·JWE 파일의 ttlSeconds를 등록 시각 기준 만료 시각으로 저장한다", async () => {
+      const jwe = json({
+        version: 1,
+        idempotencyKey: "jwe",
+        to: ["kim@example.com"],
+        from: "no-reply@example.com",
+        ttlSeconds: 172_800,
+        content: await encryptContent(rsaKey(MAILO_JWE_KID), {
+          caller: "alpha",
+          content: { subject: "제목", text: "본문" },
+        }),
+      });
+      h.drop(
+        "alpha",
+        "omit.json",
+        json(fileRequest({ idempotencyKey: "omit" })),
+      );
+      h.drop(
+        "alpha",
+        "plain.json",
+        json(fileRequest({ idempotencyKey: "plain", ttlSeconds: 60 })),
+      );
+      h.drop(
+        "signed",
+        "jws.json",
+        signedFile(fileRequest({ idempotencyKey: "jws", ttlSeconds: 3600 })),
+      );
+      h.drop("alpha", "jwe.json", jwe);
+
+      const summary = await h.makePoller().pollOnce();
+
+      expect(total(summary, "registered")).toBe(4);
+      expect(await rejections()).toEqual([]);
+      expect(await ttls()).toEqual({
+        omit: 86_400,
+        plain: 60,
+        jws: 3600,
+        jwe: 172_800,
+      });
+    });
+
+    it("범위 밖·정수 아님·JWE 평문 안의 ttlSeconds는 VALIDATION_FAILED로 거부하고 원본을 지우며 값이 로그·거부 기록에 없다", async () => {
+      const values: unknown[] = [
+        59,
+        172_801,
+        0,
+        60.5,
+        "3600",
+        null,
+        CANARY.raw,
+      ];
+      values.forEach((ttlSeconds, i) =>
+        h.drop(
+          "alpha",
+          `bad-${i}.json`,
+          json(fileRequest({ idempotencyKey: `bad-${i}`, ttlSeconds })),
+        ),
+      );
+      h.drop(
+        "alpha",
+        "inner.json",
+        json({
+          version: 1,
+          idempotencyKey: "inner",
+          to: ["kim@example.com"],
+          from: "no-reply@example.com",
+          content: await encryptContent(rsaKey(MAILO_JWE_KID), {
+            caller: "alpha",
+            content: { subject: "제목", text: "본문", ttlSeconds: 600 },
+          }),
+        }),
+      );
+
+      const summary = await h.makePoller().pollOnce();
+
+      expect(total(summary, "rejected")).toBe(values.length + 1);
+      expect(await jobs()).toEqual([]);
+      const rows = await rejections();
+      expect(new Set(rows.map((r) => r.reason_code))).toEqual(
+        new Set(["VALIDATION_FAILED"]),
+      );
+      expect(files("alpha")).toEqual([]);
+      expect(JSON.stringify(rows)).not.toContain(CANARY.raw);
+      expect(h.logs.join("\n")).not.toContain(CANARY.raw);
+    });
+
+    it("같은 Key의 같은 ttlSeconds는 중복이고 값을 바꾸거나 빼면 FINGERPRINT_MISMATCH이며 기존 만료 시각은 그대로다", async () => {
+      const poller = h.makePoller();
+      const expiresAt = async () =>
+        (
+          await pool.query<{ expires_at: Date }>(
+            "SELECT expires_at FROM mail_jobs WHERE idempotency_key = 'tk'",
+          )
+        ).rows.map((r) => r.expires_at.getTime());
+      h.drop(
+        "alpha",
+        "a.json",
+        json(fileRequest({ idempotencyKey: "tk", ttlSeconds: 600 })),
+      );
+      await poller.pollOnce();
+      const before = await expiresAt();
+
+      h.drop(
+        "alpha",
+        "b.json",
+        json(fileRequest({ idempotencyKey: "tk", ttlSeconds: 600 })),
+      );
+      const dup = await poller.pollOnce();
+      expect(total(dup, "duplicates")).toBe(1);
+
+      h.drop(
+        "alpha",
+        "c.json",
+        json(fileRequest({ idempotencyKey: "tk", ttlSeconds: 601 })),
+      );
+      h.drop("alpha", "d.json", json(fileRequest({ idempotencyKey: "tk" })));
+      const changed = await poller.pollOnce();
+
+      expect(total(changed, "rejected")).toBe(2);
+      expect(
+        (await rejections()).map((r) => [r.file_name, r.reason_code]).sort(),
+      ).toEqual([
+        ["c.json", "FINGERPRINT_MISMATCH"],
+        ["d.json", "FINGERPRINT_MISMATCH"],
+      ]);
+      expect(await expiresAt()).toEqual(before);
+      expect(await ttls()).toEqual({ tk: 600 });
+    });
+  });
+
   describe("로그와 기록에 내용이 없다 (RQ-027)", () => {
     it("거부한 파일의 본문 canary가 로그·거부 기록·이벤트 어디에도 없다", async () => {
       const limit = 4096;

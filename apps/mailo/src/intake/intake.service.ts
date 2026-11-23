@@ -62,7 +62,7 @@ export class IntakeService {
       toRegisterInput(opened, {
         callerId,
         idempotencyKey,
-        expiresInSeconds: this.config.queue.jobExpirySeconds,
+        defaultExpiresInSeconds: this.config.queue.jobExpirySeconds,
         denyNew: !isSenderAllowed(
           opened.request.from,
           this.config.smtp.defaultFrom,

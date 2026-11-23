@@ -53,6 +53,7 @@ export interface IngestDeps {
   cipher: QueueBodyCipher;
   fingerprinter: QueueFingerprinter;
   maxFileBytes: number;
+  /** 요청이 `ttlSeconds`를 생략했을 때의 만료 TTL 초(`MAILO_JOB_EXPIRY_SECONDS`, RQ-039). */
   jobExpirySeconds: number;
   /** 기본 발신 주소(`config.smtp.defaultFrom`). 모든 호출처가 쓸 수 있는 발신 주소다. */
   defaultFrom: string;
@@ -194,7 +195,7 @@ export async function ingestFile(
     toRegisterInput(opened, {
       callerId: caller.id,
       idempotencyKey: key,
-      expiresInSeconds: deps.jobExpirySeconds,
+      defaultExpiresInSeconds: deps.jobExpirySeconds,
       denyNew: !isSenderAllowed(
         opened.request.from,
         deps.defaultFrom,

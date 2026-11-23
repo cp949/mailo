@@ -8,6 +8,9 @@
  * - 파일 채널은 `version`(1)과 `idempotencyKey`를 추가로 요구한다. REST는 Key를 헤더로 받으므로 이 두 필드는 정의되지 않은 필드다.
  * - `priority`는 선택 필드이고 `LOW`·`NORMAL`·`HIGH`·`URGENT`만 받는다(대소문자 구분). 생략하면 `NORMAL`이다(RQ-033).
  *   라우팅에 쓰는 값이라 최상위 평문 필드다. JWE 복호화 평문 안의 `priority`는 `open-request.ts`가 `UNKNOWN_FIELD`로 거부한다.
+ * - `ttlSeconds`는 선택 필드이고 `MIN_TTL_SECONDS` 이상 `ttl.maxSeconds`(`MAILO_JOB_EXPIRY_MAX_SECONDS`) 이하 정수만 받는다(RQ-039).
+ *   생략하면 null이고 큐 등록이 기본 만료 TTL을 쓴다. 위치는 `priority`와 같은 최상위 평문 필드다.
+ *   정수가 아닌 값은 `INVALID_FORMAT`, 범위 밖 정수는 `OUT_OF_RANGE`다. JSON `60.0`은 파싱 뒤 60이라 정수로 받는다.
  * - 오류는 위치(JSON Pointer)와 고정 코드만 담는다. 요청 값은 담지 않는다(RQ-027).
  *
  * 암호화 모드(`content`)는 여기서 수신자·발신자 규칙까지만 본다. 제목·본문은 복호화한 뒤에 검증한다(ADR-0008 결정 3).
@@ -37,12 +40,24 @@ const COMMON_FIELDS = [
   "html",
   "content",
   "priority",
+  "ttlSeconds",
 ] as const;
 const FILE_ONLY_FIELDS = ["version", "idempotencyKey"] as const;
 const PLAIN_CONTENT_FIELDS = ["subject", "text", "html"] as const;
 const JWE_COMPACT = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){4}$/;
 /** 파일 채널 요청 형식 버전. 형식이 바뀌면 올린다. */
 export const FILE_REQUEST_VERSION = 1;
+/**
+ * 요청 `ttlSeconds`의 하한(RQ-039, ADR-0010). 운영자 기본값 `MAILO_JOB_EXPIRY_SECONDS`(최소 1)에는 적용하지 않는다.
+ * 점유 지연(폴링·적체)보다 짧아 첫 시도 전에 만료되는 요청을 줄이려는 값이다. 적정성은 측정하지 않았다(추정).
+ */
+export const MIN_TTL_SECONDS = 60;
+
+/** 요청 `ttlSeconds`의 허용 범위 중 운영자가 정하는 부분. */
+export interface TtlBounds {
+  /** 상한(`MAILO_JOB_EXPIRY_MAX_SECONDS`). */
+  maxSeconds: number;
+}
 
 export type SchemaFailureReason =
   | "VALIDATION_FAILED"
@@ -61,6 +76,8 @@ export type RequestSchemaParse =
       idempotencyKey: string | null;
       /** 요청한 우선순위. 생략하면 `NORMAL`이다(RQ-033). */
       priority: Priority;
+      /** 요청한 만료 TTL 초. 생략하면 null이다(RQ-039). */
+      ttlSeconds: number | null;
     }
   | { ok: false; reason: SchemaFailureReason; errors: ValidationErrorItem[] };
 
@@ -105,6 +122,7 @@ export function parseRequestSchema(
   body: unknown,
   limits: MailRequestLimits,
   channel: SchemaChannel,
+  ttl: TtlBounds,
 ): RequestSchemaParse {
   if (!isRecord(body))
     return {
@@ -169,6 +187,17 @@ export function parseRequestSchema(
   else if (rawPriority !== undefined && rawPriority !== null)
     report("/priority", "INVALID_FORMAT");
 
+  // null은 위 반복문이 이미 INVALID_FORMAT으로 보고했다. 오류에 값을 넣지 않는다(RQ-027).
+  const rawTtl = body["ttlSeconds"];
+  let ttlSeconds: number | null = null;
+  if (typeof rawTtl === "number" && Number.isInteger(rawTtl)) {
+    if (rawTtl >= MIN_TTL_SECONDS && rawTtl <= ttl.maxSeconds)
+      ttlSeconds = rawTtl;
+    else report("/ttlSeconds", "OUT_OF_RANGE");
+  } else if (rawTtl !== undefined && rawTtl !== null) {
+    report("/ttlSeconds", "INVALID_FORMAT");
+  }
+
   const content = body["content"];
   const hasContent = content !== undefined;
   const plainPresent = PLAIN_CONTENT_FIELDS.some((f) => body[f] !== undefined);
@@ -193,6 +222,7 @@ export function parseRequestSchema(
   delete candidate["version"];
   delete candidate["idempotencyKey"];
   delete candidate["priority"];
+  delete candidate["ttlSeconds"];
   for (const [name, value] of Object.entries(candidate))
     if (value === null) delete candidate[name];
   if (subjectless) {
@@ -227,5 +257,6 @@ export function parseRequestSchema(
     content: jwe,
     idempotencyKey,
     priority,
+    ttlSeconds,
   };
 }

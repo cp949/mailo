@@ -62,7 +62,10 @@ export interface RegisterInput {
   body: Uint8Array;
   /** 지문 입력. 발송 결과에 영향을 주는 모든 요청 필드를 정규화한 평문이다. */
   canonicalRequest: string;
-  /** 만료 TTL 초. 만료 시각은 DB now()에 더해 계산한다(ADR-0002 결정 10). */
+  /**
+   * 만료 TTL 초. 만료 시각은 DB now()에 더해 계산한다(ADR-0002 결정 10).
+   * 요청 `ttlSeconds`나 기본 만료 TTL이다(RQ-039). 같은 Key의 기존 행이 있으면 기존 만료 시각을 바꾸지 않는다.
+   */
   expiresInSeconds: number;
   /**
    * 발송 우선순위(RQ-033). 생략하면 `NORMAL`이다. 중복 판정은 지문(`canonicalRequest`)이 하므로

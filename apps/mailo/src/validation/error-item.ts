@@ -17,7 +17,9 @@ export type ValidationErrorCode =
   | "KID_UNKNOWN"
   | "CALLER_MISMATCH"
   /** 요청의 `from`이 호출처의 허용 발신 주소(`defaultFrom` + `allowedFrom`)에 없다. */
-  | "FROM_NOT_ALLOWED";
+  | "FROM_NOT_ALLOWED"
+  /** 정수지만 허용 범위 밖이다. 현재는 `ttlSeconds`의 하한·상한 위반에만 쓴다(RQ-039). */
+  | "OUT_OF_RANGE";
 
 export interface ValidationErrorItem {
   /** 본문 필드의 JSON Pointer(RFC 6901). 본문 전체는 빈 문자열이다. */

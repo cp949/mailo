@@ -269,7 +269,8 @@ export async function claim(
       // 순위(rn)는 이미 잠근 최대 `limit`건 안에서만 매기므로 큐 길이에 영향받지 않는다.
       // 단 점유 인덱스(`mail_jobs_claim_idx`, `mail_jobs_priority_claim_idx`)에 caller_id가 없어
       // 초과 호출처의 대기 행은 인덱스로 건너뛰지 못하고 매 poll 읽고 버린다.
-      // 측정: ADR-0007 구현 중 확정 10(대기 순서), ADR-0009(두 경로). 기본 만료 24시간이 대기 건수를 제한한다.
+      // 측정: ADR-0007 구현 중 확정 10(대기 순서), ADR-0009(두 경로). 만료(기본 24시간, 요청은 상한까지)가 대기 건수를 제한한다.
+      // 상한(`MAILO_JOB_EXPIRY_MAX_SECONDS`)을 늘린 배치의 대기 건수는 측정하지 않았다(ADR-0010).
       // 남은 건수를 넘긴 행은 잠겼지만 갱신하지 않고 커밋 때 풀린다. 이 호출은 `limit`보다 적게 점유할 수 있다.
       // 할당 순번(rn)도 선택한 경로로 매긴다. 우선순위 경로에서 잔여 1건이면 가장 높은 등급을 점유한다(RQ-035).
       const { rows } = await client.query<JobRow>(

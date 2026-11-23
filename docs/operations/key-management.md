@@ -189,7 +189,7 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 
 | 선택지 | 효과 | 대가 |
 | ------ | ---- | ---- |
-| `MAILO_RECORD_RETENTION_SECONDS`를 줄이고 재시작 | 기동 검증이 요구하는 최소 간격이 줄어 `removed`를 더 일찍 적을 수 있다 | 종결 작업의 `Idempotency-Key` 중복 방지 기간이 함께 줄어든다. `MAILO_BODY_RETENTION_SECONDS`·`MAILO_JOB_EXPIRY_SECONDS` 이상, `MAILO_JWS_IAT_MAX_AGE_SECONDS + MAILO_JWS_IAT_SKEW_SECONDS` 이상이어야 기동한다 |
+| `MAILO_RECORD_RETENTION_SECONDS`를 줄이고 재시작 | 기동 검증이 요구하는 최소 간격이 줄어 `removed`를 더 일찍 적을 수 있다 | 종결 작업의 `Idempotency-Key` 중복 방지 기간이 함께 줄어든다. `MAILO_BODY_RETENTION_SECONDS`·`MAILO_JOB_EXPIRY_MAX_SECONDS`(생략하면 `MAILO_JOB_EXPIRY_SECONDS`) 이상, `MAILO_JWS_IAT_MAX_AGE_SECONDS + MAILO_JWS_IAT_SKEW_SECONDS` 이상이어야 기동한다 |
 | 처리 대기 요청이 없음을 확인한 뒤 `keys`에서 항목만 지우고 `removed`에 쓰지 않음 | 이전 키가 즉시 사라진다 | 기동 검증이 이 실수를 감지하지 못한다(위 참고). 지운 사유·시각·승인자를 별도 운영 기록에 남긴다. `removed`에 `retiredAt`을 실제보다 앞당겨 적는 것은 기록을 허위로 만들므로 하지 않는다 |
 
 - 위 선택지는 검증하지 않았다. 코드 읽기 결과다.

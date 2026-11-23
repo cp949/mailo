@@ -9,6 +9,7 @@ import {
   createJweDecryptor,
   createPrivateKeyRing,
   openRequest,
+  toRegisterInput,
   toRejectionReason,
   type JweDecryptor,
   type OpenRequestContext,
@@ -86,6 +87,8 @@ function makeCtx(
     ),
     fingerprinter,
     iat: { maxAgeSeconds: 7 * DAY, skewSeconds: 300 },
+    // 요청별 만료 상한(RQ-039). 운영 기본값(만료 TTL과 같은 1일)보다 크게 둬 경계 시험이 기본값과 겹치지 않게 한다.
+    maxTtlSeconds: 7 * DAY,
     nowMs: () => NOW,
     ...overrides,
   };
@@ -1027,5 +1030,225 @@ describe("openRequest: 우선순위 (RQ-033·034, ADR-0009)", () => {
   it("잘못된 priority 값의 canary가 실패 결과에 나오지 않는다(RQ-027)", async () => {
     const failure = await failureOf(rest({ priority: "CANARY-PRIORITY-0d9e" }));
     expect(JSON.stringify(failure)).not.toContain("CANARY");
+  });
+});
+
+// 요청별 만료 시간(RQ-039, ADR-0010). 하한 60과 상한(makeCtx의 7일)은 리터럴로 둔다.
+// 하한 상수가 바뀌면 이 테스트가 실패해 계약 변경을 드러내게 하려는 것이다.
+describe("openRequest: 요청별 만료 시간 (RQ-039, ADR-0010)", () => {
+  const rest = (extra: Record<string, unknown> = {}): OpenRequestInput => ({
+    kind: "rest",
+    body: { ...MAIL, ...extra },
+  });
+  const opened = async (
+    input: OpenRequestInput,
+    ctx: OpenRequestContext = makeCtx(),
+  ) => {
+    const result = await openRequest(input, ctx);
+    if (!result.ok) throw new Error(`성공해야 한다: ${result.reason}`);
+    return result;
+  };
+  const hex = (digest: Uint8Array) => Buffer.from(digest).toString("hex");
+  const policyOf = (canonicalRequest: string): unknown =>
+    JSON.parse(canonicalRequest).at(-1);
+
+  it("생략하면 ttlSeconds가 null이고 정규화 문자열과 지문이 도입 전 골든 값과 같다", async () => {
+    const omitted = await opened(rest());
+
+    expect(omitted.ttlSeconds).toBeNull();
+    expect(omitted.fingerprint.canonicalRequest).toBe(
+      '["mailo-fp-v1","no-reply@example.com",null,["kim@example.com"],[],[],"주문 접수 안내","주문이 접수되었습니다.",null,[]]',
+    );
+    expect(hex(omitted.fingerprint.digest)).toBe(
+      "e3bc91ec3b45a14ca49bb3f12fc6bea7091ccf7069683d0e636f899da732297f",
+    );
+  });
+
+  it.each([
+    ["하한", 60],
+    ["상한", 7 * DAY],
+  ])(
+    "%s 경계값(%d)을 받고 policy.ttlSeconds에 숫자로 넣는다(REST·파일)",
+    async (_name, ttlSeconds) => {
+      for (const input of [
+        rest({ ttlSeconds }),
+        signed(fileRequest({ ttlSeconds })),
+      ]) {
+        const result = await opened(input);
+        expect(result.ttlSeconds).toBe(ttlSeconds);
+        expect(policyOf(result.fingerprint.canonicalRequest)).toEqual([
+          ["ttlSeconds", ttlSeconds],
+        ]);
+      }
+    },
+  );
+
+  it("기본 만료 TTL과 같은 값(86400)을 명시해도 생략과 다른 지문이다", async () => {
+    const omitted = await opened(rest());
+    const explicit = await opened(rest({ ttlSeconds: 86_400 }));
+
+    expect(hex(explicit.fingerprint.digest)).not.toBe(
+      hex(omitted.fingerprint.digest),
+    );
+  });
+
+  it("값이 다르면 지문이 다르다", async () => {
+    const a = await opened(rest({ ttlSeconds: 600 }));
+    const b = await opened(rest({ ttlSeconds: 601 }));
+
+    expect(hex(a.fingerprint.digest)).not.toBe(hex(b.fingerprint.digest));
+  });
+
+  it("priority와 함께 쓰면 policy 키를 이름 순서로 정규화하고 요청의 필드 순서와 무관하다", async () => {
+    const first = await opened({
+      kind: "rest",
+      body: { ttlSeconds: 3600, ...MAIL, priority: "URGENT" },
+    });
+    const second = await opened({
+      kind: "rest",
+      body: { priority: "URGENT", ...MAIL, ttlSeconds: 3600 },
+    });
+
+    expect(first.fingerprint.canonicalRequest).toBe(
+      '["mailo-fp-v1","no-reply@example.com",null,["kim@example.com"],[],[],"주문 접수 안내","주문이 접수되었습니다.",null,[["priority","URGENT"],["ttlSeconds",3600]]]',
+    );
+    expect(second.fingerprint.canonicalRequest).toBe(
+      first.fingerprint.canonicalRequest,
+    );
+    expect(first).toMatchObject({ priority: "URGENT", ttlSeconds: 3600 });
+  });
+
+  it.each([
+    ["하한 미만", 59],
+    ["0", 0],
+    ["음수", -60],
+    ["상한 초과", 7 * DAY + 1],
+  ])(
+    "REST·파일 모두 %s 정수는 /ttlSeconds OUT_OF_RANGE 검증 오류다",
+    async (_name, ttlSeconds) => {
+      for (const input of [
+        rest({ ttlSeconds }),
+        signed(fileRequest({ ttlSeconds })),
+      ]) {
+        const failure = await failureOf(input);
+        expect(failure.reason).toBe("VALIDATION_FAILED");
+        expect(failure.issues).toEqual([
+          { pointer: "/ttlSeconds", code: "OUT_OF_RANGE" },
+        ]);
+      }
+    },
+  );
+
+  it.each([
+    ["null", null],
+    ["소수", 60.5],
+    ["숫자 문자열", "3600"],
+    ["boolean", true],
+    ["배열", [3600]],
+    ["객체", { seconds: 3600 }],
+  ])(
+    "REST·파일 모두 %s 값은 /ttlSeconds INVALID_FORMAT 검증 오류다",
+    async (_name, ttlSeconds) => {
+      for (const input of [
+        rest({ ttlSeconds }),
+        signed(fileRequest({ ttlSeconds })),
+      ]) {
+        const failure = await failureOf(input);
+        expect(failure.reason).toBe("VALIDATION_FAILED");
+        expect(failure.issues).toEqual([
+          { pointer: "/ttlSeconds", code: "INVALID_FORMAT" },
+        ]);
+      }
+    },
+  );
+
+  it("JSON에 없는 무한대·NaN 값도 /ttlSeconds INVALID_FORMAT이다(REST 파서 우회 대비)", async () => {
+    for (const ttlSeconds of [Infinity, Number.NaN]) {
+      const failure = await failureOf(rest({ ttlSeconds }));
+      expect(failure.issues).toEqual([
+        { pointer: "/ttlSeconds", code: "INVALID_FORMAT" },
+      ]);
+    }
+  });
+
+  it("상한은 의존성의 maxTtlSeconds를 따른다", async () => {
+    const ctx = makeCtx({ maxTtlSeconds: 3600 });
+
+    expect((await opened(rest({ ttlSeconds: 3600 }), ctx)).ttlSeconds).toBe(
+      3600,
+    );
+    expect((await failureOf(rest({ ttlSeconds: 3601 }), ctx)).issues).toEqual([
+      { pointer: "/ttlSeconds", code: "OUT_OF_RANGE" },
+    ]);
+  });
+
+  it("파일 JWS의 ttlSeconds는 서명 대상이다", async () => {
+    const jws = signJws({
+      secret: SECRET_ALPHA,
+      payload: fileRequest({ ttlSeconds: 600 }),
+      nowMs: NOW,
+    });
+    const tampered = {
+      ...jws,
+      payload: b64url(JSON.stringify(fileRequest({ ttlSeconds: 6000 }))),
+    };
+
+    expect(await opened({ kind: "file", bytes: asBytes(jws) })).toMatchObject({
+      signed: true,
+      ttlSeconds: 600,
+    });
+    expect(
+      (await failureOf({ kind: "file", bytes: asBytes(tampered) })).reason,
+    ).toBe("SIGNATURE_INVALID");
+  });
+
+  it("JWE 요청은 바깥 ttlSeconds를 보존하고 평문과 같은 값이면 같은 지문이다", async () => {
+    const content = await encryptContent(key1, {
+      content: { subject: MAIL.subject, text: MAIL.text },
+    });
+    const viaJwe = await opened({
+      kind: "rest",
+      body: { to: MAIL.to, from: MAIL.from, content, ttlSeconds: 600 },
+    });
+    const plain = await opened(rest({ ttlSeconds: 600 }));
+
+    expect(viaJwe).toMatchObject({ encrypted: true, ttlSeconds: 600 });
+    expect(viaJwe.fingerprint.canonicalRequest).toBe(
+      plain.fingerprint.canonicalRequest,
+    );
+  });
+
+  it("JWE 복호화 평문 안의 ttlSeconds는 UNKNOWN_FIELD다", async () => {
+    const content = await encryptContent(key1, {
+      content: { subject: MAIL.subject, text: MAIL.text, ttlSeconds: 600 },
+    });
+    const failure = await failureOf({
+      kind: "rest",
+      body: { to: MAIL.to, from: MAIL.from, content },
+    });
+    expect(failure.issues).toEqual([
+      { pointer: "/content", code: "UNKNOWN_FIELD" },
+    ]);
+  });
+
+  it("잘못된 ttlSeconds 값의 canary가 실패 결과에 나오지 않는다(RQ-027)", async () => {
+    const failure = await failureOf(rest({ ttlSeconds: "CANARY-TTL-5c2e" }));
+    expect(JSON.stringify(failure)).not.toContain("CANARY");
+  });
+
+  it("등록 입력의 만료 TTL은 지정한 ttlSeconds이고 생략하면 호출자의 기본값이다", async () => {
+    const args = {
+      callerId: "alpha",
+      idempotencyKey: "k-1",
+      defaultExpiresInSeconds: 86_400,
+    };
+
+    expect(
+      toRegisterInput(await opened(rest({ ttlSeconds: 600 })), args)
+        .expiresInSeconds,
+    ).toBe(600);
+    expect(toRegisterInput(await opened(rest()), args).expiresInSeconds).toBe(
+      86_400,
+    );
   });
 });

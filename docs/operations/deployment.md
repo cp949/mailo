@@ -151,6 +151,27 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 롤백: 미확인 요청을 정리한 뒤 앱만 이전 버전으로 되돌린다. 스키마는 그대로 둔다
 ```
 
+### 요청별 만료 시간 도입 배포 순서
+
+근거: RQ-039, ADR-0010 결정 8.
+
+마이그레이션은 필요 없다. `expires_at` 컬럼은 `0001_queue_schema.sql`부터 있다. 이전 버전 인스턴스는 요청의 `ttlSeconds`를 정의되지 않은 필드(`UNKNOWN_FIELD`)로 거부한다.
+
+1. 기본 TTL보다 긴 `ttlSeconds`를 허용하려면 `MAILO_JOB_EXPIRY_MAX_SECONDS`를 정한다. `MAILO_RECORD_RETENTION_SECONDS` 이하여야 기동한다("변수 사이의 제약"). 설정하지 않으면 상한은 `MAILO_JOB_EXPIRY_SECONDS`와 같다.
+2. 모든 Mailo 인스턴스를 새 버전으로 바꾼다. 이 동안(이전·새 인스턴스 혼용) 호출처는 `ttlSeconds`를 보내지 않는다. 모든 인스턴스가 같은 상한을 쓰게 한다. 상한이 인스턴스마다 다르면 같은 요청이 인스턴스에 따라 400이 된다.
+3. 호출처가 `ttlSeconds` 전송을 시작한다(`caller-onboarding.md` "요청별 만료 시간").
+
+롤백:
+
+1. 호출처의 `ttlSeconds` 전송을 먼저 끊는다. 끊지 않으면 이전 버전에서 REST는 400, 파일은 수집 거부가 된다.
+2. `ttlSeconds`로 등록된 요청을 `ttlSeconds` 없이 같은 Key로 재요청하지 않는다. 지문의 `policy.ttlSeconds`가 달라져 REST는 409, 파일은 `FINGERPRINT_MISMATCH`가 된다. 등록 여부 확인 절차는 "우선순위 도입 배포 순서"의 롤백 2~3과 같다.
+3. 이전 버전으로 되돌린다. 이미 등록된 작업의 `expires_at`은 그대로 쓰인다(이전 버전도 이 컬럼으로 판정한다). 이전 버전은 `MAILO_JOB_EXPIRY_MAX_SECONDS`를 읽지 않는다. 이 변수가 남아 있어도 기동에 영향이 없다.
+
+```txt
+위험도: 낮음 (스키마 변경 없음. 미확인 요청에서 ttlSeconds를 빼면 지문 충돌)
+롤백: 호출처 전송을 끊은 뒤 앱만 이전 버전으로 되돌린다
+```
+
 ## 환경 변수
 
 모든 값은 `loadConfig`(`config/load-config.ts`)가 기동 때 검증한다. 빈 문자열은 설정하지 않은 값으로 본다. 정수는 숫자만 허용한다(`1e3`, 공백 포함 불가, 앞뒤 공백은 제거).
@@ -190,7 +211,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 
 | 변수 | 기본값 | 범위 | 설명 |
 | ---- | ------ | ---- | ---- |
-| `MAILO_JOB_EXPIRY_SECONDS` | 86400 | 1~31536000 | 새 작업의 만료 TTL |
+| `MAILO_JOB_EXPIRY_SECONDS` | 86400 | 1~31536000 | 요청이 `ttlSeconds`를 생략한 새 작업의 만료 TTL |
+| `MAILO_JOB_EXPIRY_MAX_SECONDS` | `MAILO_JOB_EXPIRY_SECONDS`의 값 | 1~31536000, `MAILO_JOB_EXPIRY_SECONDS` 이상, `MAILO_RECORD_RETENTION_SECONDS` 이하 | 요청 `ttlSeconds`의 상한(RQ-039). 하한 60은 고정이다. 60 미만이면 `ttlSeconds`를 지정한 요청은 모두 400 `OUT_OF_RANGE`다. 늘리면 대기 작업이 남을 수 있는 기간이 늘어난다(긴 상한의 점유 지연은 미측정, ADR-0010 "결과"). 범위 밖·정수 아님·제약 위반은 기동 실패 |
 | `MAILO_LEASE_SECONDS` | 120 | 5~86400 | 작업 점유 lease. `stop_grace_period`와 연동 |
 | `MAILO_WORKER_POLL_MS` | 1000 | 50~600000 | claim 폴링 간격(±10% 흩뿌림) |
 | `MAILO_WORKER_CONCURRENCY` | 4 | 1~100 | 동시 전송 수 |
@@ -223,7 +245,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | 변수 | 기본값 | 범위 | 설명 |
 | ---- | ------ | ---- | ---- |
 | `MAILO_BODY_RETENTION_SECONDS` | 86400 | 1~31536000 | 종결 후 본문 삭제 유예 |
-| `MAILO_RECORD_RETENTION_SECONDS` | 2592000 (30일) | 1~31536000 | 종결 후 작업 행·시도·이벤트·Key 보존, 거부 기록은 생성 후. `BODY` 이상이고 `JOB_EXPIRY` 이상이어야 한다 |
+| `MAILO_RECORD_RETENTION_SECONDS` | 2592000 (30일) | 1~31536000 | 종결 후 작업 행·시도·이벤트·Key 보존, 거부 기록은 생성 후. `BODY` 이상이고 `JOB_EXPIRY_MAX` 이상이어야 한다 |
 | `MAILO_MAINTENANCE_INTERVAL_SECONDS` | 60 | 1~86400 | 만료 sweep·lease 회수·본문 삭제·보존 삭제 주기 |
 
 ### SMTP(RQ-005)
@@ -288,7 +310,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_SMTP_TIMEOUT_SECONDS` < `MAILO_LEASE_SECONDS` | 기동 실패(설정 오류). 이 검사만 통과해도 발송기 조립에서 `SmtpConfigError code=TIMEOUT_EXCEEDS_LEASE`로 실패할 수 있다. 조건은 `2×min(T,10초) + T + 10초 ≤ lease`(T = 이 변수)이고 기본값(T=30)은 lease 60초 이상이다. 실행으로 확인: lease 20초·T 10초는 `TIMEOUT_EXCEEDS_LEASE`, lease 45초·T 10초는 기동(단 DB 시간제한 기본값에서는 lease 51초 이상이어야 하므로 `scripts/container/common.sh`는 `MAILO_DB_QUERY_TIMEOUT_MS`를 15000으로 줄인다) |
 | `MAILO_MAX_CONTENT_BYTES` ≤ `MAILO_MAX_REQUEST_BYTES` | 기동 실패 |
 | `MAILO_RETRY_CAP_SECONDS` ≥ `MAILO_RETRY_BASE_SECONDS` | 기동 실패 |
-| `MAILO_RECORD_RETENTION_SECONDS` ≥ `MAILO_BODY_RETENTION_SECONDS`, ≥ `MAILO_JOB_EXPIRY_SECONDS` | 기동 실패 |
+| `MAILO_RECORD_RETENTION_SECONDS` ≥ `MAILO_BODY_RETENTION_SECONDS`, ≥ `MAILO_JOB_EXPIRY_MAX_SECONDS`(생략하면 `MAILO_JOB_EXPIRY_SECONDS`) | 기동 실패. 요청이 상한까지 TTL을 늘릴 수 있어서 기준이 상한이다(ADR-0010 결정 6) |
+| `MAILO_JOB_EXPIRY_SECONDS` ≤ `MAILO_JOB_EXPIRY_MAX_SECONDS` | 기동 실패 |
 | `MAILO_JWS_IAT_MAX_AGE_SECONDS` + `MAILO_JWS_IAT_SKEW_SECONDS` ≤ `MAILO_RECORD_RETENTION_SECONDS` | 기동 실패 |
 | DB 본문 키 ≠ 지문 키(모든 버전 쌍) | 기동 실패 |
 | 현재 버전 키 변수가 있어야 한다 | 기동 실패 |
@@ -444,6 +467,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 
 - 컨테이너 기동, 재생성, 재시작 후 자동 복구(RQ-025·026의 미충족 조건).
 - 실제 SIGTERM을 받은 컨테이너의 종료 시간(`pause` 먼저 호출하는 새 종료 순서 포함).
+- 요청별 만료 시간 도입의 롤링 배포·롤백 실행, 긴 `MAILO_JOB_EXPIRY_MAX_SECONDS`에서의 대기 건수와 점유 지연.
 - 마이그레이션의 대용량 DB 적용 시간. `0005`(`CREATE INDEX CONCURRENTLY`)를 쓰기 부하 중에 적용한 시간도 측정하지 않았다.
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).

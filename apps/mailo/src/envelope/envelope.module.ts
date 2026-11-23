@@ -43,6 +43,7 @@ import { ENVELOPE_DEPS } from "./tokens.js";
           ),
           fingerprinter,
           iat: config.envelope.iat,
+          maxTtlSeconds: config.queue.jobExpiryMaxSeconds,
         };
       },
     },
