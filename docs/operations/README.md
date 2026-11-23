@@ -1,0 +1,31 @@
+# 운영 문서
+
+Mailo를 배포·운영하고 호출처를 연동하는 문서다. 요구사항은 `../requirements/`, 결정은 `../adr/`, API 계약은 `../api/`에 있다.
+모든 문서의 값·변수 이름·경로는 2026-11-23 코드와 대조했다. 실행하지 않은 검증은 각 문서의 "검증하지 않은 것" 절에 적었다.
+
+| 문서 | 내용 | 읽을 사람 |
+| ---- | ---- | --------- |
+| [deployment.md](./deployment.md) | compose 구성, 환경 변수 표, 시크릿 주입, 마이그레이션, 헬스, `stop_grace_period`와 lease, PostgreSQL 요건, 백업·복구 | 배포 담당 |
+| [key-management.md](./key-management.md) | DB 본문 키·지문 키·JWE 키·JWS 키·API 키의 발급, 교체, 이전 키 보관 기간, 기동 시 검증 오류 해석 | 배포·보안 담당 |
+| [caller-onboarding.md](./caller-onboarding.md) | 호출처 레지스트리 등록, API 키 발급·교체, 서명 선택, 파일 채널 폴더·권한·쓰기 규약, Spring Boot outbox + relay 지침 | 운영자, 사용처 개발자 |
+| [troubleshooting.md](./troubleshooting.md) | 차단기 `open`, lease 만료, `unreadable` 파일, 수집 거부 사유 코드, 피드 지연, 로그 이벤트 이름 | 운영자 |
+| [nfs.md](./nfs.md) | NAS/NFS에서 파일 채널을 운영할 때의 mount 옵션, 폴더 권한, 실측 결과와 한계 | 인프라 담당 |
+
+## 읽는 순서
+
+- 새로 배포한다: `deployment.md` → `key-management.md` → `caller-onboarding.md`.
+- 호출처를 추가한다: `caller-onboarding.md`. 파일 채널이 NAS/NFS면 `nfs.md`.
+- 장애를 본다: `troubleshooting.md`. 기동 실패는 `key-management.md`의 오류 표와 `deployment.md`의 제약 표.
+
+## 갱신 규칙
+
+- 환경 변수, 로그 이벤트 이름, 레지스트리 필드, 경로를 바꾸는 변경은 같은 변경에서 해당 문서를 갱신한다.
+- 수치 기본값은 `.env.example`, `apps/mailo/src/config/load-config.ts`, `deployment.md`의 표가 같아야 한다.
+- 검증하지 않은 내용은 검증하지 않았다고 적는다. 추정은 "추정"으로 표시한다.
+
+## 알려진 공백
+
+- 실제 NAS 제품, 실제 Gmail·Workspace SMTP, CI에서의 검증은 없다.
+- 컨테이너 기동·재시작·SIGTERM 종료 시간, 백업·복구 절차는 실행하지 않았다.
+- JWE 개인키 유출 때의 대응 절차는 정하지 않았다(`key-management.md`).
+- 사용처 Java 예시는 컴파일하지 않았고 nimbus-jose-jwt와의 상호 운용은 확인하지 않았다.

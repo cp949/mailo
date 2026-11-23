@@ -1,0 +1,22 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.turbo/
+
+# 환경 변수. 예시 파일만 추적한다
+.env
+.env.*
+!.env.example
+
+# 로컬 compose 조합
+docker-compose.override.yml
+
+# 개발용 키 생성기 출력(apps/mailo/scripts/gen-dev-keys.mjs). 개인키가 들어 있다
+.dev-keys/
+_tmp/
+_works/
+.scratch/
+
+# 호출처 레지스트리 로컬 사본(callers.example.json에서 복사). 이미지에 넣지 않는다
+/callers.json

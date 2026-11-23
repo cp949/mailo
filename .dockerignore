@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+.turbo
+.git
+.env
+.env.*
+!.env.example
+docs
+_tmp
+_works
+.scratch
+docker-compose.override.yml
+callers.json

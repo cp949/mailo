@@ -1,0 +1,42 @@
+# scripts/container/ 검증 전용 override. 운영 구성이 아니다. docker-compose.yml 위에 덮어 쓴다.
+# 로컬 가짜 SMTP 서버(지연 응답 가능)를 붙이고, 호스트 포트를 비우거나 바꿔 다른 스택과 겹치지 않게 한다.
+# 환경: VERIFY_REPO, VERIFY_ENV_FILE, VERIFY_CALLERS_FILE, VERIFY_CERT_DIR, VERIFY_FILES_DIR, VERIFY_PUBLISH_PORT,
+#       VERIFY_DATA_DELAY_MS(가짜 SMTP 응답 지연, 기본 0)
+services:
+  smtp:
+    image: mailo-volume-tools:local
+    user: "1000:1000"
+    command: ["node", "/repo/test/volume/fake-smtp.mjs"]
+    environment:
+      CERT_DIR: /certs
+      DATA_DELAY_MS: ${VERIFY_DATA_DELAY_MS:-0}
+    volumes:
+      - ${VERIFY_REPO}:/repo:ro
+      - ${VERIFY_CERT_DIR}:/certs:ro
+    networks:
+      default:
+        ipv4_address: 172.29.89.10
+  postgres:
+    ports: !reset []
+  mailo:
+    # .env 대신 임시 env 파일을 쓴다(저장소에 .env를 만들지 않는다).
+    env_file: !override
+      - ${VERIFY_ENV_FILE}
+    ports: !override
+      - "127.0.0.1:${VERIFY_PUBLISH_PORT:-13000}:3000"
+    volumes: !override
+      - ${VERIFY_CALLERS_FILE}:/run/mailo/callers.json:ro
+      - ${VERIFY_CERT_DIR}:/certs:ro
+      - ${VERIFY_FILES_DIR}:/var/mailo/files
+    # docker kill 뒤 자동 재시작이 검증 순서를 바꾸지 않게 한다. 재기동은 스크립트가 명시적으로 한다.
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      smtp:
+        condition: service_started
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.29.89.0/24

@@ -1,0 +1,113 @@
+# 파일 채널을 같은 호스트 Docker 볼륨으로 쓰는 구성 예시(ADR-0004 결정 8 "구현 중 확정" 13~19, RQ-002·024).
+# Mailo와 호출처 컨테이너 2개가 named volume 하나를 공유한다. 계정은 모두 non-root이고 UID가 서로 다르다.
+#   docker compose -f docker-compose.volume-example.yml up -d --build
+# 호출처 서비스(caller-b, caller-c)는 자리표시자다. 실제로는 사용처 서비스에 같은 user와 볼륨 마운트를 준다.
+# 모든 시크릿은 가짜 값이다. 운영에서는 .env 또는 시크릿 마운트로 바꾼다(RQ-025).
+# 검증 스크립트: scripts/volume/verify-e2e.sh
+
+x-uids:
+  &uids # 권한 모델의 전제: Mailo와 각 호출처는 서로 다른 non-root UID다. root나 같은 UID이면 모델이 성립하지 않는다.
+  MAILO_UID: "1000"
+  MAILO_GID: "1000"
+
+services:
+  # 볼륨 초기화(일회성, root). 호출처 폴더와 권한을 만든다. 목록은 CALLERS에 "이름:UID" 쌍으로 적는다.
+  # VOLUME_MODE: acl(권장, default ACL) 또는 group(공용 그룹 + setgid). 비교는 ADR-0004 구현 중 확정 15.
+  volume-init:
+    build:
+      context: test/volume
+      dockerfile: Dockerfile.tools
+    image: mailo-volume-tools:local
+    user: "0:0"
+    entrypoint: ["sh", "/init-volume.sh", "${VOLUME_MODE:-acl}", "/data"]
+    environment:
+      <<: *uids
+      SHARED_GID: "2000"
+      CALLERS: "caller-b:10002 caller-c:10003"
+    volumes:
+      - mailo-files:/data
+      - ./scripts/volume/init-volume.sh:/init-volume.sh:ro
+    restart: "no"
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: mailo
+      POSTGRES_PASSWORD: fake-volume-example-password
+      POSTGRES_DB: mailo
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailo -d mailo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mailo:
+    build:
+      context: .
+    image: mailo-volume-test:local
+    # 이미지의 기본 사용자(node)와 같은 UID다. 명시해 두면 호출처 UID와 겹치지 않는지 한눈에 보인다.
+    user: "1000:1000"
+    # group 방식에서 Mailo가 호출처 파일을 읽는 근거다. acl 방식에서는 쓰지 않지만 두어도 해롭지 않다.
+    group_add: ["2000"]
+    environment:
+      NODE_ENV: production
+      MAILO_PORT: "3000"
+      MAILO_DATABASE_URL: postgres://mailo:fake-volume-example-password@postgres:5432/mailo
+      MAILO_CALLERS_FILE: /run/mailo/callers.json
+      MAILO_DB_ENCRYPTION_KEY_VERSION: "1"
+      MAILO_DB_ENCRYPTION_KEY_V1: ZmFrZS1kYi1rZXktZm9yLWRldi1vbmx5LTAwMDAwMDA=
+      MAILO_FINGERPRINT_KEY_VERSION: "1"
+      MAILO_FINGERPRINT_KEY_V1: ZmFrZS1maW5nZXJwcmludC1rZXktZGV2LW9ubHktMDA=
+      MAILO_SMTP_HOST: ${MAILO_SMTP_HOST:-smtp.example.invalid}
+      MAILO_SMTP_PORT: ${MAILO_SMTP_PORT:-587}
+      MAILO_SMTP_USER: fake-user@example.invalid
+      MAILO_SMTP_PASSWORD: fake-smtp-password
+      MAILO_FILE_CHANNEL_ROOT: /var/mailo/files
+      MAILO_FILE_POLL_INTERVAL_MS: ${MAILO_FILE_POLL_INTERVAL_MS:-30000}
+    volumes:
+      - ${MAILO_CALLERS_FILE_HOST:-./callers.json}:/run/mailo/callers.json:ro
+      - mailo-files:/var/mailo/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      volume-init:
+        condition: service_completed_successfully
+    command:
+      ["sh", "-c", "node dist/db/migrate-cli.js && exec node dist/main.js"]
+    stop_grace_period: 150s
+
+  # 호출처 B. 자기 폴더(inbox/caller-b)만 마운트한다(volume subpath, Docker Engine 26 이상).
+  # subpath는 이중 방어다. 권한 모델은 전체 볼륨을 마운트해도 같은 결과를 내도록 검증했다.
+  caller-b:
+    image: mailo-volume-tools:local
+    user: "10002:10002"
+    command: ["sleep", "infinity"]
+    volumes:
+      - type: volume
+        source: mailo-files
+        target: /outbox
+        volume:
+          subpath: inbox/caller-b
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  caller-c:
+    image: mailo-volume-tools:local
+    user: "10003:10003"
+    command: ["sleep", "infinity"]
+    volumes:
+      - type: volume
+        source: mailo-files
+        target: /outbox
+        volume:
+          subpath: inbox/caller-c
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+volumes:
+  mailo-files:
+  postgres-data:

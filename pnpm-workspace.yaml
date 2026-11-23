@@ -1,0 +1,6 @@
+packages:
+  - "apps/*"
+
+# jest-haste-map의 watch 모드 전용 네이티브 모듈. 빌드 스크립트를 실행하지 않는다.
+allowBuilds:
+  "@parcel/watcher": false

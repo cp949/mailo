@@ -1,0 +1,7 @@
+{
+  "printWidth": 80,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "sortPackageJson": false,
+  "ignorePatterns": ["pnpm-lock.yaml", "docs/", "_works/", ".scratch/"]
+}

@@ -1,0 +1,43 @@
+{
+  "name": "@cp949/mailo",
+  "version": "0.1.0",
+  "description": "Gmail·Google Workspace SMTP 비동기 발송 서비스",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.18"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "format": "oxfmt src test",
+    "start": "node dist/main.js",
+    "dev:keys": "node scripts/gen-dev-keys.mjs",
+    "migrate": "node dist/db/migrate-cli.js",
+    "lint": "oxlint src test",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.cjs",
+    "test:integration": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.integration.config.cjs --runInBand",
+    "test:nfs": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.nfs.config.cjs --runInBand"
+  },
+  "dependencies": {
+    "@nestjs/common": "12.4.0",
+    "@nestjs/core": "12.4.0",
+    "@nestjs/platform-express": "12.4.0",
+    "jose": "6.2.14",
+    "nodemailer": "10.6.1",
+    "pg": "8.23.1",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "@jest/globals": "30.5.2",
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "@types/smtp-server": "3.5.13",
+    "jest": "30.5.2",
+    "oxlint": "1.92.0",
+    "smtp-server": "3.21.7",
+    "ts-jest": "29.4.15",
+    "typescript": "6.0.3"
+  }
+}

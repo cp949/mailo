@@ -1,0 +1,5 @@
+# 볼륨 권한 검증용 도구 이미지(ADR-0004 결정 8, RQ-024).
+# 호출처 역할 컨테이너(node로 파일 작성)와 볼륨 초기화 컨테이너(setfacl)가 같은 이미지를 쓴다.
+# Mailo 이미지가 아니다. Mailo 이미지에는 acl 패키지를 넣지 않는다(폴더 구성은 Mailo의 몫이 아니다).
+FROM node:24.20.0-alpine
+RUN apk add --no-cache acl

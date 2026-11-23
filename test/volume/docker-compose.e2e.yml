@@ -1,0 +1,30 @@
+# verify-e2e.sh 전용 override. 로컬 가짜 SMTP 서버를 붙이고 폴링 간격을 줄인다. 운영 구성이 아니다.
+# 환경: VOLTEST_CERT_DIR(자체 서명 인증서 디렉터리), VOLTEST_REPO(저장소 절대 경로), MAILO_CALLERS_FILE_HOST
+services:
+  smtp:
+    image: mailo-volume-tools:local
+    user: "1000:1000"
+    command: ["node", "/repo/test/volume/fake-smtp.mjs"]
+    environment:
+      CERT_DIR: /certs
+    volumes:
+      - ${VOLTEST_REPO}:/repo:ro
+      - ${VOLTEST_CERT_DIR}:/certs:ro
+    networks:
+      default:
+        ipv4_address: 172.29.88.10
+  mailo:
+    environment:
+      MAILO_SMTP_HOST: 172.29.88.10
+      MAILO_SMTP_PORT: "2525"
+      MAILO_FILE_POLL_INTERVAL_MS: "500"
+      NODE_EXTRA_CA_CERTS: /certs/cert.pem
+    volumes:
+      - ${VOLTEST_CERT_DIR}:/certs:ro
+    depends_on:
+      - smtp
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.29.88.0/24

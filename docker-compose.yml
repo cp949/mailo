@@ -1,0 +1,81 @@
+# 상시 서비스는 Mailo와 PostgreSQL 둘뿐이다(RQ-029). 브로커와 메일 서버를 추가하지 않는다.
+#   docker compose up -d
+# 접속값은 .env(.env.example 복사)에서 읽는다. 시크릿은 이미지에 넣지 않는다(RQ-025).
+
+services:
+  postgres:
+    # ADR-0006: 13 이상 필수. 16 이상으로 고정해 둔다.
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mailo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailo-dev-password}
+      POSTGRES_DB: ${POSTGRES_DB:-mailo}
+    ports:
+      - "127.0.0.1:${MAILO_DB_PUBLISH_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-mailo} -d ${POSTGRES_DB:-mailo}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mailo:
+    build:
+      context: .
+    # MAILO_* 설정 전체를 .env에서 받는다(.env.example 참고). 아래 environment가 같은 이름을 덮어쓴다.
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      MAILO_PORT: "3000"
+      # 접속 URL을 compose가 이어 붙이면 비밀번호의 `@`, `/`, `:`, `#`, `%`에서 URL이 깨진다.
+      # 분리 변수를 주면 앱이 사용자·비밀번호·DB 이름을 URL 인코딩해 조립한다.
+      # .env의 호스트 실행용 MAILO_DATABASE_URL이 컨테이너로 새지 않게 빈 값으로 덮는다(둘을 함께 주면 기동을 거부한다).
+      MAILO_DATABASE_URL: ""
+      MAILO_DATABASE_URL_FILE: ""
+      MAILO_DB_HOST: postgres
+      MAILO_DB_PORT: "5432"
+      MAILO_DB_USER: ${POSTGRES_USER:-mailo}
+      MAILO_DB_PASSWORD: ${POSTGRES_PASSWORD:-mailo-dev-password}
+      MAILO_DB_NAME: ${POSTGRES_DB:-mailo}
+      MAILO_CALLERS_FILE: /run/mailo/callers.json
+    volumes:
+      # 호출처 레지스트리(API 키 해시). 파일이 없으면 먼저 callers.example.json을 복사해 만든다.
+      - ./callers.json:/run/mailo/callers.json:ro
+      # 파일 채널을 켤 때: .env에 MAILO_FILE_CHANNEL_ROOT=/var/mailo/files를 주고 아래 마운트를 연다.
+      # 호출처 폴더(inbox/<caller_id>/)와 권한은 호스트에서 만든다. Mailo는 non-root(node)이고 폴더를 만들지 않는다(ADR-0004 결정 8).
+      # - /srv/mailo-files:/var/mailo/files
+    ports:
+      - "${MAILO_PUBLISH_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # 마이그레이션 적용 뒤 앱을 exec로 띄워 SIGTERM이 node에 직접 전달되게 한다.
+    command:
+      ["sh", "-c", "node dist/db/migrate-cli.js && exec node dist/main.js"]
+    # ADR-0002 결정 12: lease 이상이어야 한다. 기본 lease 120초(MAILO_LEASE_SECONDS) + 여유 30초.
+    # lease 값을 바꾸면 이 값도 함께 바꾼다.
+    stop_grace_period: 150s
+    # 이미지에 curl이 없어 node로 /health/live(인증 없음, DB와 무관)를 확인한다. 기동 시 마이그레이션 시간을 start_period로 둔다.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/live').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
