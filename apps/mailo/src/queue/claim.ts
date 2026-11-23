@@ -3,7 +3,8 @@ import { withTransaction } from "../db/index.js";
 import type { JsonValue } from "../events/index.js";
 import { recoverExpiredLeases, type CompleteDeps } from "./complete.js";
 import { readSendControls, type SendControls } from "./send-controls.js";
-import type { ClaimedJob, EncryptedBody } from "./types.js";
+import { CALLER_QUOTA_USAGE_SQL } from "./quota-usage.js";
+import type { ClaimedJob, EncryptedBody, TransitionListener } from "./types.js";
 
 /**
  * 점유 경로(RQ-035, ADR-0009). claim 호출마다 하나를 쓴다.
@@ -57,6 +58,10 @@ export interface ClaimOptions {
    * 로그용이며 Worker가 상태가 바뀔 때만 기록한다. 다른 인스턴스가 점유 중이라 이번에 건너뛴 호출처는 넣지 않는다.
    */
   onQuotaBlocked?: (blocked: ReadonlyArray<QuotaBlock>) => void;
+  /**
+   * 점유 앞단의 lease 복구가 작업을 회수해 커밋했을 때 부른다(지표용, ADR-0012 결정 7). `recoverExpiredLeases`의 `onRecovered`와 같다.
+   */
+  onLeaseRecovered?: TransitionListener;
   /**
    * 점유할 때마다 이번 트랜잭션이 읽은 발송 정지 상태를 알린다(RQ-043). 차단기가 열려 점유하지 않는 호출에도 알린다.
    * Worker가 상태가 바뀔 때만 `send_paused`·`send_resumed`를 기록한다. 호출처 ID만 담는다.
@@ -181,18 +186,7 @@ async function planQuotas(
   const lockedIds = new Set(locked.rows.map((r) => r.caller_id));
 
   const usage = await client.query<{ caller_id: string; used: number }>(
-    `SELECT q.caller_id,
-            ( (SELECT count(*) FROM (
-                 SELECT 1 FROM mail_attempts a
-                  WHERE a.caller_id = q.caller_id
-                    AND a.counted AND a.stage IS DISTINCT FROM 'WORKER'
-                    AND a.finished_at > now() - interval '24 hours'
-                  LIMIT q.quota) recent)
-              + (SELECT count(*) FROM mail_jobs j
-                  WHERE j.caller_id = q.caller_id AND j.status = 'SENDING')
-            )::int AS used
-       FROM unnest($1::text[], $2::int[]) AS q(caller_id, quota)
-      WHERE q.caller_id = ANY($3::text[])`,
+    CALLER_QUOTA_USAGE_SQL,
     [ids, limits, [...lockedIds]],
   );
   const used = new Map(usage.rows.map((r) => [r.caller_id, r.used]));
@@ -251,7 +245,9 @@ export async function claim(
   options: ClaimOptions,
 ): Promise<ClaimedJob[]> {
   const order = orderOf(options.order ?? "priority");
-  await recoverExpiredLeases(pool, options.deps);
+  await recoverExpiredLeases(pool, options.deps, undefined, {
+    ...(options.onLeaseRecovered && { onRecovered: options.onLeaseRecovered }),
+  });
 
   return withTransaction(pool, async (client) => {
     const breakerKey = options.deps.breaker.breakerKey;

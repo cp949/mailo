@@ -228,3 +228,30 @@ export async function getFeedLag(
     lagSeconds: Math.max(0, Math.round(row.lag_seconds)),
   };
 }
+
+/**
+ * 호출처마다 피드가 보여 줄 수 있는 최신 이벤트의 경과 초를 한 쿼리로 읽는다(ADR-0012 결정 4).
+ * `getFeedLag`와 같은 가시성 조건(`txid < xmin`)·정렬을 `LATERAL`로 호출처마다 한 행만 읽는다(`mail_events_feed_idx` 역방향 스캔).
+ * 이벤트가 없는 호출처는 결과에서 뺀다. 호출처 목록이 비면 쿼리하지 않는다. 시각은 DB `now()`다(ADR-0002 결정 10).
+ */
+export async function getFeedLagsForCallers(
+  db: Queryable,
+  callerIds: readonly string[],
+): Promise<Map<string, number>> {
+  if (callerIds.length === 0) return new Map();
+  const { rows } = await db.query<{ caller_id: string; lag_seconds: number }>(
+    `SELECT c.caller_id,
+            EXTRACT(EPOCH FROM (now() - e.created_at))::float8 AS lag_seconds
+       FROM unnest($1::text[]) AS c(caller_id)
+       CROSS JOIN LATERAL (
+         SELECT created_at FROM mail_events
+          WHERE caller_id = c.caller_id
+            AND txid < pg_snapshot_xmin(pg_current_snapshot())
+          ORDER BY txid DESC, id DESC
+          LIMIT 1) e`,
+    [callerIds],
+  );
+  return new Map(
+    rows.map((r) => [r.caller_id, Math.max(0, Math.round(r.lag_seconds))]),
+  );
+}

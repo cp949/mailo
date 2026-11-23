@@ -6,6 +6,8 @@ import {
   recordPurgedRejectionEvents,
   type JsonValue,
 } from "../events/index.js";
+import { notifyTransitions } from "./transitions.js";
+import type { JobTransition, TransitionListener } from "./types.js";
 
 /**
  * 정리 배치 한 번의 행 수 상한. 한 트랜잭션이 1초 안팎에 끝나도록 잡은 추정값이다.
@@ -49,13 +51,16 @@ export async function tryMaintenanceLock(
  * 작업 전이와 `JOB_EXPIRED` 이벤트를 같은 트랜잭션에서 쓴다(ADR-0006 결정 2). 이벤트 쓰기가 실패하면 전이도 롤백한다.
  * `SENDING` 작업은 진행 중인 시도를 중단하지 않으므로 대상이 아니다.
  * 정리 잠금(`tryMaintenanceLock`)을 못 잡으면 아무것도 하지 않고 0을 돌려준다.
+ * @param onTransitions 커밋한 뒤 전이한 작업의 호출처와 상태를 한 번 알린다(지표용, ADR-0012 결정 7). 롤백되면 부르지 않는다.
  * @returns 이번 호출에서 전이한 작업 수. 배치 크기와 같으면 남은 대상이 있을 수 있다.
  */
 export async function sweepExpired(
   pool: pg.Pool,
   batchSize = DEFAULT_BATCH,
+  onTransitions?: TransitionListener,
 ): Promise<number> {
-  return withTransaction(pool, async (client) => {
+  const transitions: JobTransition[] = [];
+  const count = await withTransaction(pool, async (client) => {
     if (!(await tryMaintenanceLock(client, "sweep"))) return 0;
     const { rows } = await client.query<{
       id: string;
@@ -87,9 +92,12 @@ export async function sweepExpired(
         attemptCount: row.attempts,
         recipients: row.recipients,
       });
+      transitions.push({ callerId: row.caller_id, status: "EXPIRED" });
     }
     return rows.length;
   });
+  notifyTransitions(onTransitions, transitions);
+  return count;
 }
 
 /**

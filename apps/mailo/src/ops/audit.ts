@@ -92,3 +92,35 @@ export async function listAudit(
         : null,
   };
 }
+
+/** 감사 행 수를 세는 상한. 이 수를 넘으면 정확한 수를 세지 않고 `truncated`로 알린다(ADR-0012 결정 8). */
+export const AUDIT_COUNT_LIMIT = 100_000;
+
+export interface AuditStats {
+  /** 감사 행 수. `AUDIT_COUNT_LIMIT`에서 멈춘다. */
+  rows: number;
+  /** 행 수가 상한을 넘었다. */
+  truncated: boolean;
+  /** 가장 오래된 행의 경과 초. 행이 없으면 null이다. */
+  oldestAgeSeconds: number | null;
+}
+
+/**
+ * 감사 테이블 행 수와 가장 오래된 행의 나이. `/metrics`의 `mailo_ops_audit_*`가 쓴다(RQ-049, ADR-0012 결정 8).
+ * 행 수는 상한+1까지만 읽고(`LIMIT`), 가장 오래된 행은 기본키 정순 한 행이다. 읽기 전용이다. 시각은 DB `now()`다.
+ */
+export async function getAuditStats(db: Queryable): Promise<AuditStats> {
+  const { rows } = await db.query<{ n: number; oldest: number | null }>(
+    `SELECT (SELECT count(*)::int FROM (SELECT 1 FROM mail_ops_audit LIMIT $1) c) AS n,
+            (SELECT EXTRACT(EPOCH FROM (now() - at))::float8
+               FROM mail_ops_audit ORDER BY id LIMIT 1) AS oldest`,
+    [AUDIT_COUNT_LIMIT + 1],
+  );
+  const n = rows[0]?.n ?? 0;
+  const oldest = rows[0]?.oldest ?? null;
+  return {
+    rows: Math.min(n, AUDIT_COUNT_LIMIT),
+    truncated: n > AUDIT_COUNT_LIMIT,
+    oldestAgeSeconds: oldest === null ? null : Math.max(0, Math.round(oldest)),
+  };
+}

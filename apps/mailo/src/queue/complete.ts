@@ -8,6 +8,7 @@ import {
   recordAccountOk,
 } from "./circuit-breaker.js";
 import { tryMaintenanceLock } from "./maintenance.js";
+import { notifyTransitions } from "./transitions.js";
 import { breakerInitialWait, retryDelaySeconds } from "./retry-policy.js";
 import type {
   AccountErrorReason,
@@ -16,7 +17,9 @@ import type {
   BreakerConfig,
   BreakerSnapshot,
   CompleteResult,
+  JobTransition,
   RetryPolicy,
+  TransitionListener,
 } from "./types.js";
 
 /** `mail_attempts.instance`에 쓰는 최대 글자 수(migrations/0003의 CHECK와 같다). */
@@ -344,15 +347,18 @@ function retryOrFinish(
  * SMTP 수락 직후 장애라면 재시도가 중복 발송이 된다(RQ-013).
  * `exclusive`가 true이면 정리 잠금(`tryMaintenanceLock`)을 먼저 시도해 못 잡으면 0을 돌려준다(유지보수 루프용).
  * 점유 앞단의 호출은 잠금 없이 복구한다. 복구 지연이 정체와 중복 발송으로 이어질 수 있어서다(ADR-0002 결정 5).
+ * `onRecovered`는 커밋한 뒤 회수한 작업의 호출처와 전이 뒤 상태(`RETRY_WAIT`·`FAILED`·`EXPIRED`)를 한 번 알린다(지표용, ADR-0012 결정 7).
+ * 롤백되면 부르지 않는다.
  * @returns 복구한 작업 수
  */
 export async function recoverExpiredLeases(
   pool: pg.Pool,
   deps: CompleteDeps,
   limit = 100,
-  options: { exclusive?: boolean } = {},
+  options: { exclusive?: boolean; onRecovered?: TransitionListener } = {},
 ): Promise<number> {
-  return withTransaction(pool, async (client) => {
+  const transitions: JobTransition[] = [];
+  const count = await withTransaction(pool, async (client) => {
     if (options.exclusive && !(await tryMaintenanceLock(client, "lease")))
       return 0;
     const { rows } = await client.query<LockedJob & { lease_token: string }>(
@@ -364,14 +370,17 @@ export async function recoverExpiredLeases(
       [limit],
     );
     for (const row of rows) {
-      await applyOutcome(
+      const result = await applyOutcome(
         client,
         row,
         row.lease_token,
         { classification: "LEASE_EXPIRED" },
         deps,
       );
+      transitions.push({ callerId: row.caller_id, status: result.status });
     }
     return rows.length;
   });
+  notifyTransitions(options.onRecovered, transitions);
+  return count;
 }

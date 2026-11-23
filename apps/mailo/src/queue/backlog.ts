@@ -84,3 +84,46 @@ export async function getQueueBacklog(db: Queryable): Promise<QueueBacklog> {
     byPriority,
   };
 }
+
+/** 큐 깊이(ADR-0012 결정 4). `due`·`scheduled`는 `BACKLOG_COUNT_LIMIT`에서 멈춘다. */
+export interface QueueDepth {
+  /** 점유 가능(`getQueueBacklog`의 전체 값과 같다). */
+  due: { count: number; truncated: boolean };
+  /** 재시도·예약 대기(`PENDING`·`RETRY_WAIT`이고 `next_attempt_at`이 미래). */
+  scheduled: { count: number; truncated: boolean };
+  /** 점유 중(`SENDING`). 상한이 없다. 동시에 점유할 수 있는 수가 Worker 동시 처리 수로 막혀 있다. */
+  sending: number;
+  /** 등급별 값을 포함한 `getQueueBacklog` 결과. 헬스의 `queue`와 같은 데이터다. */
+  backlog: QueueBacklog;
+}
+
+/**
+ * 큐 깊이를 읽는다. `/metrics`의 `mailo_queue_jobs`가 쓴다(RQ-049, ADR-0012 결정 4·5).
+ * - `due`는 `getQueueBacklog`에서 가져와 헬스 `queue.dueCount`와 같은 값이다.
+ * - `scheduled`는 `mail_jobs_claim_idx`를 `next_attempt_at > now()` 범위로 상한+1까지만 읽는다.
+ * - `sending`은 `mail_jobs_sending_caller_idx`(부분 인덱스) 전용 스캔이다.
+ * 읽기만 하고 잠그지 않는다. 시각은 DB `now()`다(ADR-0002 결정 10).
+ * `PENDING`은 `next_attempt_at` 기본값이 `now()`라 항상 due이고, 미래로 바꾸는 쿼리는 `RETRY_WAIT` 전이뿐이다(`queue/complete.ts`).
+ */
+export async function getQueueDepth(db: Queryable): Promise<QueueDepth> {
+  const backlog = await getQueueBacklog(db);
+  const { rows } = await db.query<{ scheduled: number; sending: number }>(
+    `SELECT (SELECT count(*)::int FROM (
+               SELECT 1 FROM mail_jobs
+                WHERE status IN ('PENDING', 'RETRY_WAIT') AND next_attempt_at > now()
+                ORDER BY next_attempt_at
+                LIMIT $1) s) AS scheduled,
+            (SELECT count(*)::int FROM mail_jobs WHERE status = 'SENDING') AS sending`,
+    [BACKLOG_COUNT_LIMIT + 1],
+  );
+  const scheduled = rows[0]?.scheduled ?? 0;
+  return {
+    due: { count: backlog.dueCount, truncated: backlog.truncated },
+    scheduled: {
+      count: Math.min(scheduled, BACKLOG_COUNT_LIMIT),
+      truncated: scheduled > BACKLOG_COUNT_LIMIT,
+    },
+    sending: rows[0]?.sending ?? 0,
+    backlog,
+  };
+}

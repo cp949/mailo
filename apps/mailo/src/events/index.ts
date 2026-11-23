@@ -2,6 +2,7 @@ export { EventsModule } from "./events.module.js";
 export {
   findRejections,
   getFeedLag,
+  getFeedLagsForCallers,
   listEvents,
   recordIntakeRejection,
   recordJobEvent,

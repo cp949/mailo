@@ -81,7 +81,11 @@ describe("PostgreSQL 통합: 작업 취소(RQ-040, ADR-0011 결정 4)", () => {
       "CALLER",
     );
 
-    expect(result).toEqual({ kind: "canceled", jobId: id });
+    expect(result).toEqual({
+      kind: "canceled",
+      jobId: id,
+      callerId: "alpha",
+    });
     const after = await row(id);
     expect(after.status).toBe("CANCELED");
     expect(after.finished_at).toBeInstanceOf(Date);
@@ -119,7 +123,11 @@ describe("PostgreSQL 통합: 작업 취소(RQ-040, ADR-0011 결정 4)", () => {
       "OPERATOR",
     );
 
-    expect(result).toEqual({ kind: "canceled", jobId: id });
+    expect(result).toEqual({
+      kind: "canceled",
+      jobId: id,
+      callerId: "alpha",
+    });
     expect((await row(id)).failure_reason).toBe("CANCELED_BY_OPERATOR");
     expect((await events(id))[0]?.failure_reason).toBe("CANCELED_BY_OPERATOR");
   });

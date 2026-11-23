@@ -11,8 +11,11 @@ export {
 export {
   BACKLOG_COUNT_LIMIT,
   getQueueBacklog,
+  getQueueDepth,
   type QueueBacklog,
+  type QueueDepth,
 } from "./backlog.js";
+export { getCallerQuotaUsage } from "./quota-usage.js";
 export {
   claim,
   type ClaimOptions,
@@ -83,6 +86,8 @@ export type {
   BreakerState,
   ClaimedJob,
   CompleteResult,
+  JobTransition,
+  TransitionListener,
   EncryptedBody,
   Fingerprinter,
   JobStatus,

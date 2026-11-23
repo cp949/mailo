@@ -120,6 +120,23 @@ export interface ClaimedJob {
   isProbe: boolean;
 }
 
+/**
+ * 커밋한 상태 전이 한 건. 지표(`/metrics`) 같은 관찰자에게 호출처와 전이 뒤 상태만 알린다(ADR-0012 결정 7).
+ * 작업 ID·수신자 등 요청 값은 담지 않는다(RQ-027).
+ */
+export interface JobTransition {
+  callerId: string;
+  status: JobStatus;
+}
+
+/**
+ * 전이를 커밋한 뒤 한 번 부른다. 롤백되면 부르지 않는다. 던져도 호출한 쪽 결과에 영향이 없다.
+ * `queue/`는 `metrics/`를 import하지 않으므로 호출자가 이 콜백으로 counter를 올린다.
+ */
+export type TransitionListener = (
+  transitions: ReadonlyArray<JobTransition>,
+) => void;
+
 /** 재시도 정책(RQ-008 기본값, 모두 추정). */
 export interface RetryPolicy {
   /** 첫 시도를 포함한 최대 시도 횟수 */

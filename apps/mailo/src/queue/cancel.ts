@@ -15,8 +15,11 @@ export type CancelTarget =
   | { callerId: string; idempotencyKey: string };
 
 export type CancelResult =
-  /** 이번 호출이 `CANCELED`로 바꿨다. 이벤트를 썼다. */
-  | { kind: "canceled"; jobId: string }
+  /**
+   * 이번 호출이 `CANCELED`로 바꿨다. 이벤트를 썼다.
+   * `callerId`는 작업의 호출처다. 호출처 범위가 없는 관리 취소가 지표 라벨을 정하는 데 쓴다(ADR-0012 결정 4).
+   */
+  | { kind: "canceled"; jobId: string; callerId: string }
   /** 이미 `CANCELED`다. 이벤트와 시각을 새로 쓰지 않았다(멱등). */
   | { kind: "already_canceled"; jobId: string }
   /** `SENDING`이거나 종결 상태다. 아무것도 바꾸지 않았다. */
@@ -115,7 +118,11 @@ async function cancelWithin(
       attemptCount: row.attempts,
       recipients: row.recipients,
     });
-    return { kind: "canceled", jobId: row.id } as const;
+    return {
+      kind: "canceled",
+      jobId: row.id,
+      callerId: row.caller_id,
+    } as const;
   }
 
   // 갱신하지 않았다. 잠금 대기 뒤 커밋된 현재 상태를 읽어 이유를 가른다(READ COMMITTED).
