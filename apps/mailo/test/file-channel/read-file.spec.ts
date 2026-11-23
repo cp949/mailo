@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -133,6 +134,16 @@ describe("입력 파일 읽기 (ADR-0004 결정 5, RQ-002)", () => {
       kind: "not_read",
       why: "NOT_REGULAR",
     });
+  });
+
+  it("연 뒤 fstat 전에 다른 인스턴스가 이름을 지우면(nlink 0) 하드링크로 거부하지 않고 gone이다", async () => {
+    // 폴러 둘이 같은 폴더를 읽을 때 한쪽이 처리를 끝내고 unlink하는 틈에 다른 쪽이 열었던 경우다(ADR-0004 결정 6).
+    const target = file("unlinked-after-open.json");
+    writeFileSync(target, '{"x":1}');
+
+    const result = await readInboxFile(target, LIMIT, () => unlinkSync(target));
+
+    expect(result).toEqual({ kind: "gone" });
   });
 
   it("없는 파일은 gone이다", async () => {

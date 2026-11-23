@@ -4,7 +4,7 @@
  * - `O_RDONLY | O_NOFOLLOW | O_NONBLOCK`으로 열고 `fstat`으로 확인한다. `lstat` 뒤에 `open`하는 순서는
  *   그 사이에 파일이 바뀔 수 있어 쓰지 않는다.
  * - `O_NONBLOCK`이 없으면 이름이 `*.json`인 FIFO를 여는 순간 폴러가 멈춘다.
- * - 일반 파일이고 `st_nlink == 1`이어야 읽는다. 심볼릭 링크·FIFO·소켓·디렉터리·하드링크는 내용을 읽지 않는다.
+ * - 일반 파일이고 `st_nlink == 1`이어야 읽는다. `st_nlink == 0`은 open 뒤에 이름이 지워진 파일이라 `gone`이다. 심볼릭 링크·FIFO·소켓·디렉터리·하드링크는 내용을 읽지 않는다.
  *   하드링크는 다른 파일(다른 호출처의 파일 등)을 가리킬 수 있어, 읽으면 해시로 내용을 추측하는 통로가 된다.
  * - 읽기는 상한 + 1바이트까지만 한다. 호출처가 `rename` 뒤에도 파일을 열어 두고 추가로 쓸 수 있으므로
  *   `fstat` 크기는 읽을 양을 정하는 데 쓰지 않는다.
@@ -62,6 +62,8 @@ async function identOf(path: string): Promise<FileIdent | null> {
 export async function readInboxFile(
   path: string,
   maxBytes: number,
+  /** `open` 성공 직후, `fstat` 전에 부른다. 테스트가 이 틈에 다른 인스턴스의 삭제를 흉내 낸다. */
+  afterOpen?: () => Promise<void> | void,
 ): Promise<ReadOutcome> {
   let handle;
   try {
@@ -89,9 +91,13 @@ export async function readInboxFile(
   }
 
   try {
+    await afterOpen?.();
     const stat = await handle.stat({ bigint: true });
     const ident = { dev: stat.dev, ino: stat.ino };
     if (!stat.isFile()) return { kind: "not_read", why: "NOT_REGULAR", ident };
+    // 열고 나서 fstat 전에 다른 인스턴스·호출처가 이름을 지우면 nlink가 0이다. 하드링크가 아니라 사라진 파일이므로
+    // 거부하지 않고 gone으로 다룬다. 다른 인스턴스는 DB 커밋 뒤에만 지우므로 이 파일은 이미 처리됐거나 호출처가 회수했다.
+    if (stat.nlink === 0n) return { kind: "gone" };
     if (stat.nlink !== 1n) return { kind: "not_read", why: "HARDLINK", ident };
 
     const limit = maxBytes + 1;
