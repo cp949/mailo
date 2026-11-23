@@ -493,7 +493,7 @@ describe("REST 통합: 운영 REST /ops (RQ-042~044, ADR-0011)", () => {
       expect(text).not.toContain("sendControls");
     });
 
-    it("운영자 응답에는 sendControls(전체 정지 여부·정지 호출처 수)만 있고 호출처 ID는 없다. sendPaused는 없다", async () => {
+    it("운영자 응답에는 sendControls(전체 정지 여부·정지 호출처·계정 수)만 있고 호출처 ID는 없다. sendPaused는 없다", async () => {
       await call("PUT", "/ops/pauses/callers/alpha", ONCALL);
       await call("PUT", "/ops/pauses/callers/ghost-caller", ONCALL);
 
@@ -502,6 +502,7 @@ describe("REST 통합: 운영 REST /ops (RQ-042~044, ADR-0011)", () => {
         expect(body["sendControls"]).toEqual({
           allPaused: false,
           pausedCallerCount: 2,
+          pausedAccountCount: 0,
         });
         expect(body["sendPaused"]).toBeUndefined();
         expect(JSON.stringify(body)).not.toContain("ghost-caller");

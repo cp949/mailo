@@ -285,6 +285,50 @@ paths:
           $ref: '#/components/responses/JobNotCancelable'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /ops/accounts:
+    get:
+      tags: [Ops]
+      operationId: listAccounts
+      summary: SMTP 계정별 운영 상태
+      description: |
+        이 인스턴스가 구성한 SMTP 계정마다 차단기 상태, 발송 정지 여부, 24시간 사용량·한도, 점유 대상 작업 적체를 반환한다(RQ-060, ADR-0013 결정 5).
+        읽기 토큰과 관리 토큰을 받는다. 호출처 API 키는 401이다. 구성 순서(`default`, 계정 파일 순서)다.
+
+        - SMTP 호스트, 사용자, 발신 주소, 비밀번호, 비밀 변수 이름은 담지 않는다. 계정은 구성한 ID로만 나온다.
+        - 구성에서 빠진 계정은 목록에 없다. 그 계정에 남은 작업은 점유되지 않고 `expiresAt`에 `EXPIRED`가 된다. 구성에 없는 계정의 정지 행은 `GET /ops/pauses`에 있다.
+        - `breaker`의 모양과 값은 `/health/ready`의 인증된 `circuitBreaker`와 같다. 계정마다 독립이다.
+        - `sendQuota24h`는 한도(`sendQuota24h`)를 설정한 계정만 값이 있고 나머지는 `null`이다. `used`는 한도를 넘을 수 있다(점유 중 작업을 더한다).
+        - `queue`는 그 계정의 적체이고 `dueCount`는 상한 10000에서 멈춘다(`dueCountTruncated`). 항목마다 따로 읽으므로 한 시점의 스냅샷은 아니다.
+      security:
+        - opsReadAuth: []
+      responses:
+        '200':
+          description: 계정 목록.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountList'
+              examples:
+                twoAccounts:
+                  value:
+                    accounts:
+                      - accountId: default
+                        breaker: { state: closed, openUntil: null, lastReason: null }
+                        paused: false
+                        sendQuota24h: null
+                        queue: { dueCount: 3, dueCountTruncated: false, oldestDueAgeSeconds: 12 }
+                      - accountId: marketing
+                        breaker: { state: open, openUntil: '2026-11-24T10:30:00Z', lastReason: QUOTA_DAILY }
+                        paused: false
+                        sendQuota24h: { limit: 400, used: 401 }
+                        queue: { dueCount: 120, dueCountTruncated: false, oldestDueAgeSeconds: 1800 }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /ops/pauses:
     get:
       tags: [Ops]
@@ -411,6 +455,57 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /ops/pauses/accounts/{accountId}:
+    put:
+      tags: [Ops]
+      operationId: pauseAccount
+      summary: SMTP 계정 발송 정지
+      description: |
+        한 SMTP 계정의 점유를 멈춘다(RQ-061, ADR-0013 결정 5). 관리 토큰만 받는다. 다른 계정은 영향이 없다. 요청 본문은 없다.
+
+        - `accountId`는 계정 ID 형식(`^[a-z0-9][a-z0-9_-]{0,31}$`, `unregistered`는 예약어)이어야 한다. 틀리면 400(`accountId`, `INVALID_FORMAT`)이다.
+        - 구성에 있는지 확인하지 않는다. 구성에서 뺀 계정의 정지 행을 정리할 수 있어야 해서다. 응답의 `inConfig`로 오타를 알아본다.
+        - 정지한 계정의 점유가 멈춘다(차단기 대표 작업 포함). 그 계정을 쓰는 호출처의 등록은 계속 받고 작업은 `PENDING`에 쌓이다 `expiresAt`에 `EXPIRED`가 된다.
+        - 정지는 차단기와 독립이다. 정지를 풀어도 차단기 상태는 바뀌지 않는다. 전체 정지·호출처 정지와 합쳐서 적용된다.
+        - 진행 중 전송(`SENDING`)은 끝까지 가고 결과를 기록한다.
+        - 멱등이다. 이미 정지면 `changed: false`이고 감사 기록을 쓰지 않는다. 감사는 `scope.type: account`로 남는다.
+        - 롤링 배포 중(구·신 인스턴스 혼용)에는 쓰지 않는다. 구버전 인스턴스는 계정 정지를 읽지 않는다.
+      security:
+        - opsAdminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountIdPath'
+      responses:
+        '200':
+          $ref: '#/components/responses/PauseChanged'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [Ops]
+      operationId: resumeAccount
+      summary: SMTP 계정 발송 재개
+      description: |
+        계정 정지를 푼다. 관리 토큰만 받는다. 정지가 없으면 `changed: false`다(멱등, 감사 기록 없음). 구성에 없는 계정 ID도 받는다.
+      security:
+        - opsAdminAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountIdPath'
+      responses:
+        '200':
+          $ref: '#/components/responses/PauseChanged'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /ops/jobs/{jobId}:
     get:
       tags: [Ops]
@@ -418,7 +513,7 @@ paths:
       summary: 작업 조회(모든 호출처)
       description: |
         호출처 범위 없이 작업 ID로 조회한다(ADR-0011 결정 7). 읽기 토큰과 관리 토큰을 받는다.
-        `GET /jobs/{jobId}`의 `Job`에서 `idempotencyKey`와 `rejectedRecipients`를 빼고 `callerId`를 더했다. 호출처가 정한 Key와 거부된 수신자 주소는 운영자 읽기에도 주지 않는다. 수신자와 본문은 없다.
+        `GET /jobs/{jobId}`의 `Job`에서 `idempotencyKey`와 `rejectedRecipients`를 빼고 `callerId`와 `accountId`(작업이 등록 때 고정한 SMTP 계정 ID)를 더했다. 호출처가 정한 Key와 거부된 수신자 주소는 운영자 읽기에도 주지 않는다. 수신자와 본문은 없다.
         없거나 보존 기간이 지나 삭제된 작업은 404다.
       security:
         - opsReadAuth: []
@@ -689,11 +784,12 @@ paths:
         `/health/ready`의 DB 장애 503과 목적이 다르다. DB가 죽은 동안에도 인스턴스 counter와 `collect_ok=0` 신호가 수집돼야 하기 때문이다.
 
         지표는 두 종류다. 이름 규칙과 전체 목록은 `docs/operations/deployment.md` "지표(`/metrics`)"다.
-        - 전역 gauge(`mailo_queue_`, `mailo_breaker_`, `mailo_send_paused`, `mailo_caller_`, `mailo_ops_audit_` 접두): DB에서 정해져 어느 인스턴스가 내도 같다. `max by (...)`로 합친다. `sum`은 인스턴스 수만큼 곱해진다.
+        - 전역 gauge(`mailo_queue_`, `mailo_breaker_`, `mailo_send_paused`, `mailo_caller_`, `mailo_account_`, `mailo_ops_audit_` 접두): DB에서 정해져 어느 인스턴스가 내도 같다. `max by (...)`로 합친다. `sum`은 인스턴스 수만큼 곱해진다.
         - 인스턴스 값(`mailo_*_total` counter, `mailo_worker_`·`mailo_file_poller_`·`mailo_metrics_` gauge, `process_*`): 이 프로세스가 한 일이다. `sum by (...) (rate(...))`로 합친다. 재시작하면 counter가 0에서 다시 시작한다.
 
         전역 gauge는 `MAILO_METRICS_CACHE_SECONDS`(기본 5초) 동안 마지막 DB 수집 결과를 다시 쓴다. 두 인스턴스의 값은 그만큼 어긋날 수 있다.
-        라벨은 `caller_id`(레지스트리 호출처 또는 `unregistered`), `account_id`(단계 7 전에는 `default`), 값이 닫힌 열거 라벨뿐이다.
+        라벨은 `caller_id`(레지스트리 호출처 또는 `unregistered`), `account_id`(이 인스턴스가 구성한 SMTP 계정 ID 또는 구성에서 빠진 계정의 작업을 묶는 `unregistered`), 값이 닫힌 열거 라벨뿐이다.
+        계정이 하나뿐인 배포는 `account_id="default"`뿐이라 이전과 같다. 계정 ID는 운영자가 정한 불투명한 이름이고 호스트·사용자·발신 주소는 어느 라벨·값에도 없다.
         수신자, 제목·본문, `Idempotency-Key`, 작업 ID, SMTP 응답 코드·텍스트, 토큰은 어느 라벨·값에도 없다(RQ-027).
         응답 캐시를 막으려고 `Cache-Control: no-store`를 준다.
       security:
@@ -754,6 +850,18 @@ paths:
 
         차단기가 `open`이나 `half_open`이어도 등록과 조회는 정상이므로 200이다.
         오케스트레이터가 인스턴스를 내리지 않게 하기 위해서다. 발송 중지는 `circuitBreaker.state`로 확인한다.
+        발송 정지(전체·호출처·계정)와 계정 차단기 상태도 200/503에 반영하지 않는다.
+
+        SMTP 계정이 여럿이면 차단기는 계정마다 있다(ADR-0013). `circuitBreaker`는 누가 부르느냐에 따라 값을 정한다. 어느 경우에도 계정 ID와 계정 수는 없다.
+
+        | 호출 | `circuitBreaker` |
+        | ---- | ---------------- |
+        | 인증 없음, 운영자 토큰 | 모든 계정 중 가장 나쁜 상태(`open` > `half_open` > `closed`). 같은 상태이면 계정 ID 오름차순 첫 계정의 `openUntil`·`lastReason`(인증된 경우) |
+        | 호출처 API 키 | 그 호출처가 쓰는 계정의 상태·`openUntil`·`lastReason`. 호출처는 자기 메일이 막혔는지 알 수 있다 |
+
+        단일 계정 배포(`default`만 구성)는 값이 이전과 같다. 계정이 여럿인 배포에서 인증 없음·운영자 응답의 `closed`는 모든 계정이 `closed`라는 뜻이고,
+        `open`·`half_open`은 계정 하나 이상이 그렇다는 뜻이다. 어느 계정인지는 운영자가 `GET /ops/accounts`로 확인한다.
+        호출처 키의 `circuitBreaker`는 이전에는 전역 값이었고 이제 자기 계정 값이다. 다른 계정이 막혀도 `closed`일 수 있다.
 
         인증 없이 호출하면 공개 필드만 반환한다.
 
@@ -764,6 +872,7 @@ paths:
         | `circuitBreaker.openUntil`, `circuitBreaker.lastReason` | 생략 | 반환 |
         | `eventFeed.latestEventAt`, `eventFeed.lagSeconds` | 생략 | 반환 |
         | `sendPaused.paused`, `sendPaused.scope` | 생략 | 호출처 API 키일 때 반환 |
+        | `sendControls.pausedAccountCount` | 생략 | 운영자 토큰일 때 반환 |
 
         `openUntil`과 `lastReason`은 계정 인증 실패나 일일 한도 소진 같은 SMTP 계정 상태를 드러낸다.
         외부 탐색에 쓰일 수 있어 인증을 요구한다. SMTP 응답 텍스트와 계정 정보는 어느 경우에도 반환하지 않는다.
@@ -774,11 +883,13 @@ paths:
         새 이벤트가 없는 동안에도 값이 커지므로 단독 장애 신호로 쓰지 않는다. DB의 긴 트랜잭션으로 피드가 멈춘 경우에도 커진다(ADR-0006 결정 7).
         다른 호출처의 이벤트는 반영하지 않는다.
 
-        `sendPaused`는 호출처 자신에게 해당하는 발송 정지 요약이다(RQ-043). 정지는 `/ops`의 관리 endpoint로 걸고 이 응답의 200/503에는 반영하지 않는다.
+        `sendPaused`는 호출처 자신에게 해당하는 발송 정지 요약이다(RQ-043). 전체 정지(`all`), 그 호출처가 쓰는 계정의 정지(`account`), 호출처 정지(`caller`) 순서로 우선한다.
+        다른 계정의 정지는 반영하지 않는다. 정지는 `/ops`의 관리 endpoint로 걸고 이 응답의 200/503에는 반영하지 않는다.
         정지된 호출처의 작업은 `PENDING`에 쌓이고 `expiresAt`에 `EXPIRED`가 된다. 호출처는 이 값으로 정지를 알아본다. 이벤트 피드로는 알리지 않는다.
 
         운영자 토큰(서버가 `MAILO_OPS_TOKEN` 또는 `MAILO_OPS_ADMIN_TOKEN_<이름>`을 설정했을 때)을 Bearer로 보내면 호출처 API 키로 받는 필드에 더해 `sendControls`, `queue`, `worker`, `filePoller`를 반환한다(`eventFeed`·`sendPaused`는 호출처 전용이라 없다).
         읽기 토큰과 관리 토큰의 응답은 같다. 호출처 전체의 적체와 발송 루프 상태라서 호출처 API 키로는 반환하지 않는다. 발송 정지(Worker 정지, 적체)는 이 응답의 200/503에 반영하지 않는다.
+        `queue`는 계정별 적체의 합이다. 계정이 둘 이상이면 `dueCount`는 계정별 값을 더한 뒤 10000으로 자른다(계정별 값도 각각 10000에서 멈춘다).
         메일 본문, 수신자, 작업 ID, `caller_id`는 어느 필드에도 없다.
 
         `Authorization` 헤더를 보냈는데 자격이 틀리면 401이다. 공개 응답으로 낮춰 반환하지 않는다.
@@ -825,6 +936,22 @@ paths:
                     sendPaused:
                       paused: false
                       scope: null
+                accountPaused:
+                  summary: 유효한 Bearer(호출처 API 키), 이 호출처의 계정이 정지됨. 200이고 status는 UP이다. 계정 ID는 없다.
+                  value:
+                    status: UP
+                    checks:
+                      database: UP
+                    circuitBreaker:
+                      state: closed
+                      openUntil: null
+                      lastReason: null
+                    eventFeed:
+                      latestEventAt: '2026-11-24T09:58:20Z'
+                      lagSeconds: 100
+                    sendPaused:
+                      paused: true
+                      scope: account
                 callerPaused:
                   summary: 유효한 Bearer(호출처 API 키), 이 호출처가 정지됨. 200이고 status는 UP이다.
                   value:
@@ -854,6 +981,7 @@ paths:
                     sendControls:
                       allPaused: false
                       pausedCallerCount: 0
+                      pausedAccountCount: 0
                     queue:
                       dueCount: 412
                       dueCountTruncated: false
@@ -978,6 +1106,15 @@ components:
         type: string
         pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
       example: billing
+    AccountIdPath:
+      name: accountId
+      in: path
+      required: true
+      description: SMTP 계정 ID. `^[a-z0-9][a-z0-9_-]{0,31}$`이고 `unregistered`는 예약어다. 구성에 있는지는 확인하지 않는다.
+      schema:
+        type: string
+        pattern: '^[a-z0-9][a-z0-9_-]{0,31}$'
+      example: marketing
     EventsAfter:
       name: after
       in: query
@@ -1514,7 +1651,10 @@ components:
               enum: [UP, DOWN]
         circuitBreaker:
           type: object
-          description: 전역 SMTP 차단기(ADR-0007 결정 5). `closed`가 아니면 Worker가 발송을 멈췄거나 대표 작업 한 건만 시험 중이다.
+          description: |
+            SMTP 차단기(ADR-0007 결정 5, ADR-0013 결정 5). 차단기는 계정마다 있다. 호출처 API 키는 그 호출처 계정의 상태이고
+            인증 없음과 운영자 토큰은 모든 계정 중 가장 나쁜 상태(`open` > `half_open` > `closed`)다. 계정 ID는 담지 않는다.
+            `closed`가 아니면 해당 계정의 Worker가 발송을 멈췄거나 대표 작업 한 건만 시험 중이다.
           required: [state]
           additionalProperties: false
           properties:
@@ -1558,9 +1698,9 @@ components:
         sendPaused:
           type: object
           description: |
-            호출처 API 키가 있을 때만 반환한다(`eventFeed`와 같다). 그 호출처에 해당하는 발송 정지만 요약한다(RQ-043, ADR-0011 결정 2).
-            `all`과 `caller`가 함께 걸려 있으면 `scope`는 `all`이다. 정지가 없으면 `{ paused: false, scope: null }`이다.
-            호출처 ID, 운영자 이름, 시각은 담지 않는다. 운영자 토큰 응답에는 없다. 이 응답의 200/503에는 반영하지 않는다.
+            호출처 API 키가 있을 때만 반환한다(`eventFeed`와 같다). 그 호출처에 해당하는 발송 정지만 요약한다(RQ-043, ADR-0011 결정 2, ADR-0013 결정 5).
+            `scope`는 `all`(전체 정지), `account`(그 호출처가 쓰는 계정의 정지), `caller`(호출처 정지) 순서로 우선한다. 정지가 없으면 `{ paused: false, scope: null }`이다.
+            호출처 ID, 계정 ID, 운영자 이름, 시각은 담지 않는다. 운영자 토큰 응답에는 없다. 이 응답의 200/503에는 반영하지 않는다.
           required: [paused, scope]
           additionalProperties: false
           properties:
@@ -1568,13 +1708,13 @@ components:
               type: boolean
             scope:
               type: [string, 'null']
-              enum: [all, caller, null]
+              enum: [all, account, caller, null]
         sendControls:
           type: object
           description: |
-            운영자 토큰(읽기·관리)이 있을 때만 반환한다. 발송 정지 요약이다. 호출처 ID는 담지 않는다(`caller_id`는 어느 필드에도 없다).
-            정지한 호출처 목록은 `GET /ops/pauses`로 읽는다.
-          required: [allPaused, pausedCallerCount]
+            운영자 토큰(읽기·관리)이 있을 때만 반환한다. 발송 정지 요약이다. 호출처·계정 ID는 담지 않는다(`caller_id`는 어느 필드에도 없다).
+            정지한 호출처·계정 목록은 `GET /ops/pauses`로 읽는다.
+          required: [allPaused, pausedCallerCount, pausedAccountCount]
           additionalProperties: false
           properties:
             allPaused:
@@ -1582,6 +1722,10 @@ components:
             pausedCallerCount:
               type: integer
               minimum: 0
+            pausedAccountCount:
+              type: integer
+              minimum: 0
+              description: 정지한 계정 수. 구성에 없는 계정의 정지 행도 센다.
         queue:
           type: object
           description: 운영자 토큰이 있을 때만 반환한다. 점유 대상 작업의 적체. 차단기가 `open`이거나 호출처 할당에 걸린 작업도 센다.
@@ -1795,11 +1939,11 @@ components:
       properties:
         type:
           type: string
-          enum: [all, caller]
+          enum: [all, caller, account]
         id:
           type: string
-          description: '`type`이 `caller`일 때만 있다. 호출처 ID.'
-      description: 발송 정지 범위. `account` 범위는 스키마에만 있고 이 API는 받지 않는다(ADR-0011 결정 2).
+          description: '`type`이 `caller`이면 호출처 ID, `account`이면 SMTP 계정 ID다. `all`이면 없다.'
+      description: 발송 정지 범위(ADR-0011 결정 2, ADR-0013 결정 5).
     PauseChange:
       type: object
       required: [scope, paused, changed]
@@ -1823,6 +1967,9 @@ components:
         inRegistry:
           type: boolean
           description: '`scope.type`이 `caller`일 때만 있다. 호출처 ID가 레지스트리에 있다. `false`면 오타일 수 있다.'
+        inConfig:
+          type: boolean
+          description: '`scope.type`이 `account`일 때만 있다. 계정 ID가 이 인스턴스의 계정 구성에 있다. `false`면 오타이거나 구성에서 뺀 계정이다.'
     PauseList:
       type: object
       required: [pauses]
@@ -1845,11 +1992,12 @@ components:
     OpsJob:
       type: object
       description: |
-        운영자 읽기의 작업. `Job`에서 `idempotencyKey`와 `rejectedRecipients`를 빼고 `callerId`를 더했다. 나머지 필드는 `Job`의 같은 이름 필드와 같다.
+        운영자 읽기의 작업. `Job`에서 `idempotencyKey`와 `rejectedRecipients`를 빼고 `callerId`와 `accountId`를 더했다. 나머지 필드는 `Job`의 같은 이름 필드와 같다.
         호출처가 정한 Key와 거부된 수신자 주소(`rejectedRecipients`)는 운영자 읽기에도 주지 않는다. 본문과 수신자는 없다.
       required:
         - jobId
         - callerId
+        - accountId
         - status
         - priority
         - attempts
@@ -1867,6 +2015,9 @@ components:
         callerId:
           type: string
           description: 작업의 호출처.
+        accountId:
+          type: string
+          description: 작업이 등록 때 고정한 SMTP 계정 ID(ADR-0013 결정 2). 호출처 응답(`Job`)에는 없다. 구성에서 빠진 계정이어도 작업에 남아 있는 값이다.
         jobId:
           $ref: '#/components/schemas/Job/properties/jobId'
         status:
@@ -1893,6 +2044,71 @@ components:
           $ref: '#/components/schemas/Job/properties/lastError'
         outcomeUncertain:
           $ref: '#/components/schemas/Job/properties/outcomeUncertain'
+    AccountStatus:
+      type: object
+      description: SMTP 계정 하나의 운영 상태. 호스트·사용자·발신 주소·비밀 정보는 없다(RQ-027).
+      required: [accountId, breaker, paused, sendQuota24h, queue]
+      additionalProperties: false
+      properties:
+        accountId:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9_-]{0,31}$'
+        breaker:
+          type: object
+          description: 이 계정의 차단기. `/health/ready`의 인증된 `circuitBreaker`와 같은 값이다.
+          required: [state, openUntil, lastReason]
+          additionalProperties: false
+          properties:
+            state:
+              type: string
+              enum: [closed, open, half_open]
+            openUntil:
+              type: [string, 'null']
+              format: date-time
+              description: '`open`일 때만 값이 있다.'
+            lastReason:
+              type: [string, 'null']
+              enum: [AUTH_FAILED, TLS_FAILED, CONNECTION_FAILED, QUOTA_DAILY, QUOTA_BURST, OTHER, null]
+              description: '`closed`이면 `null`이다.'
+        paused:
+          type: boolean
+          description: 이 계정의 발송 정지 여부(전체 정지·호출처 정지는 반영하지 않는다).
+        sendQuota24h:
+          type: [object, 'null']
+          description: 24시간 발송 할당. 한도를 설정하지 않은 계정은 `null`이다.
+          required: [limit, used]
+          additionalProperties: false
+          properties:
+            limit:
+              type: integer
+              minimum: 1
+            used:
+              type: integer
+              minimum: 0
+              description: 최근 24시간 시도 수(한도에서 멈춘 값)와 점유 중 수의 합. 한도를 넘을 수 있다.
+        queue:
+          type: object
+          required: [dueCount, dueCountTruncated, oldestDueAgeSeconds]
+          additionalProperties: false
+          properties:
+            dueCount:
+              type: integer
+              minimum: 0
+              maximum: 10000
+            dueCountTruncated:
+              type: boolean
+            oldestDueAgeSeconds:
+              type: [integer, 'null']
+              minimum: 0
+    AccountList:
+      type: object
+      required: [accounts]
+      additionalProperties: false
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountStatus'
     AuditEntry:
       type: object
       required: [id, at, actor, action]

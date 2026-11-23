@@ -134,33 +134,50 @@ export async function listPauses(db: Queryable): Promise<PauseRecord[]> {
   return rows.map(toRecord);
 }
 
-/** 호출처 키 `/health/ready`의 `sendPaused`. 그 호출처에 해당하는 정지만 요약하고 `all`이 우선한다(ADR-0011 결정 2). */
+/**
+ * 호출처 키 `/health/ready`의 `sendPaused`. 그 호출처에 해당하는 정지만 요약한다. 우선순위는 `all`, 그 호출처의 계정(`account`), 호출처(`caller`)다
+ * (ADR-0011 결정 2, ADR-0013 결정 5). `accountId`는 그 호출처가 쓰는 계정이다. 다른 계정의 정지는 보지 않는다.
+ */
 export async function getCallerPauseSummary(
   db: Queryable,
   callerId: string,
-): Promise<{ paused: boolean; scope: "all" | "caller" | null }> {
-  const { rows } = await db.query<{ scope_type: "all" | "caller" }>(
+  accountId: string,
+): Promise<{ paused: boolean; scope: "all" | "account" | "caller" | null }> {
+  const { rows } = await db.query<{ scope_type: "all" | "account" | "caller" }>(
     `SELECT scope_type FROM mail_send_controls
-      WHERE (scope_type = 'all') OR (scope_type = 'caller' AND scope_id = $1)
-      ORDER BY scope_type`,
-    [callerId],
+      WHERE scope_type = 'all'
+         OR (scope_type = 'caller' AND scope_id = $1)
+         OR (scope_type = 'account' AND scope_id = $2)
+      ORDER BY CASE scope_type WHEN 'all' THEN 0 WHEN 'account' THEN 1 ELSE 2 END
+      LIMIT 1`,
+    [callerId, accountId],
   );
-  // `all`이 사전순으로 `caller`보다 앞이다.
   const scope = rows[0]?.scope_type ?? null;
   return { paused: scope !== null, scope };
 }
 
-/** 운영자 `/health/ready`의 `sendControls`. 호출처 ID는 담지 않는다(ADR-0011 결정 2). */
-export async function getSendControlsSummary(
-  db: Queryable,
-): Promise<{ allPaused: boolean; pausedCallerCount: number }> {
-  const { rows } = await db.query<{ all_paused: boolean; callers: number }>(
+/**
+ * 운영자 `/health/ready`의 `sendControls`. 호출처·계정 ID는 담지 않는다(ADR-0011 결정 2, ADR-0013 결정 5).
+ * 정지 수는 구성에 없는 호출처·계정의 행도 센다.
+ */
+export async function getSendControlsSummary(db: Queryable): Promise<{
+  allPaused: boolean;
+  pausedCallerCount: number;
+  pausedAccountCount: number;
+}> {
+  const { rows } = await db.query<{
+    all_paused: boolean;
+    callers: number;
+    accounts: number;
+  }>(
     `SELECT bool_or(scope_type = 'all') AS all_paused,
-            (count(*) FILTER (WHERE scope_type = 'caller'))::int AS callers
-       FROM mail_send_controls WHERE scope_type IN ('all', 'caller')`,
+            (count(*) FILTER (WHERE scope_type = 'caller'))::int AS callers,
+            (count(*) FILTER (WHERE scope_type = 'account'))::int AS accounts
+       FROM mail_send_controls WHERE scope_type IN ('all', 'caller', 'account')`,
   );
   return {
     allPaused: rows[0]?.all_paused ?? false,
     pausedCallerCount: rows[0]?.callers ?? 0,
+    pausedAccountCount: rows[0]?.accounts ?? 0,
   };
 }

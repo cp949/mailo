@@ -516,34 +516,60 @@ describe("PostgreSQL 통합: 발송 정지와 claim (RQ-043, ADR-0011 결정 2·
     });
 
     it("호출처 요약은 자기 범위만 보고 all이 caller보다 앞선다", async () => {
-      expect(await getCallerPauseSummary(db.pool, "alpha")).toEqual({
+      expect(await getCallerPauseSummary(db.pool, "alpha", "default")).toEqual({
         paused: false,
         scope: null,
       });
       await pauseCaller("beta");
-      expect(await getCallerPauseSummary(db.pool, "alpha")).toEqual({
+      expect(await getCallerPauseSummary(db.pool, "alpha", "default")).toEqual({
         paused: false,
         scope: null,
       });
       await pauseCaller("alpha");
-      expect(await getCallerPauseSummary(db.pool, "alpha")).toEqual({
+      expect(await getCallerPauseSummary(db.pool, "alpha", "default")).toEqual({
         paused: true,
         scope: "caller",
       });
       await pauseAll();
-      expect(await getCallerPauseSummary(db.pool, "alpha")).toEqual({
+      expect(await getCallerPauseSummary(db.pool, "alpha", "default")).toEqual({
         paused: true,
         scope: "all",
       });
     });
 
-    it("운영자 요약은 전체 정지 여부와 정지 호출처 수만 준다", async () => {
+    it("호출처 요약은 그 호출처의 계정 정지를 보고 우선순위는 all, account, caller다 (RQ-063, ADR-0013 결정 5)", async () => {
+      await db.pool.query(
+        "INSERT INTO mail_send_controls (scope_type, scope_id, paused_by) VALUES ('account', 'marketing', 'oncall')",
+      );
+      // 다른 계정의 정지는 보지 않는다.
+      expect(await getCallerPauseSummary(db.pool, "alpha", "default")).toEqual({
+        paused: false,
+        scope: null,
+      });
+      expect(
+        await getCallerPauseSummary(db.pool, "alpha", "marketing"),
+      ).toEqual({ paused: true, scope: "account" });
+      await pauseCaller("alpha");
+      expect(
+        await getCallerPauseSummary(db.pool, "alpha", "marketing"),
+      ).toEqual({ paused: true, scope: "account" });
+      await pauseAll();
+      expect(
+        await getCallerPauseSummary(db.pool, "alpha", "marketing"),
+      ).toEqual({ paused: true, scope: "all" });
+    });
+
+    it("운영자 요약은 전체 정지 여부와 정지 호출처·계정 수만 준다", async () => {
       await pauseCaller("alpha");
       await pauseCaller("beta");
+      await db.pool.query(
+        "INSERT INTO mail_send_controls (scope_type, scope_id, paused_by) VALUES ('account', 'retired', 'oncall')",
+      );
 
       expect(await getSendControlsSummary(db.pool)).toEqual({
         allPaused: false,
         pausedCallerCount: 2,
+        pausedAccountCount: 1,
       });
     });
   });

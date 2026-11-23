@@ -1,20 +1,22 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
 import type pg from "pg";
+import { CALLER_REGISTRY, type CallerRegistry } from "../callers/index.js";
 import { APP_CONFIG, type AppConfig } from "../config/index.js";
 import { PG_POOL } from "../db/index.js";
 import { getFeedLag } from "../events/index.js";
 import { FILE_POLLER, type FilePollerRunner } from "../file-channel/index.js";
 import {
   PRIORITIES,
-  getBreakerState,
+  breakerView,
+  getBreakerStates,
   getCallerPauseSummary,
   getQueueBacklog,
   getSendControlsSummary,
+  type BreakerSnapshot,
   type Priority,
 } from "../queue/index.js";
 import { WORKER_RUNNER, type WorkerRunner } from "../worker-port.js";
-import { lastReasonOf } from "./breaker-reason.js";
 import { withBoundedClient } from "./bounded-client.js";
 
 const logger = new Logger("health");
@@ -28,6 +30,26 @@ function byPriority<V, T>(
   const result = {} as Record<Priority, T>;
   for (const p of PRIORITIES) result[p] = pick(values[p]);
   return result;
+}
+
+const BREAKER_SEVERITY = { closed: 0, half_open: 1, open: 2 } as const;
+
+/**
+ * 계정 중 가장 나쁜 차단기 상태(`open` > `half_open` > `closed`). 같은 상태이면 계정 ID 오름차순 첫 계정이다(결과가 인스턴스마다 같게 한다).
+ * 계정 ID는 반환하지 않는다. 응답에 계정을 드러내지 않는다(ADR-0013 결정 5).
+ */
+function worstBreaker(states: ReadonlyMap<string, BreakerSnapshot>) {
+  let worst: BreakerSnapshot | undefined;
+  for (const id of [...states.keys()].sort()) {
+    const candidate = states.get(id)!;
+    if (
+      worst === undefined ||
+      BREAKER_SEVERITY[candidate.state] > BREAKER_SEVERITY[worst.state]
+    )
+      worst = candidate;
+  }
+  if (worst === undefined) throw new Error("차단기 상태가 없다");
+  return worst;
 }
 
 export interface ReadyResult {
@@ -44,11 +66,18 @@ export interface ReadyResult {
     eventFeed?: { latestEventAt: string | null; lagSeconds: number | null };
     /**
      * 호출처 키 호출에만 있다. 그 호출처에 해당하는 발송 정지 요약(ADR-0011 결정 2).
-     * `all`과 `caller`가 함께 걸려 있으면 `all`이다. 호출처 ID·운영자 이름·시각은 담지 않는다.
+     * 우선순위는 `all`, 그 호출처의 계정(`account`), 호출처(`caller`)다. 호출처 ID·계정 ID·운영자 이름·시각은 담지 않는다.
      */
-    sendPaused?: { paused: boolean; scope: "all" | "caller" | null };
-    /** 운영자 토큰(읽기·관리) 호출에만 있다. 호출처 ID는 담지 않는다. */
-    sendControls?: { allPaused: boolean; pausedCallerCount: number };
+    sendPaused?: {
+      paused: boolean;
+      scope: "all" | "account" | "caller" | null;
+    };
+    /** 운영자 토큰(읽기·관리) 호출에만 있다. 호출처·계정 ID는 담지 않는다. */
+    sendControls?: {
+      allPaused: boolean;
+      pausedCallerCount: number;
+      pausedAccountCount: number;
+    };
     /**
      * 운영자 토큰 호출에만 있다. 호출처 전체의 점유 대상 작업 적체(RQ-031).
      * `dueCount`는 계정별 값을 합쳐도 상한(10000)에서 멈추고 `dueCountTruncated`가 true이면 더 있다(ADR-0013 결정 3 아).
@@ -93,12 +122,15 @@ export class HealthService {
   constructor(
     @Inject(PG_POOL) private readonly pool: pg.Pool,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(CALLER_REGISTRY) private readonly registry: CallerRegistry,
     private readonly moduleRef: ModuleRef,
   ) {}
 
   /**
    * PostgreSQL 연결을 확인한다. 연결이 안 되면 503이다(RQ-031).
    * 차단기가 open·half_open이어도 200이다. 등록과 조회는 정상이라 오케스트레이터가 인스턴스를 내리면 안 된다.
+   * `circuitBreaker`는 계정별 차단기에서 정한다(ADR-0013 결정 5). 호출처 키는 그 호출처의 계정 상태를, 인증 없음과 운영자 토큰은 모든 계정 중
+   * 가장 나쁜 상태(`open` > `half_open` > `closed`)를 본다. 어느 응답에도 계정 ID와 계정 수는 없다. 계정별 상태는 `GET /ops/accounts`가 낸다.
    * `openUntil`과 `lastReason`은 SMTP 계정 상태를 드러내므로 인증된 호출에만 포함한다.
    * - `openUntil`: 상태가 open일 때만 값이 있고 그 밖에는 null이다.
    * - `lastReason`: 상태가 closed이면 null이다. closed에서도 마지막 실패 사유가 DB에 남지만 "열었던 사유"가 아니라서 숨긴다(추정).
@@ -115,13 +147,24 @@ export class HealthService {
     isOperator = false,
   ): Promise<ReadyResult> {
     const authenticated = callerId !== undefined || isOperator;
+    // 호출처 키는 자기 계정만 본다. 인증 없음·운영자는 모든 계정이 대상이다.
+    const callerAccountId =
+      callerId === undefined
+        ? undefined
+        : this.registry.callers.find((c) => c.id === callerId)?.accountId;
+    const accountIds = this.config.smtpAccounts.map((a) => a.id);
     try {
       const { breaker, lag, backlog, sendPaused, sendControls } =
         await withBoundedClient(this.pool, CHECK_TIMEOUT_MS, async (client) => {
           await client.query("SELECT 1");
-          const breaker = await getBreakerState(client, {
-            breakerKey: this.config.worker.breaker.breakerKey,
-          });
+          const breakers = await getBreakerStates(
+            client,
+            callerAccountId === undefined ? accountIds : [callerAccountId],
+          );
+          const breaker =
+            callerAccountId === undefined
+              ? worstBreaker(breakers)
+              : breakers.get(callerAccountId)!;
           const lag =
             callerId === undefined ? null : await getFeedLag(client, callerId);
           const backlog = isOperator
@@ -131,13 +174,19 @@ export class HealthService {
               )
             : null;
           const sendPaused =
-            callerId === undefined
+            callerId === undefined || callerAccountId === undefined
               ? null
-              : await getCallerPauseSummary(client, callerId);
+              : await getCallerPauseSummary(client, callerId, callerAccountId);
           const sendControls = isOperator
             ? await getSendControlsSummary(client)
             : null;
-          return { breaker, lag, backlog, sendPaused, sendControls };
+          return {
+            breaker: breakerView(breaker),
+            lag,
+            backlog,
+            sendPaused,
+            sendControls,
+          };
         });
       return {
         httpStatus: 200,
@@ -148,14 +197,8 @@ export class HealthService {
             state: breaker.state,
             ...(authenticated
               ? {
-                  openUntil:
-                    breaker.state === "open" && breaker.openUntil
-                      ? breaker.openUntil.toISOString()
-                      : null,
-                  lastReason:
-                    breaker.state === "closed" || breaker.lastReason === null
-                      ? null
-                      : lastReasonOf(breaker.lastReason),
+                  openUntil: breaker.openUntil?.toISOString() ?? null,
+                  lastReason: breaker.lastReason,
                 }
               : {}),
           },
