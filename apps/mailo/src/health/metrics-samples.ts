@@ -199,14 +199,18 @@ export function instanceSamples(input: {
   return out;
 }
 
+/**
+ * 프로세스 시작 시각(Unix 초). 모듈을 처음 읽을 때 한 번 계산해 고정한다.
+ * 스크레이프마다 `Date.now() - uptime`을 다시 계산하면 반올림 때문에 1ms씩 흔들려 "바뀌면 재시작"이 깨진다.
+ */
+const PROCESS_START_SECONDS =
+  Math.round((Date.now() / 1000 - process.uptime()) * 1000) / 1000;
+
 /** Prometheus 관례 이름의 프로세스 지표 3개(ADR-0012 결정 4). */
 export function processSamples(): Sample[] {
   const cpu = process.cpuUsage();
   return [
-    sample(
-      "process_start_time_seconds",
-      Math.round((Date.now() / 1000 - process.uptime()) * 1000) / 1000,
-    ),
+    sample("process_start_time_seconds", PROCESS_START_SECONDS),
     sample("process_resident_memory_bytes", process.memoryUsage.rss()),
     sample("process_cpu_seconds_total", (cpu.user + cpu.system) / 1e6),
   ];
