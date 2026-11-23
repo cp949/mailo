@@ -76,7 +76,7 @@ jobs:
       - run: pnpm test
 
   release:
-    name: release (GHCR 이미지 발행, 스모크, GitHub Release)
+    name: release (로컬 빌드, 스모크, GHCR 발행, GitHub Release)
     needs: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -98,36 +98,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # provenance·sbom 입력을 주지 않는다. v7.4.0 기본값: provenance는 공개 저장소에서 mode=max로 붙고, SBOM은 만들지 않는다.
-      - name: 이미지 빌드·push
-        id: build
+      # 스모크를 통과한 이미지만 발행하려고 빌드는 로컬(docker)로만 하고 push는 뒤 단계의 docker push로 한다.
+      # provenance: false: docker push는 로컬 이미지 하나만 올려 attestation을 싣지 못한다. 명시해 빌드 결과를 단일 manifest로 고정한다.
+      # load: true면 v7.4.0은 기본 provenance를 붙이지 않는다(src/context.ts getAttestArgs의 hasDockerExporter 조건).
+      - name: 이미지 빌드(로컬 load)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ github.ref_name }}
-            ${{ env.IMAGE }}:latest
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.IMAGE }}:${{ github.ref_name }}
           labels: |
             org.opencontainers.image.revision=${{ steps.meta.outputs.commit }}
             org.opencontainers.image.version=${{ github.ref_name }}
             org.opencontainers.image.created=${{ steps.meta.outputs.created }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       # DB 없이 할 수 있는 확인만 한다. 앱 기동·발송은 ci.yml의 container 잡이 main에서 확인한다.
-      - name: 발행한 이미지 스모크
+      # 이 단계가 실패하면 GHCR에는 아무것도 올라가지 않는다.
+      - name: 로컬 이미지 스모크
         env:
           REF: ${{ env.IMAGE }}:${{ github.ref_name }}
           COMMIT: ${{ steps.meta.outputs.commit }}
         run: |
-          docker pull "$REF"
           revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$REF")"
           if [ "$revision" != "$COMMIT" ]; then
             echo "::error::이미지 revision 라벨 ${revision}이 태그 커밋 ${COMMIT}과 다르다."
             exit 1
           fi
           # compose와 같은 보안 옵션으로 실행한다(read_only, cap_drop ALL, no-new-privileges).
-          run=(docker run --rm --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true)
+          # --pull never: 방금 load한 로컬 이미지만 쓴다.
+          run=(docker run --rm --pull never --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true)
           id_out="$("${run[@]}" --entrypoint id "$REF")"
           echo "id: ${id_out}"
           case "$id_out" in
@@ -160,6 +162,48 @@ jobs:
             echo "::error::설정 없는 기동이 종료 코드 1·startup_failed로 끝나지 않았다(종료 코드 ${start_code})."
             exit 1
           fi
+      # 스모크한 로컬 이미지를 그대로 push한다. 다시 빌드하지 않는다.
+      # 동일성 기준은 config digest다. config에 레이어 diff_id·라벨이 들어 있다. manifest digest는 push 때 레이어를 다시 압축해 달라질 수 있다.
+      # latest는 버전 태그 push와 config digest 확인이 끝난 뒤에 붙인다.
+      - name: GHCR push(버전 태그 → latest)와 config digest 확인
+        id: push
+        env:
+          REF: ${{ env.IMAGE }}:${{ github.ref_name }}
+          LATEST: ${{ env.IMAGE }}:latest
+        run: |
+          set -o pipefail
+          # 레지스트리에 있는 태그의 linux/amd64 config digest. 단일 manifest와 index를 모두 처리한다.
+          registry_config() {
+            local raw digest
+            raw="$(docker buildx imagetools inspect --raw "$1")"
+            if jq -e 'has("manifests")' >/dev/null <<<"$raw"; then
+              digest="$(jq -r '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")][0].digest' <<<"$raw")"
+              raw="$(docker buildx imagetools inspect --raw "${IMAGE}@${digest}")"
+            fi
+            jq -r '.config.digest' <<<"$raw"
+          }
+          manifest_digest() {
+            docker buildx imagetools inspect --format '{{json .Manifest}}' "$1" | jq -r .digest
+          }
+          # 스모크한 이미지의 config digest. docker save의 manifest.json에서 읽어 이미지 저장소(classic·containerd)와 무관하게 같은 값을 얻는다.
+          smoked="sha256:$(docker save "$REF" | tar -xO manifest.json | jq -r '.[0].Config' | grep -oE '[0-9a-f]{64}$')"
+          echo "스모크한 이미지 config: ${smoked}"
+          docker push "$REF"
+          pushed="$(registry_config "$REF")"
+          if [ "$pushed" != "$smoked" ]; then
+            echo "::error::GHCR ${REF}의 config ${pushed}가 스모크한 이미지 ${smoked}와 다르다. latest는 붙이지 않는다."
+            exit 1
+          fi
+          digest="$(manifest_digest "$REF")"
+          docker tag "$REF" "$LATEST"
+          docker push "$LATEST"
+          latest_digest="$(manifest_digest "$LATEST")"
+          if [ "$latest_digest" != "$digest" ]; then
+            echo "::error::GHCR latest(${latest_digest})가 ${REF}(${digest})와 다르다."
+            exit 1
+          fi
+          echo "발행: ${REF}, ${LATEST} manifest ${digest} config ${pushed}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
       # gh release create는 --generate-notes와 --notes(-file)를 함께 주면 노트를 생성 노트 앞에 붙인다(gh 2.100.0 help).
       # 안내를 끝에 두려고 생성 노트를 API로 받아 뒤에 덧붙인 뒤 --notes-file로 만든다.
       - name: GitHub Release 생성
@@ -167,7 +211,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.push.outputs.digest }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           # 재실행 때 이미 만든 Release는 건드리지 않는다(이미지는 같은 태그로 다시 push된다).

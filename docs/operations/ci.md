@@ -82,18 +82,30 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 - 통합·컨테이너·NFS 검사는 돌리지 않는다. 태그 커밋은 가드 1로 main의 조상이고, main push마다 `ci.yml`이 `integration`·`container` 잡을 돌린다.
 - 이 판단은 main push의 CI가 성공했다는 것을 확인하지 않는다. 태그를 달기 전에 그 커밋의 main CI 결과를 사람이 확인한다("릴리스 절차").
 
-`release` 잡(`verify` 성공 뒤):
+`release` 잡(`verify` 성공 뒤). 스모크를 통과한 이미지만 GHCR에 올린다:
 
-1. `docker/build-push-action`으로 빌드·push한다. `provenance`·`sbom` 입력은 주지 않는다. v7.4.0 코드(`src/context.ts`) 기준 기본값은 provenance attestation 생성(공개 저장소는 `mode=max`, 비공개는 `mode=min`)이고 SBOM은 만들지 않는다. 그래서 push한 태그는 이미지 manifest와 attestation manifest(`unknown/unknown`)를 가진 index다(buildx 동작, 이 저장소에서 발행해 확인하지 않았다).
-2. 스모크: push한 태그를 pull한다. 이어 compose와 같은 보안 옵션(`--read-only`, `--cap-drop ALL`, `no-new-privileges`)으로 다음을 확인한다. DB가 필요한 확인은 하지 않는다.
+1. 빌드: `docker/build-push-action`을 `load: true`, `push: false`, `provenance: false`로 호출해 `linux/amd64` 이미지를 러너의 docker에 `ghcr.io/cp949/mailo:vX.Y.Z` 태그로 넣는다. SBOM은 만들지 않는다.
+2. 스모크: 1의 로컬 이미지를 `--pull never`로 실행한다. compose와 같은 보안 옵션(`--read-only`, `--cap-drop ALL`, `no-new-privileges`)을 쓰고 다음을 확인한다. DB가 필요한 확인은 하지 않는다. 실패하면 GHCR에는 아무것도 올라가지 않는다.
    - `revision` 라벨이 태그 커밋과 같다.
    - `id`가 `uid=1000(node) gid=1000(node)`로 시작한다.
    - `node --version`이 `NODE_VERSION`과 같다.
    - `dist/main.js`, `dist/db/migrate-cli.js`, `migrations/*.sql`이 있다. `/repo/apps/mailo/dist`·`/repo/node_modules`에 쓸 수 없다. `npm`이 없다.
    - 설정 없이 기본 `CMD`로 기동하면 종료 코드 1과 `startup_failed` 로그로 끝난다. `main.ts`가 모든 모듈을 import한 뒤 설정 검증에서 끝나므로 운영 의존성 누락을 잡는다.
-3. GitHub Release를 만든다. 노트는 `releases/generate-notes` API로 생성한 본문 끝에 pull 명령, digest, 마이그레이션 안내(`deployment.md` "기동 순서와 마이그레이션" 링크)를 덧붙인다.
+3. push: 다시 빌드하지 않고 스모크한 로컬 이미지를 `docker push`로 올린다. 순서는 다음과 같다.
+   1. 스모크한 이미지의 config digest를 `docker save`의 `manifest.json`에서 읽는다. 이 방법은 docker 이미지 저장소 종류(classic·containerd)와 무관하다. containerd 저장소에서는 `docker image inspect`의 `Id`가 config digest가 아니라 manifest digest다(로컬 Docker 29.8.0에서 확인).
+   2. `vX.Y.Z`를 push한다.
+   3. `docker buildx imagetools inspect --raw`로 GHCR에 올라간 `vX.Y.Z`의 `linux/amd64` config digest를 읽어 1과 비교한다. 다르면 실패하고 `latest`는 붙이지 않는다.
+   4. 같은 이미지에 `latest`를 붙여 push하고, `latest`의 manifest digest가 `vX.Y.Z`와 같은지 확인한다.
+4. GitHub Release를 만든다. 노트는 `releases/generate-notes` API로 생성한 본문 끝에 pull 명령, digest, 마이그레이션 안내(`deployment.md` "기동 순서와 마이그레이션" 링크)를 덧붙인다.
    - `gh release create --generate-notes`에 `--notes`·`--notes-file`을 함께 주면 그 내용이 생성 노트 앞에 붙는다(gh 2.100.0 `--help`). 안내를 끝에 두려고 API로 생성한 뒤 `--notes-file`로 만든다.
    - 같은 태그의 Release가 이미 있으면 만들지 않고 `::notice::`만 남긴다(재실행 대비).
+
+동일성 기준과 provenance:
+
+- 스모크한 이미지와 발행한 이미지는 config digest로 같다고 판정한다. config에 레이어 `diff_ids`(압축 전 레이어 digest)와 라벨이 들어 있다.
+- manifest digest는 기준으로 쓰지 않는다. `docker push`가 레이어를 다시 압축하고 manifest를 새로 만들기 때문이다. 릴리스 노트의 digest는 GHCR에 올라간 `vX.Y.Z`의 manifest digest다.
+- 같은 `build-push-action`을 `push: true`로 다시 호출하는 방식은 쓰지 않는다. 두 번째 빌드의 config가 첫 빌드와 바이트 단위로 같다는 보장을 찾지 못했다. 그 방식은 push 뒤에야 불일치를 알 수 있어 태그가 이미 발행된다.
+- provenance attestation은 붙이지 않는다. `docker push`는 로컬 이미지 하나만 올리고 attestation을 싣지 못한다. `provenance: false`는 빌드 결과를 단일 manifest로 고정하려고 명시한다. `load: true`이면 v7.4.0은 기본 provenance를 붙이지 않는다(`src/context.ts` `getAttestArgs`의 `hasDockerExporter` 조건).
 
 ### 실패 시 재실행
 
@@ -101,8 +113,10 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 | --------- | ---- | ---- |
 | `verify` 가드(조상·버전) | 이미지·Release 없음 | 아래 "태그 다시 달기" |
 | `verify` 검사 | 이미지·Release 없음 | 일시 실패면 Actions의 "Re-run all jobs". 코드 결함이면 main에서 고친 뒤 새 버전으로 태그를 단다 |
-| `release` 빌드·push | push 전이면 이미지 없음 | "Re-run failed jobs"(`verify`는 다시 돌지 않는다) |
-| `release` 스모크 | `vX.Y.Z`·`latest`가 이미 GHCR에 있다. Release 없음 | 일시 실패면 "Re-run failed jobs". 이미지 결함이면 고친 뒤 다음 패치 버전을 발행한다. 그 전까지 `latest`가 결함 이미지를 가리킨다 |
+| `release` 빌드 | 이미지·Release 없음 | "Re-run failed jobs"(`verify`는 다시 돌지 않는다) |
+| `release` 스모크 | 이미지·Release 없음. GHCR에 올라간 것이 없다 | 일시 실패면 "Re-run failed jobs". 이미지 결함이면 main에서 고친 뒤 다음 패치 버전으로 태그를 단다 |
+| `release` push의 `vX.Y.Z` push·config 비교 | `vX.Y.Z`가 GHCR에 있을 수 있다(config 불일치면 있다). `latest`는 이전 이미지 그대로. Release 없음 | 원인을 로그로 확인한 뒤 "Re-run failed jobs". 재실행은 다시 빌드하므로 `vX.Y.Z`가 새 이미지로 덮인다(`created` 라벨이 바뀌어 digest가 달라진다) |
+| `release` push의 `latest` push·digest 비교 | `vX.Y.Z` 있음. `latest`는 이전 이미지이거나 새 이미지. Release 없음 | "Re-run failed jobs". `vX.Y.Z`가 새 이미지로 덮인다 |
 | `release` Release 생성 | 이미지 있음, Release 없음 | "Re-run failed jobs". 이미지는 같은 태그로 다시 push된다(`created` 라벨이 바뀌어 digest가 달라질 수 있다) |
 
 태그 다시 달기(가드 실패, 이미지 발행 전에만):
@@ -144,7 +158,8 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 | `container` 스크립트 | 9개 모두 통과(관찰값은 아래) |
 | `release.yml` 문법 | `actionlint`(rhysd/actionlint 1.7.7 이미지, shellcheck 0.10.0 포함) 오류 0건 |
 | `release.yml` 가드 | 워크플로의 `run` 본문을 그대로 꺼내 임시 클론에서 실행했다. 조상: main 커밋 태그 성공, dev 커밋 태그 실패. 버전: `v0.1.0` 성공, `v0.2.0` 실패 |
-| `release.yml` 이미지 | `docker build --platform linux/amd64 .` 성공(Docker 29.8.0). 스모크 본문을 `docker pull`만 빼고 이 이미지에 실행해 통과했다. `revision` 라벨을 다르게 주면 실패했다 |
+| `release.yml` 이미지 | Docker 29.8.0(containerd 이미지 저장소), buildx `docker-container` 드라이버(BuildKit v0.35.1)로 `docker buildx build --platform linux/amd64 --load --provenance=false` 성공. 스모크 단계 본문을 그대로 실행해 통과했고 `revision` 라벨이 다르면 실패했다 |
+| `release.yml` push | 로컬 레지스트리(`registry:2`, `localhost:5005`)를 대상으로 push 단계 본문을 그대로 실행했다. `vX.Y.Z`·`latest`가 올라갔고 레지스트리의 config digest가 `docker save`로 읽은 값과 같았다. 비교 값을 다르게 바꾸면 실패했고 `latest`는 올라가지 않았다. 레지스트리 결과는 단일 manifest였다. index 분기는 공개 다중 아키텍처 이미지(`node:24.20.0-alpine`)로 `linux/amd64` config digest를 고르는 것만 확인했다 |
 | `nfs` | 작성 시에는 실행하지 않았다. 첫 GitHub 실행은 위 "NFS 잡"에 적었다. 수정 뒤 로컬에서는 먼저 NFS 없이 `CallerClient`의 사본 실행·종료 감지·응답 timeout·`run.sh` timeout을 확인했고, 이어 `nfs-kernel-server`를 설치해 `run.sh` 전체(31건)가 통과했다. 러너에서는 재실행 전이다 |
 
 컨테이너·볼륨 스크립트 관찰값(로컬 Docker 29.8.0, compose v5.5.1):
@@ -156,6 +171,7 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 ## 확인하지 않은 것
 
 - `ci.yml`: `static`·`integration`·`container` 잡은 러너에서 성공했다(위 실행 기록). 러너의 Docker·compose 버전, 이미지 pull·빌드 시간, `timeout-minutes` 여유는 기록하지 않았다.
-- `release.yml`: GitHub에서 실행한 적이 없다. 태그 push, GHCR 로그인·push, provenance attestation, 러너에서의 스모크, 릴리스 노트 생성 API, Release 생성, GHCR 패키지 공개 범위를 확인하지 않았다. 로컬에서 확인한 것은 위 "로컬에서 확인한 범위"의 `release.yml` 행이다.
+- `release.yml`: GitHub에서 실행한 적이 없다. 태그 push, GHCR 로그인·push, 러너에서의 스모크, 릴리스 노트 생성 API, Release 생성, GHCR 패키지 공개 범위를 확인하지 않았다. 로컬에서 확인한 것은 위 "로컬에서 확인한 범위"의 `release.yml` 행이다.
+- 러너(ubuntu-24.04, Docker 28.0.4, 2026-11-23 `container` 잡 로그)의 이미지 저장소 종류는 확인하지 않았다. classic 저장소의 `docker push` 결과(Docker schema2 manifest)에 대한 config 비교는 로컬에서 실행하지 않았다.
 - `actions/*` 세 액션의 이 워크플로 입력(`cache: pnpm`, `persist-credentials`, `if-no-files-found`, `retention-days`)은 `actionlint`가 문법을 통과시켰을 뿐 실행하지 않았다.
 - `schedule`은 기본 브랜치에서만 돈다. 저장소가 비활성이면 GitHub가 schedule을 멈출 수 있다.
