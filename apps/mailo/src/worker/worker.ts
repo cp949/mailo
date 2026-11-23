@@ -10,8 +10,10 @@
  *   내부 오류(`internal`)는 계정 상태를 알려주지 않으므로 둘 다 부르지 않는다.
  *   차단기가 open이면 `claim`이 점유하지 않고, half_open이면 대표 작업 한 건만 점유한다.
  * - 별도 루프가 주기적으로 만료 sweep, lease 회수, 본문 삭제, 보존 삭제를 한다. sweep은 차단기가 open이어도 돈다(ADR-0007 결정 6).
- * - 종료: `stop()`은 새 점유를 멈추고 진행 중 전송을 `drainTimeoutMs`까지 기다린다. 시간이 지나면 남은 전송을 끊고
- *   결과를 기록하지 않는다. 그 작업은 lease 만료 뒤 `LEASE_EXPIRED`로 회수된다(결정 12, 중복 발송 가능, RQ-013).
+ * - 종료: `pause()`가 새 점유를 멈추고(진행 중 전송은 계속) drain 시계를 시작한다. 종료 신호를 받은 맨 앞에서 부른다.
+ *   `stop()`은 `pause()`를 포함하고 진행 중 전송을 기다린다. drain 상한(`drainTimeoutMs`)은 `pause()` 시점부터 센다.
+ *   시간이 지나면 남은 전송을 끊고 결과를 기록하지 않는다. lease는 풀지 않는다.
+ *   그 작업은 lease 만료 뒤 `LEASE_EXPIRED`로 회수된다(결정 12, 중복 발송 가능, RQ-013).
  * - 시계·난수·발송기·BodyCipher는 주입한다. 작업 시각은 모두 DB `now()`다.
  */
 import type pg from "pg";
@@ -57,7 +59,12 @@ export interface WorkerDeps {
 export interface WorkerHandle {
   /** 루프를 시작하고 바로 resolve한다. 두 번 불러도 한 번만 시작한다. */
   start(): Promise<void>;
-  /** 새 점유를 멈추고 진행 중 전송을 기다린다. 대기 시간 상한(`drainTimeoutMs`)이 지나면 포기하고 resolve한다. */
+  /**
+   * 새 점유를 멈춘다. 진행 중 전송과 주기 작업은 계속한다. 이 호출이 resolve하면 더는 점유하지 않는다.
+   * drain 대기 시간(`drainTimeoutMs`)의 시계가 여기서 시작한다. 여러 번 불러도 한 번만 동작한다.
+   */
+  pause(): Promise<void>;
+  /** `pause()` 뒤 진행 중 전송을 기다린다. 대기 시간 상한(`drainTimeoutMs`)이 지나면 포기하고 resolve한다. */
   stop(): Promise<void>;
 }
 
@@ -94,8 +101,11 @@ export function createWorker(
     breaker: options.breaker,
   };
 
-  type State = "idle" | "running" | "stopping" | "stopped";
+  type State = "idle" | "running" | "paused" | "stopping" | "stopped";
   let state: State = "idle";
+  // 점유 루프만 멈춘다(`pause`). 진행 중 전송은 계속한다.
+  const pauseController = new AbortController();
+  // 주기 작업 루프까지 멈춘다(`stop`).
   const stopController = new AbortController();
   // drain 시간 초과 때 진행 중 전송을 끊는 신호. 끊긴 작업은 결과를 기록하지 않는다.
   const sendController = new AbortController();
@@ -106,6 +116,10 @@ export function createWorker(
   let pollLoop: Promise<void> | undefined;
   let maintenanceLoop: Promise<void> | undefined;
   let stopPromise: Promise<void> | undefined;
+  let pausePromise: Promise<void> | undefined;
+  // drain 시간 상한. `pause()`에서 시작해 `true`(시간 초과) 또는 취소 때 resolve한다.
+  let drainDeadline: Promise<boolean> | undefined;
+  const drainTimerStop = new AbortController();
 
   // --- 점유·전송 루프 ---------------------------------------------------------
 
@@ -142,25 +156,25 @@ export function createWorker(
 
   async function waitForWork(delayMs: number): Promise<void> {
     // 이미 중단된 신호에는 abort 이벤트가 다시 오지 않는다.
-    if (stopController.signal.aborted) return;
+    if (pauseController.signal.aborted) return;
     const slotFreed = new Promise<void>((resolve) => {
       wakeUp = resolve;
     });
     const timerStop = new AbortController();
     const onStop = () => timerStop.abort();
-    stopController.signal.addEventListener("abort", onStop, { once: true });
+    pauseController.signal.addEventListener("abort", onStop, { once: true });
     try {
       await Promise.race([clock.sleep(delayMs, timerStop.signal), slotFreed]);
     } finally {
       timerStop.abort();
-      stopController.signal.removeEventListener("abort", onStop);
+      pauseController.signal.removeEventListener("abort", onStop);
       wakeUp = undefined;
     }
   }
 
   async function runPollLoop(): Promise<void> {
     let errorStreak = 0;
-    while (!stopController.signal.aborted) {
+    while (!pauseController.signal.aborted) {
       const free = options.concurrency - inFlight.size;
       if (free <= 0) {
         // 슬롯이 하나 비면 깨어난다.
@@ -385,62 +399,78 @@ export function createWorker(
 
   // --- 수명 주기 --------------------------------------------------------------
 
-  return {
-    async start() {
-      if (state === "stopping" || state === "stopped")
-        throw new Error("worker already stopped");
-      if (state === "running") return;
-      state = "running";
-      // 루프 안에서 오류를 모두 처리하지만, 예상 못한 예외가 프로세스를 죽이지 않게 마지막 방어선을 둔다.
-      pollLoop = runPollLoop().catch((error: unknown) =>
-        log.error("poll_loop_crashed", { error: describeError(error) }),
-      );
-      maintenanceLoop = runMaintenanceLoop().catch((error: unknown) =>
-        log.error("maintenance_loop_crashed", { error: describeError(error) }),
-      );
-      log.info("worker_started", {
-        concurrency: options.concurrency,
-        pollMs: options.pollMs,
-      });
-    },
+  async function start(): Promise<void> {
+    if (state === "stopping" || state === "stopped")
+      throw new Error("worker already stopped");
+    if (state === "running") return;
+    state = "running";
+    // 루프 안에서 오류를 모두 처리하지만, 예상 못한 예외가 프로세스를 죽이지 않게 마지막 방어선을 둔다.
+    pollLoop = runPollLoop().catch((error: unknown) =>
+      log.error("poll_loop_crashed", { error: describeError(error) }),
+    );
+    maintenanceLoop = runMaintenanceLoop().catch((error: unknown) =>
+      log.error("maintenance_loop_crashed", { error: describeError(error) }),
+    );
+    log.info("worker_started", {
+      concurrency: options.concurrency,
+      pollMs: options.pollMs,
+    });
+  }
 
-    stop() {
-      stopPromise ??= (async () => {
-        if (state !== "running") {
-          state = "stopped";
-          return;
-        }
-        state = "stopping";
-        log.info("worker_stopping", { inFlight: inFlight.size });
-        stopController.abort();
+  function pause(): Promise<void> {
+    pausePromise ??= (async () => {
+      if (state === "idle") state = "stopped"; // 시작하지 않은 Worker는 바로 종료 상태다.
+      if (state !== "running") return;
+      state = "paused";
+      log.info("worker_paused", { inFlight: inFlight.size });
+      pauseController.abort();
+      // drain 상한은 종료 신호를 받은 시점부터 센다. HTTP 서버를 닫는 시간도 포함한다.
+      drainDeadline = clock
+        .sleep(options.drainTimeoutMs, drainTimerStop.signal)
+        .then(() => true);
+      // 진행 중이던 점유 호출이 끝나 새 작업이 `inFlight`에 들어간 뒤에 resolve한다.
+      await pollLoop;
+    })();
+    return pausePromise;
+  }
 
-        const drained = (async () => {
-          await Promise.all([pollLoop, maintenanceLoop]);
-          // 루프가 끝난 뒤에는 새 작업이 추가되지 않는다.
-          while (inFlight.size > 0) await Promise.all(inFlight);
-        })().then(() => true);
-
-        const timeoutStop = new AbortController();
-        const timedOut = clock
-          .sleep(options.drainTimeoutMs, timeoutStop.signal)
-          .then(() => false);
-        const finished = await Promise.race([drained, timedOut]);
-        timeoutStop.abort();
-
-        if (!finished) {
-          log.warn("drain_timeout", {
-            inFlight: inFlight.size,
-            drainTimeoutMs: options.drainTimeoutMs,
-          });
-          // 남은 전송을 끊는다. 결과는 기록하지 않고 lease 복구가 다룬다.
-          sendController.abort();
-        }
+  function stop(): Promise<void> {
+    stopPromise ??= (async () => {
+      await pause();
+      if (state !== "paused") {
         state = "stopped";
-        log.info("worker_stopped", { drained: finished });
-      })();
-      return stopPromise;
-    },
-  };
+        return;
+      }
+      state = "stopping";
+      log.info("worker_stopping", { inFlight: inFlight.size });
+      stopController.abort();
+
+      const drained = (async () => {
+        await Promise.all([pollLoop, maintenanceLoop]);
+        // 루프가 끝난 뒤에는 새 작업이 추가되지 않는다.
+        while (inFlight.size > 0) await Promise.all(inFlight);
+      })().then(() => false);
+
+      const timedOut = await Promise.race([drained, drainDeadline!]);
+      drainTimerStop.abort();
+      // 시간이 먼저 지났어도 그 사이 전송이 모두 끝났으면 정상 종료다.
+      const finished = !timedOut || inFlight.size === 0;
+
+      if (!finished) {
+        log.warn("drain_timeout", {
+          inFlight: inFlight.size,
+          drainTimeoutMs: options.drainTimeoutMs,
+        });
+        // 남은 전송을 끊는다. 결과는 기록하지 않고 lease는 풀지 않는다. lease 복구가 다룬다.
+        sendController.abort();
+      }
+      state = "stopped";
+      log.info("worker_stopped", { drained: finished });
+    })();
+    return stopPromise;
+  }
+
+  return { start, pause, stop };
 }
 
 // --- 변환 ---------------------------------------------------------------------

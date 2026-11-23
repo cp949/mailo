@@ -17,9 +17,17 @@
 | 항목 | 선택지 | 권장 |
 | ---- | ------ | ---- |
 | 입력 채널 | REST, 파일, 둘 다 | REST. 파일은 DB 트랜잭션과의 원자성이 없다(RQ-002 제한). 사용처 outbox가 파일을 쓰면 유실 없음 |
-| 서명 `signature.mode` | `required`, `none` | 파일 채널 + NAS/NFS는 `required`(ADR-0004 결정 9). REST만 쓰면 `none`(REST는 서명을 쓰지 않는다) |
+| 서명 `signature.mode` | `required`, `none` | 신규 호출처는 `required`를 기본으로 권장한다. `none`은 사유를 적고 고르는 선택지다(아래 "`none`의 한계"). 파일 채널 + NAS/NFS는 `required`(ADR-0004 결정 9). REST만 쓰는 호출처는 REST가 서명을 쓰지 않으므로 서명 설정이 발송 경로에 영향을 주지 않는다 |
 | 본문 암호화(JWE) | 사용, 미사용 | 선택. 파일이 NAS·백업에 평문으로 남는 것이 문제일 때 사용한다. Mailo에 `MAILO_ENVELOPE_KEYS_FILE`이 있어야 한다 |
 | 발송 할당 `sendQuota24h` | 정수, 생략(무제한) | 계정 일일 한도를 공유하므로 대량 발송 호출처에 둔다(RQ-032) |
+
+`signature.mode`의 코드 기본값은 없다. 적지 않으면 Mailo가 기동하지 않는다(`callers/registry.ts`). 위 권장은 문서의 선택 기준이고 코드는 바꾸지 않았다.
+
+### `none`의 한계(ADR-0008 구현 중 확정 9)
+
+- `signature.mode=none` 호출처는 inbox 쓰기 권한자의 수신자 바꿔치기를 막지 못한다. JWE 본문 유출을 막아야 하면 `signature.mode=required`를 사용한다.
+- `none`에서 inbox 쓰기 권한자는 본문을 새로 만들어 보낼 수도 있다. 이 변조로 새로 생기는 위험은 기밀성뿐이다. 탈취한 JWE 본문을 다른 수신자로 바꿔 보내면 Mailo가 복호화해 그 수신자에게 발송한다.
+- `none`을 고를 때는 호출처 등록 기록(변경 설명, 티켓)에 사유와 inbox 쓰기 권한자 범위를 적는다. 예: REST만 쓰고 파일 채널이 꺼져 있다, inbox 폴더의 쓰기 권한이 호출처 계정 하나뿐이다.
 
 ## 2. 레지스트리 항목
 

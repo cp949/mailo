@@ -5,6 +5,7 @@ import type { JsonValue } from "../events/index.js";
 import { recordAccountFailure, recordAccountOk } from "./circuit-breaker.js";
 import { breakerInitialWait, retryDelaySeconds } from "./retry-policy.js";
 import type {
+  AccountErrorReason,
   AttemptDetail,
   AttemptOutcome,
   BreakerConfig,
@@ -35,6 +36,12 @@ interface LockedJob {
 /** lease 만료 복구가 쓰는 내부 결과. 공개 분류(`AttemptOutcome`)에는 없다. */
 type InternalOutcome = AttemptOutcome | { classification: "LEASE_EXPIRED" };
 
+/** 계정 전체의 한도를 뜻하는 사유. 작업의 `account_trips`와 반복 판정에서 뺀다(ADR-0007 구현 중 확정 8). */
+const LIMIT_REASONS: ReadonlySet<AccountErrorReason> = new Set([
+  "DAILY_LIMIT",
+  "RATE_LIMIT",
+]);
+
 const EVENT_TYPE: Record<"SENT" | "FAILED" | "EXPIRED", JobEventType> = {
   SENT: "JOB_SENT",
   FAILED: "JOB_FAILED",
@@ -50,8 +57,12 @@ const JOB_COLUMNS = `id, caller_id, idempotency_key, attempts, account_trips,
  * 늦게 도착한 이전 점유의 결과는 `{ applied: false, reason: "LEASE_LOST" }`로 거부하고 아무것도 쓰지 않는다.
  *
  * 판정 순서(ADR-0002 결정 7): 영구 오류 → FAILED, 시도 횟수 소진 → FAILED, 만료 → EXPIRED, 그 밖 → RETRY_WAIT.
- * 계정 상태 오류는 1·2를 건너뛰고 시도 횟수에 넣지 않으며(ADR-0007 결정 2), `MAIL FROM` 이후 단계의 오류가
- * 차단기를 `maxAccountTrips`회 연 작업에서 같은 응답으로 다시 나오면 FAILED다(ADR-0007 결정 4).
+ * 계정 상태 오류는 실패 시점의 차단기 상태로 갈린다(ADR-0007 결정 2, 구현 중 확정 8).
+ * - 차단기가 open이거나 이 실패로 open이 되면 계정 단위 장애다. 1·2를 건너뛰고 시도 횟수에 넣지 않는다.
+ *   `MAIL FROM` 이후 단계의 오류가 차단기를 `maxAccountTrips`회 연 작업에서 같은 응답으로 다시 나오면 FAILED다(결정 4).
+ *   단 한도 사유(DAILY_LIMIT·RATE_LIMIT)는 `account_trips`와 이 판정에서 뺀다. 작업 잘못이 아니라 계정 한도다.
+ * - 차단기가 closed로 남으면 차단기를 열지 못한 작업별 오류다. 시도 횟수에 넣고 일반 backoff로 재시도하며
+ *   최대 시도에 닿으면 FAILED(`ATTEMPTS_EXHAUSTED`)다.
  */
 export async function completeAttempt(
   pool: pg.Pool,
@@ -84,8 +95,9 @@ async function applyOutcome(
   deps: CompleteDeps,
 ): Promise<Extract<CompleteResult, { applied: true }>> {
   const dbNow = job.db_now;
-  const counted = outcome.classification !== "ACCOUNT";
-  const attemptsAfter = job.attempts + (counted ? 1 : 0);
+  // 계정 상태 오류는 아래에서 차단기 상태를 본 뒤에 시도 횟수에 넣을지 정한다.
+  let counted = outcome.classification !== "ACCOUNT";
+  let attemptsAfter = job.attempts + (counted ? 1 : 0);
   const detail: AttemptDetail =
     outcome.classification === "LEASE_EXPIRED" ? {} : outcome;
 
@@ -114,9 +126,12 @@ async function applyOutcome(
   } else if (outcome.classification === "ACCOUNT") {
     const response =
       `${outcome.responseCode ?? ""} ${outcome.enhancedCode ?? ""}`.trim();
+    // 한도 사유는 계정 전체의 문제라서 작업의 account_trips·반복 판정에 넣지 않는다(ADR-0007 구현 중 확정 8).
+    const limitReason = LIMIT_REASONS.has(outcome.reason);
     const sameResponse =
       response !== "" && response === job.last_account_response;
     const repeated =
+      !limitReason &&
       outcome.afterMailFrom &&
       job.account_trips >= deps.breaker.maxAccountTrips &&
       sameResponse;
@@ -126,49 +141,58 @@ async function applyOutcome(
       reason: outcome.reason,
     });
     breaker = result.snapshot;
-    if (outcome.afterMailFrom) {
-      if (result.tripped) accountTrips += 1;
-      lastAccountResponse = response === "" ? null : response;
-    }
 
-    // 재개 시각. 차단기가 open이면 open_until, 아직 closed이면 사유별 초기 대기 뒤다.
-    const resume =
-      breaker.state === "open" && breaker.openUntil
-        ? breaker.openUntil
-        : new Date(
-            dbNow.getTime() +
-              breakerInitialWait(deps.breaker, outcome.reason) * 1000,
-          );
-    if (repeated) {
-      target = "FAILED";
-      failureReason = "ACCOUNT_REPEATED";
-    } else if (afterExpiry(resume)) {
-      target = "EXPIRED";
-      failureReason = "EXPIRED";
+    if (breaker.state === "closed") {
+      // 차단기를 열지 못했고 실패 시점에도 closed였다. 계정 단위 장애로 볼 근거가 없으므로 작업별 오류로 처리한다.
+      counted = true;
+      attemptsAfter = job.attempts + 1;
+      if (repeated) {
+        // 이미 차단기를 3회 연 작업이 같은 응답을 또 받았다. 차단기 상태와 무관하게 이 작업의 문제로 본다.
+        target = "FAILED";
+        failureReason = "ACCOUNT_REPEATED";
+      } else {
+        ({ target, failureReason, nextAttemptAt } = retryOrFinish(
+          job,
+          attemptsAfter,
+          deps,
+        ));
+      }
     } else {
-      target = "RETRY_WAIT";
-      nextAttemptAt = resume;
+      if (outcome.afterMailFrom) {
+        if (result.tripped && !limitReason) accountTrips += 1;
+        if (!limitReason)
+          lastAccountResponse = response === "" ? null : response;
+      }
+
+      // 재개 시각. 차단기가 open이면 open_until, 아니면(half_open의 늦은 실패) 사유별 초기 대기 뒤다.
+      const resume =
+        breaker.state === "open" && breaker.openUntil
+          ? breaker.openUntil
+          : new Date(
+              dbNow.getTime() +
+                breakerInitialWait(deps.breaker, outcome.reason) * 1000,
+            );
+      if (repeated) {
+        target = "FAILED";
+        failureReason = "ACCOUNT_REPEATED";
+      } else if (afterExpiry(resume)) {
+        target = "EXPIRED";
+        failureReason = "EXPIRED";
+      } else {
+        target = "RETRY_WAIT";
+        nextAttemptAt = resume;
+      }
     }
   } else {
     // TRANSIENT 또는 LEASE_EXPIRED. LEASE_EXPIRED와 내부 오류 TRANSIENT는 계정 상태를 알 수 없어 차단기를 건드리지 않는다.
     if (outcome.classification === "TRANSIENT" && !outcome.internal) {
       breaker = await recordAccountOk(client, deps.breaker, { jobId: job.id });
     }
-    if (attemptsAfter >= deps.retry.maxAttempts) {
-      target = "FAILED";
-      failureReason = "ATTEMPTS_EXHAUSTED";
-    } else {
-      const next = new Date(
-        dbNow.getTime() + retryDelaySeconds(deps.retry, attemptsAfter) * 1000,
-      );
-      if (afterExpiry(next)) {
-        target = "EXPIRED";
-        failureReason = "EXPIRED";
-      } else {
-        target = "RETRY_WAIT";
-        nextAttemptAt = next;
-      }
-    }
+    ({ target, failureReason, nextAttemptAt } = retryOrFinish(
+      job,
+      attemptsAfter,
+      deps,
+    ));
   }
 
   const terminal = target !== "RETRY_WAIT";
@@ -244,6 +268,39 @@ async function applyOutcome(
   }
 
   return { applied: true, status: target, nextAttemptAt, breaker };
+}
+
+/**
+ * 시도 횟수를 넣은 뒤의 전이를 정한다(ADR-0002 결정 7의 2~4). 최대 시도에 닿으면 FAILED, 재시도 시각이
+ * 만료 시각을 넘으면 EXPIRED, 그 밖은 일반 backoff로 RETRY_WAIT다.
+ */
+function retryOrFinish(
+  job: LockedJob,
+  attemptsAfter: number,
+  deps: CompleteDeps,
+): {
+  target: "RETRY_WAIT" | "FAILED" | "EXPIRED";
+  failureReason: string | null;
+  nextAttemptAt: Date | null;
+} {
+  if (attemptsAfter >= deps.retry.maxAttempts) {
+    return {
+      target: "FAILED",
+      failureReason: "ATTEMPTS_EXHAUSTED",
+      nextAttemptAt: null,
+    };
+  }
+  const dbNow = job.db_now;
+  const next = new Date(
+    dbNow.getTime() + retryDelaySeconds(deps.retry, attemptsAfter) * 1000,
+  );
+  if (
+    dbNow.getTime() >= job.expires_at.getTime() ||
+    next.getTime() > job.expires_at.getTime()
+  ) {
+    return { target: "EXPIRED", failureReason: "EXPIRED", nextAttemptAt: null };
+  }
+  return { target: "RETRY_WAIT", failureReason: null, nextAttemptAt: next };
 }
 
 /**

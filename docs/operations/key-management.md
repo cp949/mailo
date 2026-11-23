@@ -30,6 +30,12 @@ Mailo가 쓰는 키의 발급, 교체, 이전 키 보관, 기동 시 검증 오�
 
 ## DB 본문 키
 
+한계(ADR-0008 구현 중 확정 10): AES-GCM의 AAD는 `job_id`뿐이다. 행 사이 암호문 바꿔치기는 막지만 DB 쓰기 권한자가 `recipients`를 바꾸는 것은 막지 못한다. 완화는 다음과 같다.
+
+- DB 쓰기 권한 계정을 Mailo 앱 하나로 줄인다. 운영자·분석용 계정은 읽기 전용으로 둔다.
+- 백업 덤프와 복구본의 무결성을 관리한다(보관 위치 접근 통제, 해시 기록). 복구한 DB의 `recipients`를 신뢰하려면 덤프가 변조되지 않았다는 근거가 필요하다.
+- 향후 선택지(이번 범위 아님): 새 행부터 `key_version`(또는 `aad_version`)으로 구분해 AAD를 `job_id`와 `recipients` 해시로 넓힌다. 기존 행은 마이그레이션 없이 이전 형식으로 복호화한다.
+
 발급:
 
 ```sh
@@ -129,6 +135,7 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 ```
 
 - 호출처마다 다른 키를 쓴다. 한 호출처의 키로 다른 호출처 이름의 서명은 통과하지 못한다.
+- `signature.mode=none` 호출처는 inbox 쓰기 권한자의 수신자 바꿔치기를 막지 못한다. JWE 본문 유출을 막아야 하면 `required`로 두고 이 키를 발급한다(`caller-onboarding.md` "`none`의 한계", ADR-0008 구현 중 확정 9).
 - `callers.json`의 `signature.keys[]`는 `kid`와 변수 이름(`secretVar`, `MAILO_JWS_SECRET_`로 시작하는 대문자)만 가진다. 호출처당 1~2개다.
 
 ```json

@@ -47,7 +47,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 - `GET /health/ready`(유효한 Bearer): `circuitBreaker.state`(`closed`, `open`, `half_open`, `unknown`), `openUntil`(`open`일 때만 값), `lastReason`. 인증 없이는 `state`만 나온다.
 - 로그: `{"level":"warn","event":"breaker_not_closed","state":...,"reason":...,"openUntil":...,"waitSeconds":...}`. 계정 상태 오류 시도를 기록한 직후 차단기가 `closed`가 아닐 때 한 번 남는다. 연속 실패가 임계값(기본 3) 아래라 아직 `closed`이면 이 로그는 없다. `reason`은 `AUTH`, `TLS`, `CONNECTION`, `DAILY_LIMIT`, `RATE_LIMIT`, `OTHER`다.
 - DB(읽기): `SELECT state, open_until, probe_until, consecutive_failures, wait_seconds, last_reason FROM mail_circuit_breaker;`
-- 작업 쪽: `GET /jobs/{jobId}`의 `lastError.category`가 `ACCOUNT`이고 `attempts`가 늘지 않는다.
+- 작업 쪽: `GET /jobs/{jobId}`의 `lastError.category`가 `ACCOUNT`이고 차단기를 연 시도는 `attempts`가 늘지 않는다. 차단기가 `closed`로 남은 계정 상태 오류(연속 실패가 임계값 아래이거나 일부 메시지에만 나는 `OTHER` 거부)는 작업별 오류라서 `attempts`가 늘고 일반 backoff로 재시도하며, 최대 시도(8)에 닿으면 `FAILED`(`MAX_ATTEMPTS_EXCEEDED`)다(ADR-0007 구현 중 확정 8).
 
 상태 해석:
 
@@ -71,7 +71,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 
 - 수동으로 `closed`로 되돌리는 기능은 코드에 없다. 원인을 고치면 `open_until` 뒤 대표 작업이 성공하면서 `closed`로 돌아온다. `mail_circuit_breaker`를 직접 고치는 것은 지원하는 절차가 아니다.
 - 차단이 길어지면 대기 중인 작업이 만료 시각(기본 24시간)에 이르러 `EXPIRED`가 되고 `JOB_EXPIRED` 이벤트가 나간다. `failureReason`은 `EXPIRED`, `lastError.category`는 `ACCOUNT`일 수 있다.
-- 같은 작업이 차단기를 3번 연 뒤에도 같은 응답을 받으면 그 작업만 `FAILED`(`ACCOUNT_ERROR_REPEATED`)가 된다. 특정 메시지가 계정 오류처럼 보이는 응답(예 `550 5.7.1` 정책 거부)을 받는 경우를 의심한다.
+- 같은 작업이 차단기를 3번 연 뒤에도 같은 응답을 받으면 그 작업만 `FAILED`(`ACCOUNT_ERROR_REPEATED`)가 된다. 특정 메시지가 계정 오류처럼 보이는 응답(예 `550 5.7.1` 정책 거부)을 받는 경우를 의심한다. 한도 사유(`QUOTA_DAILY`·`QUOTA_BURST`)는 이 판정에서 뺀다. 한도가 몇 시간 이어져도 작업은 `FAILED`가 되지 않고 `RETRY_WAIT`로 남다가 만료 시각(기본 24시간)에 `EXPIRED`가 된다(ADR-0007 구현 중 확정 8).
 - 인증 값을 확인하지 않고 재시작을 반복하지 않는다. 잘못된 인증을 반복하면 계정이 잠길 수 있다(추정, ADR-0007).
 
 ## lease 만료
@@ -86,7 +86,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | `LEASE_EXPIRED` | `mail_attempts.classification`, API의 `lastError.category` | 회수 기록. 시도 기록이 기준이다 |
 | `lease_lost` (warn, `jobId`, `classification`) | Worker 로그 | 전송은 끝났지만 그 사이 lease가 회수돼 결과를 버렸다 |
 | `send_aborted` (warn, `jobId`) | Worker 로그 | 종료 대기(drain) 시간 초과로 전송을 끊었다. 결과는 기록하지 않는다 |
-| `drain_timeout` (warn, `inFlight`, `drainTimeoutMs`) | Worker 로그 | 종료 때 진행 중 전송이 `lease − 10초` 안에 끝나지 않았다 |
+| `drain_timeout` (warn, `inFlight`, `drainTimeoutMs`) | Worker 로그 | 종료 신호(`worker_paused`) 뒤 `lease − 10초` 안에 진행 중 전송이 끝나지 않았다. lease는 풀지 않고 회수에 맡긴다 |
 | `complete_failed` (error, `jobId`, `retry`) | Worker 로그 | 전송 뒤 결과 기록이 DB 오류로 실패했다. 짧게 재시도한 뒤 포기하면 lease 회수가 이어받는다 |
 
 ```sql
@@ -193,7 +193,7 @@ SELECT gid, prepared FROM pg_prepared_xacts;   -- 끝나지 않은 prepared tran
 
 신호: `caller_quota_exceeded`(warn, `callerId`, `limit`)는 할당을 넘긴 호출처가 새로 생겼을 때 한 번, `caller_quota_recovered`(info, `callerId`)는 풀렸을 때 한 번 남는다. 폴링마다 반복되지 않는다.
 
-- 사용량 = 최근 24시간의 "할당에 드는 시도" + 현재 `SENDING` 작업 수다. 할당에 드는 시도는 시도 횟수에 포함되는(`counted`) 시도 중 Mailo 내부 오류(`stage = 'WORKER'`)를 뺀 것이다. 계정 상태 오류 시도(`ACCOUNT`)는 들지 않고 `TRANSIENT`·`PERMANENT`·`LEASE_EXPIRED`는 든다.
+- 사용량 = 최근 24시간의 "할당에 드는 시도" + 현재 `SENDING` 작업 수다. 할당에 드는 시도는 시도 횟수에 포함되는(`counted`) 시도 중 Mailo 내부 오류(`stage = 'WORKER'`)를 뺀 것이다. 차단기를 연 계정 상태 오류 시도(`ACCOUNT`, `counted = false`)는 들지 않고, 차단기가 `closed`로 남은 계정 상태 오류 시도(`counted = true`)와 `TRANSIENT`·`PERMANENT`·`LEASE_EXPIRED`는 든다.
 - 초과한 호출처의 작업은 점유되지 않고 `PENDING`·`RETRY_WAIT`에 머문다. 상태, 시도 횟수, `next_attempt_at`은 바뀌지 않는다. 다른 호출처에는 영향이 없다.
 - 가장 오래된 시도가 24시간을 넘기면 한 건씩 풀린다. 그 전에 만료 시각(기본 24시간)에 이르면 `EXPIRED`가 된다. 할당이 처리량보다 작으면 만료가 쌓인다.
 - 조치: `callers.json`의 `sendQuota24h`를 늘리거나, 호출처의 발송량을 줄이거나, 만료 TTL(`MAILO_JOB_EXPIRY_SECONDS`)을 조정한다. 값을 바꾸면 재시작이 필요하다.
@@ -218,7 +218,7 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 | `records_deleted` | 보존 기간이 지난 작업 행(시도·이벤트 포함)과 거부 기록을 삭제했다 |
 | `<이름>_failed`(error) | 위 작업의 실패. `error`에 오류 이름 |
 
-그 밖의 Worker 로그: `worker_started`, `worker_stopping`, `worker_stopped`(`drained`), `job_completed`(`jobId`, `status`, `classification`, `probe`), `poll_loop_crashed`, `maintenance_loop_crashed`.
+그 밖의 Worker 로그: `worker_started`, `worker_paused`(`inFlight`, 종료 신호 직후 새 점유 중지), `worker_stopping`, `worker_stopped`(`drained`), `job_completed`(`jobId`, `status`, `classification`, `probe`), `poll_loop_crashed`, `maintenance_loop_crashed`.
 
 ## 검증하지 않은 것
 

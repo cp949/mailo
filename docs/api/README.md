@@ -81,7 +81,7 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 
 - 등록(202, 200)과 조회는 같은 `Job` 스키마를 쓰고 `Location: /jobs/{jobId}`를 반환한다. 본문과 수신자는 포함하지 않는다.
 - `Job` 필드: `jobId`, `idempotencyKey`, `status`, `attempts`, `createdAt`, `expiresAt`, `sentAt`, `failedAt`, `failureReason`, `lastError`, `rejectedRecipients`.
-- `attempts`는 계정 상태 오류 시도를 뺀 횟수다.
+- `attempts`는 차단기를 연 계정 상태 오류 시도를 뺀 횟수다. 차단기가 `closed`로 남은 계정 상태 오류는 포함한다(ADR-0007 구현 중 확정 8).
 - `failureReason`은 `PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`, `EXPIRED`다.
 - `lastError`는 `category`(`TRANSIENT`, `PERMANENT`, `ACCOUNT`, `LEASE_EXPIRED`), `smtpCode`, `enhancedCode`, `occurredAt`이다. SMTP 응답 텍스트는 API에 노출하지 않는다.
 - `rejectedRecipients`는 `address`, `smtpCode`, `enhancedCode`다. 응답 텍스트는 없다.

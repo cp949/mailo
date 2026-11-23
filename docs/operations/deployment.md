@@ -10,6 +10,7 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 - 설정 오류는 기동 시점에 변수 이름과 사유를 출력하고 종료 코드 1로 끝난다. 값은 출력하지 않는다.
 - `stop_grace_period`는 `MAILO_LEASE_SECONDS` 이상이어야 한다. 이 관계를 검사하는 자동 검증은 없다.
 - PostgreSQL 13 이상이 필요하다. compose는 `postgres:17-alpine`이다.
+- DB 쓰기 권한 계정은 Mailo 앱으로 최소화한다. DB 본문 AES-GCM의 AAD가 `job_id`뿐이라 쓰기 권한자의 `recipients` 변경은 막지 못한다(ADR-0008 구현 중 확정 10, `key-management.md`).
 - DB 암호화 키·지문 키·JWE 개인키를 DB 백업과 별도로 보관한다. 이 키 없이는 복원한 DB의 일부 기능이 동작하지 않는다("백업과 복구").
 
 ## compose 구성
@@ -172,7 +173,7 @@ docker compose up -d --build
 | `MAILO_JWS_IAT_MAX_AGE_SECONDS` + `MAILO_JWS_IAT_SKEW_SECONDS` ≤ `MAILO_RECORD_RETENTION_SECONDS` | 기동 실패 |
 | DB 본문 키 ≠ 지문 키(모든 버전 쌍) | 기동 실패 |
 | 현재 버전 키 변수가 있어야 한다 | 기동 실패 |
-| `stop_grace_period` ≥ `MAILO_LEASE_SECONDS` | 자동 검사 없음. 어기면 종료 때 SIGKILL이 먼저 와서 진행 중 전송이 lease 회수로 재발송될 수 있다 |
+| `stop_grace_period` ≥ drain 상한 + 10초(= `MAILO_LEASE_SECONDS`) | 자동 검사 없음. 어기면 종료 때 SIGKILL이 먼저 와서 진행 중 전송이 lease 회수로 재발송될 수 있다 |
 | `MAILO_WORKER_CONCURRENCY` < `MAILO_DB_POOL_MAX` | 자동 검사 없음(`.env.example` 권고). 코드는 전송 한 건이 순간 커넥션 1개를 쓴다고 가정한다 |
 
 ## 시크릿 주입
@@ -203,14 +204,17 @@ docker compose up -d --build
 
 ## 종료와 stop_grace_period
 
-종료 순서(`app-lifecycle.ts`): HTTP 서버 닫기 → 파일 폴러 정지(진행 중 파일 완료) → Worker drain → DB 풀 닫기.
+종료 순서(`app-lifecycle.ts`, ADR-0002 구현 중 확정 6): SIGTERM → Worker `pause()`(새 점유 중지, 진행 중 전송은 계속) → HTTP 서버 닫기와 파일 폴러 정지(진행 중 파일 완료)를 함께 진행 → Worker 진행 중 전송 drain → DB 풀 닫기.
 
-- drain 상한은 `max(1초, MAILO_LEASE_SECONDS − 10초)`다. 상한을 넘으면 `drain_timeout` 경고를 남기고 남은 전송을 끊는다. 끊긴 작업은 결과를 기록하지 않고 lease 만료 뒤 회수된다(중복 발송 가능, RQ-013).
-- `stop_grace_period`가 lease보다 짧으면 drain 상한에 이르기 전에 SIGKILL이 온다. 모든 재배포마다 진행 중 전송이 lease 회수 대상이 된다(ADR-0002 결정 12).
-- 기본값: lease 120초, drain 상한 110초, `stop_grace_period` 150초. 40초는 HTTP 닫기, 폴러 정지, 풀 닫기의 여유다(수치는 추정이며 이 시간을 측정하지 않았다).
+- drain 상한은 `max(1초, MAILO_LEASE_SECONDS − 10초)`이고 `pause()` 시점부터 센다. HTTP 닫기에 걸린 시간도 상한에 들어간다. 상한을 넘으면 `drain_timeout` 경고를 남기고 남은 전송을 끊는다. 끊긴 작업은 결과를 기록하지 않고 lease를 풀지 않으며, lease 만료 뒤 다음 점유가 회수한다(중복 발송 가능, RQ-013).
+- HTTP 요청·헤더 수신 시간제한은 30초다(환경 변수 없음, 상수). 종료 때 유휴 연결은 바로 닫고, 본문을 다 보내지 않은 요청은 30초 뒤 끊는다.
+- `stop_grace_period`는 drain 상한 + 10초 이상이어야 한다. lease가 기본값이면 `stop_grace_period`를 lease 이상으로 두면 충족한다. 더 짧으면 drain 상한에 이르기 전에 SIGKILL이 온다. 모든 재배포마다 진행 중 전송이 lease 회수 대상이 된다(ADR-0002 결정 12).
+- 종료 중 SIGKILL(`stop_grace_period` 초과 포함)은 중복 발송 1회를 만들 수 있다. 시스템은 at-least-once이고(RQ-013), 같은 `Message-ID`가 중복을 줄이는지는 실제 Gmail로 확인하지 않았다.
+- drain 상한은 SMTP 시간제한 중 가장 긴 값과 HTTP 요청 시간제한 30초보다 길어야 한다. 한 건 전체 마감(`totalMs`)은 기동 검증이 `totalMs + 10초 ≤ lease`로 강제하므로(위 "변수 사이의 제약") drain 상한 이하다. lease가 40초 미만이면 HTTP 30초가 drain 상한보다 길 수 있다. 둘이 병행하므로 종료 시간은 둘 중 긴 쪽이다.
+- 기본값: lease 120초, drain 상한 110초, `stop_grace_period` 150초. 40초는 drain 상한 뒤 풀 닫기와 폴러 정지의 여유다(수치는 추정이며 이 시간을 측정하지 않았다).
 - lease를 바꾸면 `stop_grace_period`를 함께 바꾼다. 예: `MAILO_LEASE_SECONDS=300`이면 `stop_grace_period`를 330s 이상으로 둔다.
 - `docker compose stop`과 `restart`는 SIGTERM을 보낸다. 앱은 SIGTERM·SIGINT에서 종료 훅을 실행한다(`enableShutdownHooks`).
-- 컨테이너에 실제 SIGTERM을 보내 확인하지 않았다. Worker와 앱 종료 훅은 통합 테스트로 확인했다(RQ-025).
+- 컨테이너에 실제 SIGTERM을 보내 확인한 것은 이 변경 이전 순서의 파일 채널 시나리오뿐이다. 변경한 순서와 느린 요청 종료는 통합 테스트로 확인했다(RQ-025).
 
 ## PostgreSQL 요건
 
@@ -235,6 +239,7 @@ docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" >
   - 지문 키: `fingerprint_key_version`이 남아 있는 모든 작업 행의 버전이 필요하다. 없으면 그 Key로 다시 오는 요청의 비교가 예외가 되어 REST는 503, 파일은 `file_ingest_failed`다(코드 읽기 결과). 현재 버전 키는 기동 조건이다.
   - JWE 개인키: DB 덤프를 읽는 데는 필요 없다. 수집 시점에 이미 복호화해 DB 키로 다시 암호화해 저장하기 때문이다. 서비스를 복원해 JWE를 쓰는 호출처의 요청(relay 재시도, 입력 폴더에 남은 파일)을 받으려면 필요하다. 키 목록 파일이 가리키는 변수가 없으면 기동하지 않는다.
 - 키는 DB 덤프와 다른 저장소에 보관한다. 같은 곳에 두면 DB 본문 암호화의 의미가 없다(권장).
+- 덤프와 복구본의 무결성을 관리한다. AAD가 `job_id`뿐이라 덤프의 `recipients`를 바꿔 복원하면 바뀐 수신자로 본문이 발송된다(ADR-0008 구현 중 확정 10). 덤프 보관 위치의 쓰기 권한을 제한하고 해시를 별도로 기록한다(권장, 실행해 확인하지 않았다).
 - 복구 시점이 과거면 이후 `SENT`로 끝난 작업이 `PENDING`·`RETRY_WAIT`으로 되살아나 다시 발송될 수 있다. 백업 이후에 등록된 Key는 DB에 없어 같은 Key가 새 요청으로 등록된다. 복구 직후에는 사용처 outbox 상태와 `GET /jobs?idempotencyKey=`를 대조한다(데이터 모델에서 나온 귀결이며 복구를 실행해 확인하지 않았다).
 - 복구 전에 입력 폴더의 파일은 DB와 무관하다. 폴더에 남은 파일은 복구한 DB에 대해 다시 수집되고 같은 Key로 걸러진다.
 
@@ -251,7 +256,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 ## 검증하지 않은 것
 
 - 컨테이너 기동, 재생성, 재시작 후 자동 복구(RQ-025·026의 미충족 조건).
-- 실제 SIGTERM을 받은 컨테이너의 종료 시간.
+- 실제 SIGTERM을 받은 컨테이너의 종료 시간(`pause` 먼저 호출하는 새 종료 순서 포함).
 - 마이그레이션의 대용량 DB 적용 시간.
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트.

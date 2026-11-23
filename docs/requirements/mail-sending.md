@@ -345,7 +345,8 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
   - 메시지 오류: `MAIL FROM`, `RCPT`, `DATA` 단계의 응답.
 - 메시지 오류는 일시적인 오류와 영구적인 오류를 구분해야 한다.
 - 재시도할 수 없는 오류는 즉시 최종 실패로 처리해야 한다.
-- 계정 상태 오류는 작업의 시도 횟수에 포함하지 않는다.
+- 차단기를 연(또는 이미 `open`·`half_open`인) 계정 상태 오류는 작업의 시도 횟수에 포함하지 않는다.
+- 차단기를 열지 못한 계정 상태 오류(실패 시점에 차단기가 `closed`였고 `closed`로 남음, 예: 일부 메시지에만 나는 `OTHER` 정책 거부)는 작업별 오류다. 시도 횟수에 포함하고 일반 backoff로 재시도하며, 최대 시도(8)에 닿으면 `FAILED`(`MAX_ATTEMPTS_EXCEEDED`)다(ADR-0007 구현 중 확정 8).
 - 계정 상태 오류는 전역 차단기로 처리한다. 차단 중에는 Worker가 작업을 점유하지 않는다.
   - 연속 실패 3회에서 `open`이 된다. 한도 초과는 즉시 `open`이다.
   - open 대기는 사유별 초기값에서 시작해 대표 작업이 실패할 때마다 2배씩 늘어난다. 상한은 `max(30분, 해당 사유의 초기값)`이다.
@@ -354,10 +355,11 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
   - 그 밖의 계정 오류(연결·TLS·인증)는 1분에서 30분까지다.
   - `half_open`에서는 대표 작업 한 건만 점유한다. 대표 작업이 계정 상태 오류 없이 끝나면 `closed`로 돌아간다. 메시지 오류로 끝나도 계정은 정상으로 본다.
 - `MAIL FROM` 이후 단계의 계정 상태 오류는 작업별 `account_trips`로 센다. 같은 작업이 차단기를 3회 연 뒤에도 같은 응답을 받으면 그 작업을 `PERMANENT`로 보고 `FAILED`로 전이한다.
+  - 한도 사유(일일·순간 한도)는 `account_trips`와 이 판정에서 뺀다. 한도는 계정 전체의 상태이므로 이 사유의 작업은 만료 시각까지 `RETRY_WAIT`로 남고, 재개 시각이 만료 시각을 넘으면 `EXPIRED`다(ADR-0007 구현 중 확정 8).
 - 전원이 거부되면 하나라도 `4xx`일 때 `TRANSIENT`, 모두 `5xx`일 때 `PERMANENT`다. 거부 응답에 계정 상태 오류(예: 일일 한도)가 섞이면 계정 상태 오류가 우선한다(구현 중 확정). 일부만 수락되면 `SENT`로 처리하고 `4xx`로 거부된 수신자는 재시도하지 않는다.
 - `550 5.7.1`은 응답 텍스트로 가른다. 스팸·정책 거부는 메시지 오류 `PERMANENT`, relay 자격·구성은 계정 상태 오류이고 구분할 수 없으면 계정 상태 오류다. `450 4.2.1` 중 수신자 쪽 속도 제한은 `TRANSIENT`다. `421`의 `4.7.x`는 순간 한도, 그 밖의 `421`은 일반 계정 상태 오류다(추정). 세부는 ADR-0007 "구현 중 확정" 2다.
 - Mailo 내부 오류(복호화 실패 등)는 SMTP 단계가 없다. 3번째 시도에서 `FAILED`가 되고 차단기를 갱신하지 않는다(ADR-0007 "구현 중 확정" 6).
-- 계정 상태 오류가 작업을 `FAILED`로 만드는 경우는 위 `account_trips` 예외뿐이다(ADR-0007 결정 2·4).
+- 차단기를 연 계정 상태 오류가 작업을 `FAILED`로 만드는 경우는 위 `account_trips` 예외(한도 사유 제외)뿐이다(ADR-0007 결정 2·4). 차단기가 `closed`로 남은 계정 상태 오류는 최대 시도로도 `FAILED`가 된다.
 - 위 수치(3회, 1분, 30분, 1시간, 5분)는 추정이다. 설정으로 바꾼다.
 
 **수용 조건:**
@@ -365,21 +367,23 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - [x] 영구 오류 응답을 받은 작업은 재시도 없이 `FAILED`가 된다.
 - [x] 일시 오류 응답을 받은 작업은 재시도 대기 상태가 된다.
 - [x] 분류 기준이 문서에 기술돼 있다. 기준은 ADR-0007(분류)과 ADR-0003 결정 5·6·8(유지분)이다.
-- [x] 연결·TLS·인증·한도 오류는 시도 횟수에 포함하지 않고, 작업을 `FAILED`로 만들지 않는다. 단, 같은 작업이 차단기를 3회 연 뒤에도 같은 응답을 받으면 `FAILED`가 된다(ADR-0007 결정 4).
+- [x] 차단기를 연 연결·TLS·인증·한도 오류는 시도 횟수에 포함하지 않고, 작업을 `FAILED`로 만들지 않는다. 단, 한도 사유가 아닌 오류로 같은 작업이 차단기를 3회 연 뒤에도 같은 응답을 받으면 `FAILED`가 된다(ADR-0007 결정 4, 구현 중 확정 8).
+- [x] 한도 사유(일일·순간 한도)는 같은 작업이 `account_trips` 3회를 넘어도 `FAILED`가 되지 않고 만료 시각까지 `RETRY_WAIT`를 유지한다.
+- [x] 차단기가 `closed`로 남은 계정 상태 오류(`OTHER` 정책 거부 등)는 시도 횟수에 포함하고 일반 backoff로 재시도하며 최대 시도에서 `FAILED`가 된다. 차단기가 `open`일 때 도착한 같은 오류는 시도 횟수를 늘리지 않는다.
 - [x] 한도 초과처럼 `5xx`이지만 시간이 지나면 풀리는 응답은 재시도 대기 상태가 된다.
 - [x] 연속 계정 상태 오류가 임계값에 이르면 차단기가 `open`이 되고 Worker가 작업을 점유하지 않는다.
 - [x] 인스턴스가 여럿이어도 차단기 상태와 연속 실패 수를 공유한다. 연속 실패 수의 증가와 초기화는 `UPDATE ... RETURNING` 한 문장으로 한다.
 - [x] `half_open`을 점유한 인스턴스가 죽어도 `probe_until`이 지나면 다른 인스턴스가 이어받는다.
 - [x] 대표 작업이 메시지 오류로 끝나면 차단기가 `closed`로 돌아간다.
-- [x] 같은 작업이 차단기를 3회 연 뒤에도 같은 응답을 받으면 `FAILED`가 된다.
+- [x] 한도 사유가 아닌 오류로 같은 작업이 차단기를 3회 연 뒤에도 같은 응답을 받으면 `FAILED`가 된다.
 - [x] 차단 중 만료 시각에 이른 작업은 주기 sweep이 `EXPIRED`로 전이한다. sweep은 `open`이어도 멈추지 않는다.
 - [x] 전원 거부와 일부 수락이 위 규칙대로 처리된다.
 
 **판정 근거:**
 
 - `smtp/classify.spec.ts`, `smtp/nodemailer-errors.spec.ts`: 단계별(MAIL FROM·RCPT·DATA·연결·TLS·인증) 분류, 한도 응답, `550 5.7.1` 분기, 전원 거부와 일부 수락. 응답은 로컬 SMTP 서버가 만든 것이다.
-- `queue/circuit-breaker.integration-spec.ts`: 3회 `open`, 일일 한도 즉시 `open`과 1시간 고정, 순간 한도 5분에서 30분까지 2배, 대표 1건 점유와 경쟁, `probe_until` 인계, 메시지 오류 뒤 `closed`, `account_trips` 3회 뒤 `FAILED`(응답이 다르면 승격 없음), 내부 오류는 차단기 불변, 재개 시각이 만료 뒤이면 `EXPIRED`.
-- `worker/worker.integration-spec.ts`: 5xx `FAILED`, 4xx `RETRY_WAIT`, 일일 한도 `open`, 인증 실패 3회 `open`, `half_open` 대표 성공 뒤 `closed`, 차단 중 sweep.
+- `queue/circuit-breaker.integration-spec.ts`: 3회 `open`, 일일 한도 즉시 `open`과 1시간 고정, 순간 한도 5분에서 30분까지 2배, 대표 1건 점유와 경쟁, `probe_until` 인계, 메시지 오류 뒤 `closed`, `account_trips` 3회 뒤 `FAILED`(한도 사유 제외, 응답이 다르면 승격 없음), 한도 사유는 `account_trips` 3회를 넘어도 `RETRY_WAIT` 유지와 만료 시각 뒤 `EXPIRED`, 차단기 closed의 `OTHER` 거부는 시도 횟수 증가와 최대 시도 `FAILED`·`open`에서는 증가 없음, 내부 오류는 차단기 불변, 재개 시각이 만료 뒤이면 `EXPIRED`.
+- `worker/worker.integration-spec.ts`: 5xx `FAILED`, 4xx `RETRY_WAIT`, 일일 한도 `open`(`account_trips` 증가 없음), 인증 실패 3회 `open`(차단기를 열기 전 2건은 시도 횟수에 포함), `half_open` 대표 성공 뒤 `closed`, 차단 중 sweep.
 - 한계: 응답 코드·텍스트 매핑 일부는 추정이다(ADR-0007 "구현 중 확정" 2). 실제 Gmail 응답으로 대조하지 않았다.
 
 ### RQ-010 재시도 중단과 시도 기록
@@ -675,7 +679,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 
 ### RQ-022 선택적 봉투 암호화
 
-- [x] **진행 상태:** 검증 완료 (2단계, 3단계 문서로 마무리)
+- [x] **진행 상태:** 검증 완료 (2단계, 3단계 문서로 마무리. 2026-11-23 코드 리뷰로 `signature.mode=none`의 한계를 문서에 추가했다)
 
 **요구사항:**
 
@@ -698,6 +702,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - [x] 복호화에 실패한 요청의 오류 기록과 로그에서 canary 문자열이 검색되지 않는다. (REST 응답과 로그, 파일 채널의 거부 기록·이벤트·로그. 파일은 변조한 JWE와 `caller`가 다른 JWE로 확인했다.)
 - [x] `caller`가 요청의 `caller_id`와 다른 JWE는 거부된다.
 - [x] 키 교체 뒤 이전 `kid`로 암호화한 요청이 Key 보존 기간 안에서는 복호화된다. (키링에 이전 키가 남아 있는 한 복호화된다. 보존 기간 전 삭제는 설정 검증이 막는다.)
+- [x] `signature.mode=none`의 한계(수신자 바꿔치기, 기밀성 위험)와 `required` 권장이 운영 문서에 기술돼 있다. (`docs/operations/caller-onboarding.md`, 문서 작성이며 코드 동작은 바꾸지 않았다.)
 - [x] 알고리즘, 키 식별자 형식, 키 교체 절차가 문서에 기술돼 있다. (알고리즘과 `kid` 형식은 ADR-0008 "구현 중 확정"과 `docs/operations/key-management.md`, 키 교체·이전 키 보관·삭제 절차는 `key-management.md`다. 문서 작성과 코드 대조이고 교체 절차를 운영 환경에서 실행하지 않았다.)
 
 **판정 근거:**
@@ -706,6 +711,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - `envelope/key-file.spec.ts`: RSA 3072 강제, 시크릿 파일 우선, 이전 키를 Key 보존 기간 전에 지우면 기동 거부.
 - `envelope/rest-envelope.integration-spec.ts`: 실제 HTTP와 PostgreSQL로 JWE 왕복(202, DB에 평문 없음), 같은 Key의 평문·JWE 재요청 200과 내용 변경 409, 400 코드(`KID_UNKNOWN`·`DECRYPTION_FAILED`·`CALLER_MISMATCH`·`CONTROL_CHARACTER`), 응답·로그에 canary와 암호문 없음, Worker로 JWE 요청과 평문 요청이 SMTP로 나감.
 - `file-channel/poller.integration-spec.ts`: JWE 파일 수집, `caller` 불일치(`CALLER_MISMATCH`), 알 수 없는 `kid`(`DECRYPTION_FAILED`로 기록), 암호화한 제목의 CR/LF 거부, 변조한 JWE의 거부와 canary 부재.
+- 한계 문구(`signature.mode=none`, DB AAD 범위)는 문서 항목이다. 코드 동작은 바꾸지 않았고 이를 단언하는 자동 테스트는 없다. 서명 `required`가 수신자 변경을 거부한다는 서술은 서명이 `payload` 전체를 덮는다는 JWS 성질에 근거한다. 잘못된 서명의 거부는 `file-channel/poller.integration-spec.ts`가 확인하지만, 수신자만 바꾼 서명 파일을 거부하는 전용 테스트는 없다.
 - 미확인: nimbus-jose-jwt 등 다른 JOSE 구현이 만든 JWE·JWS와의 상호 운용, 파일 JWE의 SMTP 발송 e2e, JWE 개인키 유출 때의 대응 절차(미결정, `key-management.md`).
 
 **한계:**
@@ -713,6 +719,8 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - Mailo는 SMTP 전송 시점에 본문을 평문으로 복호화한다.
 - Mailo 호스트나 메모리가 침해되면 보호되지 않는다.
 - 막는 대상은 파일 폴더, 백업, NAS, DB 덤프를 통한 유출이다.
+- `signature.mode=none` 호출처는 inbox 쓰기 권한자의 수신자 바꿔치기를 막지 못한다. 쓰기 권한자는 `none`에서 본문을 새로 만들어 보낼 수도 있고, 이 변조로 새로 생기는 위험은 기밀성뿐이다(탈취한 JWE 본문을 다른 수신자에게 보내 열람). JWE 본문 유출을 막아야 하면 `signature.mode=required`를 사용한다(ADR-0008 구현 중 확정 9).
+- DB 본문 AES-GCM의 AAD는 `job_id`뿐이라 DB 쓰기 권한자의 `recipients` 변경은 막지 못한다(ADR-0008 구현 중 확정 10, RQ-023).
 
 ### RQ-023 DB 본문 암호화
 
@@ -743,6 +751,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - `crypto/body-cipher.spec.ts`: AES-256-GCM 왕복, 96비트 nonce, 다른 `job_id`(AAD)와 변조한 암호문의 복호화 실패, 키 교체 뒤 이전 버전 복호화.
 - `http/rest-intake.integration-spec.ts`, `queue/register.integration-spec.ts`, `worker/worker.integration-spec.ts`: DB 컬럼에 본문 평문이 없다(canary). `config/load-config.spec.ts`: 키를 환경 변수·시크릿 파일로 받고 현재·이전 버전을 함께 읽는다.
 - `queue/maintenance.integration-spec.ts`: 종결 후 유예가 지난 작업만 본문 컬럼을 비우고 행과 Key는 남긴다.
+- 한계: AAD가 `job_id`뿐이라 DB 쓰기 권한자의 `recipients`(평문 jsonb) 변경은 막지 못한다. DB 쓰기 계정 최소화와 백업 무결성 관리로 완화한다(ADR-0008 구현 중 확정 10). 코드 동작은 바꾸지 않았다.
 - 범위: RQ-022(JWE 봉투 암호화)는 2단계이고 이 RQ의 DB 암호화만 1단계다. 복호화한 평문은 이 RQ의 경로로 DB에 저장된다(`envelope`는 DB를 쓰지 않는다).
 
 ### RQ-024 파일 채널 접근 통제
@@ -812,7 +821,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 
 **판정 근거:**
 
-- `worker/worker.integration-spec.ts`: 종료 신호 뒤 진행 중 전송을 끝까지 기다리고 새 작업을 점유하지 않음, 대기 시간 초과 시 포기하고 lease 회수에 맡김. `http/lifecycle.integration-spec.ts`: 기동 때 `start` 한 번, 종료 때 HTTP 서버를 닫은 뒤 `stop`을 호출하고 외부에서 받은 풀은 닫지 않음.
+- `worker/worker.integration-spec.ts`: 종료 신호 뒤 진행 중 전송을 끝까지 기다리고 새 작업을 점유하지 않음, `pause()` 뒤 새 작업을 점유하지 않고 진행 중 전송은 끝냄, drain 상한을 `pause()` 시점부터 셈, 대기 시간 초과 시 포기하고 lease를 풀지 않은 채 회수에 맡김. `http/lifecycle.integration-spec.ts`: 기동 때 `start` 한 번, 종료 때 `pause`를 먼저 부르고 HTTP 서버를 닫은 뒤 `stop`을 호출하며 외부에서 받은 풀은 닫지 않음, 본문을 다 보내지 않은 느린 POST가 열려 있어도 `pause`가 먼저 일어나고 요청 시간제한 안에 종료함(시간제한은 테스트에서 줄여 확인. 운영 기본 30초는 실행하지 않았다).
 - `config/load-config.spec.ts`: 기동 시 설정 검증, `.env.example`의 활성 변수가 그대로 통과. DB 접속 URL을 분리 변수(`MAILO_DB_*`)로 조립하는 규칙과 비밀번호 URL 인코딩(`@ / : # %` 포함)도 이 파일이 확인한다.
 - 컨테이너 SIGTERM(2026-11-23, `scripts/container/verify-sigterm-file.sh`, 파일 1000개, 폴링 500ms, lease 45초): 폴러가 처리하는 도중(남은 파일 997개일 때) `docker compose stop mailo`를 보냈다. 종료 코드 0, 소요 0.4초, OOMKilled false였다. 로그 순서는 `file_poll`(registered 19) → `file_channel_stopped` → `worker_stopping inFlight 0` → `worker_stopped drained true`였다. 종료 뒤 DB 작업 19건 = 처리한 파일 19건(1000 − 남은 981), 남은 파일 중 DB에 등록된 것 0건, `SENDING` 0건이었다. 다시 띄우자 남은 파일이 수집돼 작업 1000건 모두 `SENT`, SMTP 수신 1000통(유일 `Message-ID` 1000개)이었다. 진행 중 전송이 있는 상태의 SIGTERM(전송 응답 지연 중 종료 대기)은 이 스크립트가 만들지 않았고 `worker/worker.integration-spec.ts`만 확인한다.
 - 컨테이너 기동(2026-11-23, 같은 스크립트와 `verify-sigkill-duplicate.sh`): 저장소 `Dockerfile`로 빌드한 이미지가 compose의 `MAILO_DB_*` 분리 변수(비밀번호 `p@ss/w:rd#1%2x`)로 PostgreSQL에 접속해 마이그레이션을 적용하고 healthcheck(`/health/live`)가 `healthy`가 됐다.

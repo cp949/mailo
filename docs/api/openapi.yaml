@@ -613,7 +613,7 @@ components:
         - `PERMANENT_ERROR`: 메시지 단계에서 영구 오류(`5xx`)를 받았다. 전원 거부가 모두 `5xx`인 경우도 포함한다.
           Mailo 내부 오류로 처리하지 못한 작업(독성 작업)이 3회째 시도에서 중단된 경우도 이 값이다. 이때 `lastError.smtpCode`는 `null`이다.
         - `MAX_ATTEMPTS_EXCEEDED`: 최대 시도 횟수를 소진했다.
-        - `ACCOUNT_ERROR_REPEATED`: 같은 작업이 차단기를 3회 연 뒤에도 같은 계정 상태 응답을 받았다(ADR-0007 결정 4).
+        - `ACCOUNT_ERROR_REPEATED`: 같은 작업이 차단기를 3회 연 뒤에도 같은 계정 상태 응답을 받았다(ADR-0007 결정 4). 한도 사유(일일·순간 한도)는 제외한다(ADR-0007 구현 중 확정 8).
         - `EXPIRED`: 만료 시각에 도달했다.
     LastError:
       type: object
@@ -628,7 +628,7 @@ components:
           description: |
             - `TRANSIENT`: 메시지 단계의 일시 오류.
             - `PERMANENT`: 메시지 단계의 영구 오류.
-            - `ACCOUNT`: 연결·TLS·인증 실패 또는 한도 초과. 시도 횟수에 산입하지 않는다.
+            - `ACCOUNT`: 연결·TLS·인증 실패 또는 한도 초과. 차단기를 연 시도는 시도 횟수에 산입하지 않는다. 차단기가 `closed`로 남은 시도는 작업별 오류로 산입한다(ADR-0007 구현 중 확정 8).
             - `LEASE_EXPIRED`: Worker가 죽어 lease가 만료됐다. 시도 횟수에 산입한다.
         smtpCode:
           type: [integer, 'null']

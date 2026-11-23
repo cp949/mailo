@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type pg from "pg";
 import { createApp } from "../../src/app.js";
-import type { AppModuleOptions } from "../../src/app.module.js";
+import type {
+  AppModuleOptions,
+  HttpServerTimeouts,
+} from "../../src/app.module.js";
 import { loadConfig, type AppConfig } from "../../src/config/index.js";
 import { hashApiKey } from "../../src/crypto/index.js";
 import type { WorkerRunner } from "../../src/worker-port.js";
@@ -130,6 +133,8 @@ export interface StartRestAppOptions {
   worker?: AppModuleOptions["worker"];
   /** 파일 폴더를 쓰는 호출처 ID. `MAILO_FILE_CHANNEL_ROOT`와 함께 쓴다. */
   fileChannelCallers?: readonly string[];
+  /** HTTP 서버 시간제한. 느린 연결 종료 테스트가 줄여 쓴다. 생략하면 운영 기본값이다. */
+  httpTimeouts?: HttpServerTimeouts;
 }
 
 /** 전용 schema 풀을 주입해 앱을 임의 포트로 띄운다. 풀은 앱이 닫지 않는다. */
@@ -151,6 +156,7 @@ export async function startRestApp(
       pool: options.pool,
       ...(options.workerRunner ? { workerRunner: options.workerRunner } : {}),
       ...(options.worker ? { worker: options.worker } : {}),
+      ...(options.httpTimeouts ? { http: options.httpTimeouts } : {}),
     });
     app.useLogger(logs.logger);
     await app.listen(0, "127.0.0.1");

@@ -141,6 +141,16 @@ ADR-0001은 호출처 선택 봉투 암호화와 DB 본문 상시 암호화를 �
    - 확인한 것: 테스트는 `jose`로 만든 JWE를 Mailo가 복호화하고, JWS는 `jose` 없이 직접 서명한 값을 `jose` 검증이 받는다. nimbus-jose-jwt와의 상호 운용은 확인하지 않았다.
    - 운영 의존성은 Mailo와 PostgreSQL 그대로다. npm 의존성만 하나 늘었다.
 
+9. **`signature.mode=none` 호출처의 한계(결정 2·4, 2026-11-23 코드 리뷰).** 결정 문구는 바꾸지 않는다.
+   - `none` 호출처는 파일 채널의 inbox 쓰기 권한자가 요청을 바꾸는 것을 막지 못한다. 수신자(`to`·`cc`·`bcc`)는 평문 필드이므로 쓰기 권한자가 수신자를 바꿔치기할 수 있다.
+   - 쓰기 권한자는 `none`에서 본문을 새로 만들어 보낼 수도 있다(서명이 없어 만든 이를 구분할 수 없다). 이 변조로 새로 생기는 위험은 기밀성뿐이다. 탈취한 JWE `content`를 다른 수신자로 바꿔 보내면 Mailo가 복호화해 그 수신자에게 본문을 보낸다.
+   - JWE 본문 유출을 막아야 하면 `signature.mode=required`를 쓴다. 서명은 암호화된 payload와 `caller`·`iat`를 묶으므로 수신자 바꿔치기를 `SIGNATURE_INVALID`로 거부한다.
+   - 레지스트리에 기본값은 없다. `signature.mode`를 적지 않으면 기동하지 않는다(결정 2, 코드 `callers/registry.ts`). 신규 호출처 권장값은 `required`이고 `none`은 사유를 적고 고르는 선택지다(`docs/operations/caller-onboarding.md`). 코드는 바꾸지 않았다.
+10. **DB 본문 AAD 범위의 한계(결정 6, 2026-11-23 코드 리뷰).** 결정 문구는 바꾸지 않는다.
+   - AES-GCM의 AAD는 `job_id`뿐이다. 행 사이 암호문 바꿔치기는 막지만, DB 쓰기 권한자가 같은 행의 `recipients`(평문 jsonb)를 바꾸는 것은 막지 못한다. 바뀐 수신자로 본문이 발송된다.
+   - 완화는 운영 절차다. DB 쓰기 계정을 Mailo 앱으로 최소화하고, 백업·복구본의 무결성을 관리한다(`docs/operations/key-management.md`, `deployment.md`).
+   - 향후 선택지(이번 범위 아님): 새 행부터 `key_version`(또는 별도 `aad_version`)으로 AAD 형식을 구분해 `job_id`와 `recipients` 해시를 함께 넣는다. 기존 행은 이전 형식 그대로 복호화하므로 마이그레이션 없이 가능하다. 도입하려면 새 ADR로 결정한다.
+
 ## 미확정
 
 - 결정됨(구현 중 확정): JWS 직렬화 세부 형식(flattened JWS의 필드 구성). 위의 "구현 중 확정" 절이 정했다.

@@ -1,6 +1,6 @@
 import { Module, type DynamicModule } from "@nestjs/common";
 import type pg from "pg";
-import { AppLifecycle } from "./app-lifecycle.js";
+import { AppLifecycle, HTTP_TIMEOUTS } from "./app-lifecycle.js";
 import {
   CALLER_REGISTRY,
   CallersModule,
@@ -37,6 +37,22 @@ import {
   type WorkerRunner,
 } from "./worker-port.js";
 
+/** HTTP 서버 시간제한(ms). 느린 요청이 연결을 오래 붙잡지 못하게 하고, 종료 때 HTTP 닫기의 대기 상한이 된다. */
+export interface HttpServerTimeouts {
+  /** 요청 전체(헤더+본문)를 받는 시간 상한. 넘기면 Node가 408로 응답하고 연결을 닫는다. */
+  requestTimeoutMs: number;
+  /** 헤더를 받는 시간 상한. Node는 `headersTimeout <= requestTimeout`을 요구한다. */
+  headersTimeoutMs: number;
+  /** Node가 시간 초과 연결을 훑는 간격. 생략하면 Node 기본값(30초)이다. 테스트가 줄인다. */
+  checkIntervalMs?: number;
+}
+
+/** 운영 기본값. 환경 변수로 받지 않는 상수다. 본문 상한이 2 MiB라 30초면 정상 클라이언트에 충분하다(RQ-030). */
+export const DEFAULT_HTTP_TIMEOUTS: HttpServerTimeouts = {
+  requestTimeoutMs: 30_000,
+  headersTimeoutMs: 30_000,
+};
+
 export interface AppModuleOptions {
   config: AppConfig;
   /** 설정을 읽은 환경 변수. 호출처 JWS 비밀키와 JWE 개인키를 이 맵에서 읽는다. 없으면 `process.env`다. */
@@ -51,6 +67,8 @@ export interface AppModuleOptions {
    * - `sender`: 발송기 직접 주입(테스트).
    */
   worker?: { trustedCa?: string; sender?: MailSender };
+  /** HTTP 서버 시간제한. 생략하면 `DEFAULT_HTTP_TIMEOUTS`(30초)다. */
+  http?: HttpServerTimeouts;
 }
 
 @Module({})
@@ -142,6 +160,10 @@ export class AppModule {
               logger,
             });
           },
+        },
+        {
+          provide: HTTP_TIMEOUTS,
+          useValue: options.http ?? DEFAULT_HTTP_TIMEOUTS,
         },
         AppLifecycle,
       ],

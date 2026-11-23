@@ -90,10 +90,12 @@ describe("PostgreSQL 통합: 전역 차단기(ADR-0007 결정 4·5, RQ-009)", ()
     expect(state.consecutiveFailures).toBe(3);
     expect(state.waitSeconds).toBe(60);
     expect(await claim(db.pool, claimOpts)).toEqual([]);
+    // 차단기를 열기 전의 실패 2건은 작업별 오류로 시도 횟수에 들고, 차단기를 연 3번째 실패는 들지 않는다
+    // (ADR-0007 구현 중 확정 8).
     const { rows } = await db.pool.query(
-      "SELECT attempts FROM mail_jobs WHERE attempts > 0",
+      "SELECT attempts FROM mail_jobs ORDER BY attempts",
     );
-    expect(rows).toEqual([]);
+    expect(rows.map((r) => r.attempts)).toEqual([0, 0, 1, 1]);
   });
 
   it("성공이나 메시지 오류가 끝나면 닫힌 상태의 연속 실패 수가 0이 된다", async () => {
@@ -274,26 +276,37 @@ describe("PostgreSQL 통합: 전역 차단기(ADR-0007 결정 4·5, RQ-009)", ()
     },
   );
 
-  it("같은 작업이 차단기를 3회 연 뒤에도 같은 응답을 받으면 FAILED가 되고 시도 횟수에는 넣지 않는다", async () => {
+  it("같은 작업이 차단기를 3회 연 뒤에도 같은 응답을 받으면 FAILED가 된다(한도 외 사유, 차단기를 연 시도는 횟수에 넣지 않는다)", async () => {
     const id = await createJob(db.pool);
     const response: [number, string] = [550, "5.7.1"];
 
+    // 연속 실패 1·2회는 차단기를 열지 못하므로 작업별 오류로 시도 횟수에 든다(ADR-0007 구현 중 확정 8).
+    for (let closed = 1; closed <= 2; closed += 1) {
+      const job = (await claimOne())!;
+      const result = await failAccount(job, "OTHER", {
+        afterMailFrom: true,
+        response,
+      });
+      expect(result).toMatchObject({ applied: true, status: "RETRY_WAIT" });
+      await pastDue(db.pool, id);
+    }
+    // 3번째가 차단기를 연다(account_trips 1). 이후 대표 작업 실패마다 차단기를 다시 연다.
     for (let trip = 1; trip <= 3; trip += 1) {
       const job = (await claimOne())!;
-      const result = await failAccount(job, "RATE_LIMIT", {
+      const result = await failAccount(job, "OTHER", {
         afterMailFrom: true,
         response,
       });
       expect(result).toMatchObject({ applied: true, status: "RETRY_WAIT" });
       const { rows } = await db.pool.query(
-        "SELECT account_trips FROM mail_jobs WHERE id = $1",
+        "SELECT account_trips, attempts FROM mail_jobs WHERE id = $1",
         [id],
       );
-      expect(rows[0].account_trips).toBe(trip);
+      expect(rows[0]).toEqual({ account_trips: trip, attempts: 2 });
       await elapseOpenWait();
       await pastDue(db.pool, id);
     }
-    const last = await failAccount((await claimOne())!, "RATE_LIMIT", {
+    const last = await failAccount((await claimOne())!, "OTHER", {
       afterMailFrom: true,
       response,
     });
@@ -305,7 +318,7 @@ describe("PostgreSQL 통합: 전역 차단기(ADR-0007 결정 4·5, RQ-009)", ()
     );
     expect(job.rows[0]).toEqual({
       status: "FAILED",
-      attempts: 0,
+      attempts: 2,
       failure_reason: "ACCOUNT_REPEATED",
     });
     const attempts = await db.pool.query(
@@ -324,9 +337,9 @@ describe("PostgreSQL 통합: 전역 차단기(ADR-0007 결정 4·5, RQ-009)", ()
 
   it("다른 응답이 오면 account_trips 예외를 적용하지 않고 계속 대기한다", async () => {
     const id = await createJob(db.pool);
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       const job = (await claimOne())!;
-      const result = await failAccount(job, "RATE_LIMIT", {
+      const result = await failAccount(job, "OTHER", {
         afterMailFrom: true,
         response: [550, `5.7.${i}`],
       });
@@ -334,6 +347,153 @@ describe("PostgreSQL 통합: 전역 차단기(ADR-0007 결정 4·5, RQ-009)", ()
       await elapseOpenWait();
       await pastDue(db.pool, id);
     }
+  });
+
+  it.each(["DAILY_LIMIT", "RATE_LIMIT"] as const)(
+    "한도 사유(%s)는 account_trips가 3회를 넘어도 FAILED가 되지 않고 RETRY_WAIT를 유지한다 (ADR-0007 구현 중 확정 8, RQ-009)",
+    async (reason) => {
+      const id = await createJob(db.pool);
+      const response: [number, string] = [550, "5.4.5"];
+
+      for (let round = 1; round <= 6; round += 1) {
+        const result = await failAccount((await claimOne())!, reason, {
+          afterMailFrom: true,
+          response,
+        });
+        expect(result).toMatchObject({ applied: true, status: "RETRY_WAIT" });
+        await elapseOpenWait();
+        await pastDue(db.pool, id);
+      }
+
+      const { rows } = await db.pool.query(
+        "SELECT status, attempts, account_trips, failure_reason FROM mail_jobs WHERE id = $1",
+        [id],
+      );
+      expect(rows[0]).toEqual({
+        status: "RETRY_WAIT",
+        attempts: 0,
+        account_trips: 0,
+        failure_reason: null,
+      });
+      const events = await db.pool.query(
+        "SELECT type FROM mail_events WHERE job_id = $1",
+        [id],
+      );
+      expect(events.rows).toEqual([]);
+    },
+  );
+
+  it("한도 사유 작업은 만료 시각까지 RETRY_WAIT이고 만료 시각을 넘기면 EXPIRED가 된다", async () => {
+    const id = await createJob(db.pool, { expiresInSeconds: 7_200 });
+    const first = await failAccount((await claimOne())!, "DAILY_LIMIT", {
+      afterMailFrom: true,
+      response: [550, "5.4.5"],
+    });
+    expect(first).toMatchObject({ applied: true, status: "RETRY_WAIT" });
+
+    // 재시도 시각(1시간 뒤)이 남은 만료 시각을 넘도록 만료를 당긴다.
+    await elapseOpenWait();
+    await db.pool.query(
+      "UPDATE mail_jobs SET next_attempt_at = now() - interval '1 second', expires_at = now() + interval '30 minutes' WHERE id = $1",
+      [id],
+    );
+    const second = await failAccount((await claimOne())!, "DAILY_LIMIT", {
+      afterMailFrom: true,
+      response: [550, "5.4.5"],
+    });
+
+    expect(second).toMatchObject({ applied: true, status: "EXPIRED" });
+  });
+
+  it("차단기 closed에서 OTHER 거부는 attempts가 증가하고 최대 시도에서 FAILED (ADR-0007 구현 중 확정 8, RQ-009)", async () => {
+    const id = await createJob(db.pool);
+    const response: [number, string] = [550, "5.7.1"];
+
+    for (let attempt = 1; attempt < deps.retry.maxAttempts; attempt += 1) {
+      // 다른 작업의 성공이 연속 실패 수를 0으로 되돌린 상황을 흉내 낸다. 차단기는 계속 closed다.
+      await db.pool.query(
+        "UPDATE mail_circuit_breaker SET consecutive_failures = 0",
+      );
+      const result = await failAccount((await claimOne())!, "OTHER", {
+        afterMailFrom: true,
+        response,
+      });
+      expect(result).toMatchObject({ applied: true, status: "RETRY_WAIT" });
+      expect((await breaker()).state).toBe("closed");
+      const { rows } = await db.pool.query(
+        `SELECT attempts, account_trips,
+                round(EXTRACT(EPOCH FROM (next_attempt_at - now()))) AS wait
+           FROM mail_jobs WHERE id = $1`,
+        [id],
+      );
+      expect(rows[0].attempts).toBe(attempt);
+      expect(rows[0].account_trips).toBe(0);
+      // 일반 backoff(기준 60초, 2배, 상한 3600초, 지터 0)다. 차단기 초기 대기(60초 고정)가 아니다.
+      const expected = Math.min(3600, 60 * 2 ** (attempt - 1));
+      expect(Math.abs(Number(rows[0].wait) - expected)).toBeLessThanOrEqual(2);
+      await pastDue(db.pool, id);
+    }
+    await db.pool.query(
+      "UPDATE mail_circuit_breaker SET consecutive_failures = 0",
+    );
+    const last = await failAccount((await claimOne())!, "OTHER", {
+      afterMailFrom: true,
+      response,
+    });
+
+    expect(last).toMatchObject({ applied: true, status: "FAILED" });
+    const job = await db.pool.query(
+      "SELECT status, attempts, failure_reason FROM mail_jobs WHERE id = $1",
+      [id],
+    );
+    expect(job.rows[0]).toEqual({
+      status: "FAILED",
+      attempts: deps.retry.maxAttempts,
+      failure_reason: "ATTEMPTS_EXHAUSTED",
+    });
+    const counted = await db.pool.query(
+      "SELECT count(*)::int AS n FROM mail_attempts WHERE job_id = $1 AND classification = 'ACCOUNT' AND counted",
+      [id],
+    );
+    expect(counted.rows[0].n).toBe(deps.retry.maxAttempts);
+    const events = await db.pool.query(
+      "SELECT type, failure_reason, attempt_count FROM mail_events WHERE job_id = $1",
+      [id],
+    );
+    expect(events.rows).toEqual([
+      {
+        type: "JOB_FAILED",
+        failure_reason: "ATTEMPTS_EXHAUSTED",
+        attempt_count: deps.retry.maxAttempts,
+      },
+    ]);
+  });
+
+  it("차단기 open에서 OTHER 거부는 attempts가 증가하지 않음 (ADR-0007 결정 2)", async () => {
+    const late = await createJob(db.pool);
+    const tripping = await createJob(db.pool);
+    // 두 작업을 모두 점유한 뒤 한쪽이 차단기를 연다. 다른 쪽의 결과는 open 중에 도착한다.
+    const claimed = await claim(db.pool, { ...claimOpts, limit: 2 });
+    const lateJob = claimed.find((j) => j.id === late)!;
+    await failAccount(
+      claimed.find((j) => j.id === tripping)!,
+      "RATE_LIMIT",
+    );
+    expect((await breaker()).state).toBe("open");
+
+    const result = await failAccount(lateJob, "OTHER", { afterMailFrom: true });
+
+    expect(result).toMatchObject({ applied: true, status: "RETRY_WAIT" });
+    const { rows } = await db.pool.query(
+      "SELECT attempts FROM mail_jobs WHERE id = $1",
+      [late],
+    );
+    expect(rows[0].attempts).toBe(0);
+    const counted = await db.pool.query(
+      "SELECT counted FROM mail_attempts WHERE job_id = $1",
+      [late],
+    );
+    expect(counted.rows).toEqual([{ counted: false }]);
   });
 
   it("재개 시각이 만료 시각보다 뒤이면 즉시 EXPIRED가 된다(ADR-0003 결정 6)", async () => {

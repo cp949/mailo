@@ -60,5 +60,5 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 - `docker-compose.yml`의 `stop_grace_period`는 lease(`MAILO_LEASE_SECONDS`) 이상이어야 한다(ADR-0002 결정 12). lease 값을 바꾸면 함께 바꾼다.
 - 컨테이너는 non-root(`node`)로 실행한다.
 - compose는 DB 접속을 `MAILO_DB_*` 분리 변수로 준다(앱이 URL 인코딩해 조립). `MAILO_DATABASE_URL`과 `MAILO_DB_HOST`를 함께 주면 기동을 거부한다. 컨테이너 종료·중복 발송 검증은 `scripts/container/`(Docker 필요, 자동 테스트 아님)다.
-- 종료 순서는 HTTP 서버 닫기 → 파일 폴러 정지(진행 중 파일 완료) → Worker drain(`lease - 10초` 상한) → DB 풀 닫기다. drain 상한은 `stop_grace_period`보다 짧아야 한다.
+- 종료 순서는 Worker `pause()`(새 점유 중지, 진행 중 전송 계속) → HTTP 서버 닫기·파일 폴러 정지(진행 중 파일 완료) → Worker drain(`lease - 10초` 상한, `pause()` 시점부터 센다) → DB 풀 닫기다. `stop_grace_period`는 drain 상한 + 10초 이상이어야 한다. HTTP 요청·헤더 수신 시간제한은 30초이고 종료 때 이 시간이 지나면 남은 연결을 끊는다. drain 상한이 지나도 lease는 풀지 않는다(다음 claim이 만료로 회수).
 - 로컬 SMTP 서버 대상 검증은 STARTTLS 인증서가 필요하다. 컨테이너에는 `NODE_EXTRA_CA_CERTS`로 CA를 주고, 호스트는 IP로 지정한다(`/etc/hosts`에만 있는 이름은 nodemailer 조회에서 실패했다).

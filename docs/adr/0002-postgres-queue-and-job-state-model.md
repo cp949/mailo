@@ -14,6 +14,7 @@ ADR-0005(Key 필수와 지문)와 ADR-0007(계정 상태 오류와 차단기) �
 - 결정 3의 충돌 시 처리: ADR-0005 결정 4가 대체한다.
 - 결정 7의 시도 횟수 계산과 판정 순서: 계정 상태 오류에 한해 ADR-0007 결정 2가 대체한다.
 - 결정 7의 주기 sweep: ADR-0007 결정 6이 차단기 `open` 중에도 멈추지 않도록 보강한다.
+- 2026-11-23 코드 리뷰 반영: 결정 12의 "새 점유를 멈춘다" 시점과 종료 순서는 구현 중 확정 6이 정한다. 구현 중 확정 5의 회수 시점 서술은 구현 중 확정 7이 정정한다. 결정 문구는 그대로 둔다.
 
 ## 배경
 
@@ -123,9 +124,24 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
 5. **SIGKILL 뒤 재발송 관찰(결정 5·12, 2026-11-23).** 실제 컨테이너에서 관찰한 사실만 적는다. 재현은 `scripts/container/verify-sigkill-duplicate.sh`(compose 프로젝트 `mailo-verify`, Mailo·PostgreSQL 17·로컬 가짜 SMTP, `MAILO_LEASE_SECONDS=45`, `MAILO_SMTP_TIMEOUT_SECONDS=10`)다.
    - 가짜 SMTP가 DATA를 모두 받아 기록한 직후 최종 250 응답을 90초 미룬다. 그 사이(수신 2초 뒤) `docker kill -s KILL`을 보냈다. 컨테이너는 `exited exit=137`이고 DB의 작업은 `SENDING`, `attempts=0`, lease 잔여 약 42초였다.
    - `docker compose start mailo` 뒤 같은 작업이 다시 발송됐다. SMTP는 같은 `Message-ID`로 2통을 받았다(1통째는 지연 응답 중에 기록됐다). 작업은 `SENT`, `attempts=2`, REST 조회 `SENT`였다.
-   - kill에서 두 번째 수신까지 100초(1회차)와 95초(2회차)였다. lease는 45초다. 회수는 주기 sweep(기본 60초)에서 하고 `LEASE_EXPIRED` 시도 뒤 재시도 백오프를 거치므로 lease 만료 직후가 아니다(코드 읽기 결과이며 시점별 로그로 분리해 확인하지 않았다).
+   - kill에서 두 번째 수신까지 100초(1회차)와 95초(2회차)였다. lease는 45초다. 회수는 주기 sweep(기본 60초)에서 하고 `LEASE_EXPIRED` 시도 뒤 재시도 백오프를 거치므로 lease 만료 직후가 아니다(코드 읽기 결과이며 시점별 로그로 분리해 확인하지 않았다). [정정됨: 구현 중 확정 7. 회수는 주기 sweep만이 아니고, 지연의 대부분은 재시도 백오프다.]
    - 결론은 at-least-once다. SMTP 서버가 이미 수락한 메시지도 응답을 받지 못하면 재발송된다. 같은 `Message-ID`가 완화 수단으로 동작하는지(받는 쪽이 중복으로 버리는지)는 실제 Gmail로 확인하지 않았다.
    - 이 검증으로 알게 된 설정 제약은 `docs/operations/deployment.md`의 `MAILO_SMTP_TIMEOUT_SECONDS` 행이다(lease 20초는 기동 거부).
+
+6. **종료 순서와 "새 점유를 멈춘다" 시점(결정 12, 2026-11-23 코드 리뷰, `src/app-lifecycle.ts`·`src/worker/worker.ts`·`src/app.ts`).** 결정 문구는 바꾸지 않는다.
+   - 이전 구현은 HTTP 서버를 닫은 뒤에야 Worker를 멈췄다. 본문을 다 보내지 않는 요청이 서버 닫기를 붙잡으면 그동안 Worker가 새 작업을 계속 점유했고, drain 시계도 늦게 시작했다.
+   - 종료 순서: SIGTERM → Worker `pause()`(새 점유 중지, 진행 중 전송과 주기 작업은 계속) → HTTP 서버 닫기와 파일 폴러 정지(진행 중 파일 완료)를 함께 진행 → Worker `stop()`(진행 중 전송 drain) → DB 풀 닫기. `pause()`는 Nest `beforeApplicationShutdown` 맨 앞에서 부른다. 결정 12와 RQ-025의 "종료 신호를 받으면 새 점유를 멈춘다"가 이제 코드와 같은 시점이다.
+   - drain 상한(`lease - 10초`)은 `pause()` 시점부터 센다. HTTP 닫기에 걸린 시간도 상한에 포함되므로 SIGTERM 뒤 종료 시간의 상한은 drain 상한과 DB 풀 닫기 시간이다.
+   - HTTP 서버 시간제한은 요청 수신 30초(`requestTimeout`), 헤더 수신 30초(`headersTimeout`)다. 설정 변수 없이 `src/app.module.ts`의 상수 `DEFAULT_HTTP_TIMEOUTS`다. Node는 `server.close()`를 부른 뒤 이 시간제한 점검을 멈춘다(실측: 닫기 뒤 느린 요청이 끝까지 남아 `app.close()`가 끝나지 않았다). 그래서 종료 훅이 유휴 연결을 닫고(`closeIdleConnections`) `requestTimeout`이 지나면 남은 연결을 끊는다(`closeAllConnections`).
+   - drain 상한이 지나도 진행 중 작업의 lease를 풀지 않는다. 남은 전송을 끊고 결과를 기록하지 않으며, 다음 `claim`의 lease 만료 회수가 이어받는다(중복 발송 가능, RQ-013). 이 동작은 이전부터 같았고 이제 테스트가 고정한다(`worker.integration-spec.ts`).
+   - `stop_grace_period`는 drain 상한 + 10초 이상이어야 한다. 기본값은 lease 120초, drain 상한 110초, `stop_grace_period` 150초이므로 충족한다(여유 40초).
+   - drain 상한은 SMTP 시간제한(연결·greeting·소켓, 기본 10·10·30초)의 최장값과 HTTP `requestTimeout` 30초 중 긴 쪽보다 길어야 한다. 한 건 전체 마감(`totalMs`, 기본 90초)은 기동 검증이 `totalMs + 10초 ≤ lease`로 강제하므로 `totalMs ≤ lease − 10초`, 곧 drain 상한 이하다. 연결·greeting·소켓은 `totalMs` 안에 있다. HTTP 30초는 lease가 40초 이상이면 drain 상한 안에 들어간다. 그보다 짧은 lease에서는 HTTP 닫기가 drain 상한을 넘을 수 있지만 둘은 병행하므로 `stop_grace_period`를 넘기는 쪽은 더 긴 하나뿐이다. 이 관계는 기재만 하고, `stop_grace_period`를 검사하는 코드는 없다(`docs/operations/deployment.md`).
+   - 종료 중 SIGKILL(`stop_grace_period` 초과 포함)은 중복 발송 1회를 만들 수 있다. at-least-once 범위다(구현 중 확정 5).
+   - 검증: `test/worker/worker.integration-spec.ts`, `test/http/lifecycle.integration-spec.ts`. 시간제한은 테스트에서 줄여 확인했고 컨테이너 SIGTERM은 이 변경 뒤 다시 실행하지 않았다.
+7. **lease 회수 경로 정정(구현 중 확정 5, 2026-11-23 코드 리뷰).** 구현 중 확정 5의 "회수는 주기 sweep(기본 60초)에서 한다"는 부정확하다. 회수는 두 곳에서 일어난다.
+   - `claim()` 앞단의 `recoverExpiredLeases`(`src/queue/claim.ts`). 점유 폴링마다 실행하므로 폴링 간격(기본 1초)으로 돈다.
+   - 유지보수 루프(`MAILO_MAINTENANCE_INTERVAL_SECONDS`, 기본 60초). 점유가 멈춘 상태(차단기 `open` 등)에서도 회수가 돌게 한다.
+   - 관찰한 100초와 95초의 대부분은 `LEASE_EXPIRED` 시도 뒤의 재시도 백오프(첫 재시도 기본 60초 ±20%)이고 회수 지연이 아니다(코드 읽기 결과이며 시점별 로그로 분리해 확인하지 않았다).
 
 ## 검토한 대안
 

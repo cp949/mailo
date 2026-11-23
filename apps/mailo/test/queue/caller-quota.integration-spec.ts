@@ -245,17 +245,21 @@ describe("PostgreSQL 통합: 호출처별 발송 할당(RQ-032)", () => {
     const q = { "caller-a": 2 };
     for (let i = 0; i < 4; i += 1) await createJob(db.pool);
 
-    // ACCOUNT(counted=false): 사용량 0
+    // ACCOUNT(counted=false): 사용량 0. 차단기를 연 계정 단위 장애라서 시도 횟수에 넣지 않는다(ADR-0007 구현 중 확정 8).
     const [account] = await claimWith(q);
     await completeAttempt(
       db.pool,
       { id: account!.id, leaseToken: account!.leaseToken },
       {
         classification: "ACCOUNT",
-        reason: "OTHER",
+        reason: "RATE_LIMIT",
         afterMailFrom: false,
       },
       deps,
+    );
+    await db.pool.query(
+      `UPDATE mail_circuit_breaker SET state = 'closed', open_until = NULL, probe_until = NULL,
+         probe_job_id = NULL, consecutive_failures = 0, wait_seconds = 0, last_reason = NULL`,
     );
     // 내부 오류(stage WORKER): 사용량 0
     await db.pool.query(

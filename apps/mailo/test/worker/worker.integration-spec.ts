@@ -463,7 +463,8 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     startWorker();
     const retry = await waitStatus(first, "RETRY_WAIT");
     expect(retry.attempts).toBe(0);
-    expect(retry.account_trips).toBe(1);
+    // 한도 사유는 작업의 account_trips에 넣지 않는다(ADR-0007 구현 중 확정 8).
+    expect(retry.account_trips).toBe(0);
     expect((await attempts(first))[0]).toMatchObject({
       classification: "ACCOUNT",
       counted: false,
@@ -499,11 +500,11 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     const state = await getBreakerState(pool, { breakerKey: "default" });
     expect(state.lastReason).toBe("AUTH");
     expect(fake.counts.auths).toBe(3);
-    for (const id of ids)
-      expect(await job(id)).toMatchObject({
-        status: "RETRY_WAIT",
-        attempts: 0,
-      });
+    // 차단기를 열기 전의 실패 2건은 작업별 오류로 시도 횟수에 들고, 차단기를 연 3번째 실패는 들지 않는다
+    // (ADR-0007 구현 중 확정 8). 어느 작업이 3번째인지는 점유 순서에 따른다.
+    const jobs = await Promise.all(ids.map((id) => job(id)));
+    for (const j of jobs) expect(j!.status).toBe("RETRY_WAIT");
+    expect(jobs.map((j) => j!.attempts).sort()).toEqual([0, 1, 1]);
 
     const extra = await mailJob();
     await sleep(400);
@@ -669,6 +670,79 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
           l.includes('"drained":true'),
       ),
     ).toBe(true);
+  });
+
+  it("pause 뒤에는 새 작업을 점유하지 않고 진행 중 전송은 계속해 끝낸다 (ADR-0002 결정 12, RQ-025)", async () => {
+    const gate = gatedSender();
+    const inFlight = await mailJob();
+    const worker = startWorker({ drainTimeoutMs: 5_000 }, gate.sender);
+    await waitFor(async () => gate.state.inFlight === 1);
+
+    await worker.pause();
+    const late = await mailJob();
+    await sleep(300);
+    expect((await job(late))!.status).toBe("PENDING");
+    expect(gate.state.calls).toHaveLength(1);
+    // pause는 진행 중 전송을 기다리지 않고 끊지도 않는다.
+    expect((await job(inFlight))!.status).toBe("SENDING");
+
+    gate.releaseAll();
+    await waitStatus(inFlight, "SENT");
+    await worker.stop();
+    expect((await job(late))!.status).toBe("PENDING");
+    expect(logs.some((l) => l.includes('"event":"worker_paused"'))).toBe(true);
+  });
+
+  it("pause 뒤 stop은 진행 중 전송이 끝난 뒤에 resolve한다", async () => {
+    const gate = gatedSender();
+    const inFlight = await mailJob();
+    const worker = startWorker({ drainTimeoutMs: 5_000 }, gate.sender);
+    await waitFor(async () => gate.state.inFlight === 1);
+
+    await worker.pause();
+    let stopped = false;
+    const stopping = worker.stop().then(() => {
+      stopped = true;
+    });
+    await sleep(300);
+    expect(stopped).toBe(false);
+
+    gate.releaseAll();
+    await stopping;
+    expect((await job(inFlight))!.status).toBe("SENT");
+    expect(
+      logs.some(
+        (l) =>
+          l.includes('"event":"worker_stopped"') &&
+          l.includes('"drained":true'),
+      ),
+    ).toBe(true);
+  });
+
+  it("drain 상한은 pause 시점부터 센다: HTTP 닫기에 시간이 걸려도 stop은 남은 시간만 기다린다", async () => {
+    const gate = gatedSender();
+    const id = await mailJob();
+    const worker = startWorker({ drainTimeoutMs: 300 }, gate.sender);
+    await waitFor(async () => gate.state.inFlight === 1);
+
+    await worker.pause();
+    await sleep(500); // 종료 신호 뒤 HTTP 서버 닫기가 걸리는 시간을 흉내 낸다.
+    const started = Date.now();
+    await worker.stop();
+
+    expect(Date.now() - started).toBeLessThan(250);
+    expect(logs.some((l) => l.includes('"event":"drain_timeout"'))).toBe(true);
+    // lease를 풀지 않는다. 다음 claim이 lease 만료로 회수한다.
+    const { rows } = await pool.query(
+      `SELECT status, lease_token IS NOT NULL AS leased, lease_until > now() AS lease_alive
+         FROM mail_jobs WHERE id = $1`,
+      [id],
+    );
+    expect(rows[0]).toEqual({
+      status: "SENDING",
+      leased: true,
+      lease_alive: true,
+    });
   });
 
   it("종료 대기 시간이 지나면 포기하고 결과를 기록하지 않아 lease 복구가 이어받는다", async () => {
