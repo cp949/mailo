@@ -1,6 +1,6 @@
 {
   "name": "@cp949/mailo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Gmail·Google Workspace SMTP 비동기 발송 서비스",
   "private": true,
   "type": "module",
