@@ -3,6 +3,7 @@
 # read_only 컨테이너로 Mailo를 띄우고 메일 N통을 보낸 뒤 `GET /metrics`를 호출한다.
 # 확인: (1) 컨테이너 루트가 읽기 전용 (2) 읽기 토큰 200·text/plain 0.0.4, 관리 토큰 403, 무토큰 401
 #       (3) 보낸 통수가 mailo_attempts_total{result="sent"}·mailo_jobs_finished_total{status="sent"}에 반영
+#       (3a) 아직 일어나지 않은 lease 회수·실패 종결 시리즈가 0으로 이미 있고 process_start_time_seconds가 스크레이프마다 같다
 #       (4) 전역 gauge(큐·차단기·감사)가 나오고 collect_ok가 모두 1 (5) 토큰·API 키·메일 주소가 응답에 없다
 #       (6) promtool check metrics가 응답을 받아들인다(PROMTOOL_IMAGE 이미지가 있거나 받을 수 있을 때. 없으면 건너뛴다).
 # 사용: scripts/container/verify-metrics.sh [메일 수, 기본 5]
@@ -56,6 +57,10 @@ ctype=$(grep -i '^content-type:' "$WORK/headers.txt" | tr -d '\r' | tr 'A-Z' 'a-
 metric() { grep -E "^$1 " "$WORK/metrics.txt" | awk '{print $2}'; }
 sent_attempts=$(metric 'mailo_attempts_total\{caller_id="alpha",account_id="default",result="sent"\}')
 sent_finished=$(metric 'mailo_jobs_finished_total\{caller_id="alpha",account_id="default",status="sent"\}')
+lease_zero=$(metric 'mailo_lease_recovered_total\{account_id="default"\}')
+failed_zero=$(metric 'mailo_jobs_finished_total\{caller_id="alpha",account_id="default",status="failed"\}')
+start1=$(metric 'process_start_time_seconds')
+start2=$(curl -sS -H "Authorization: Bearer $READ_TOKEN" "$URL" | awk '/^process_start_time_seconds /{print $2}')
 due=$(metric 'mailo_queue_jobs\{account_id="default",state="due"\}')
 breaker_closed=$(metric 'mailo_breaker_state\{account_id="default",state="closed"\}')
 audit_rows=$(metric 'mailo_ops_audit_rows')
@@ -83,6 +88,7 @@ echo "ReadonlyRootfs=$readonly_rootfs"
 echo "상태 코드: 읽기 토큰 $code_read, 관리 토큰 $code_admin, 무토큰 $code_none, 호출처 키 $code_key"
 echo "$ctype"
 echo "시리즈 $series개, attempts(sent)=$sent_attempts, finished(sent)=$sent_finished, due=$due, breaker closed=$breaker_closed, 감사 행=$audit_rows, collect_ok가 1이 아닌 그룹=$collect_bad"
+echo "미리 낸 0 시리즈: lease_recovered=$lease_zero, finished(failed)=$failed_zero, process_start_time 두 번 같음=$([ -n "$start1" ] && [ "$start1" = "$start2" ] && echo 예 || echo 아니오)"
 echo "비밀 값 노출 $leaks건"
 echo "promtool check metrics: $promtool"
 [ "$promtool" = "지적 있음" ] && echo "$promtool_out" | sed 's/^/  /'
@@ -90,6 +96,7 @@ ok=1
 [ "$readonly_rootfs" = true ] && [ "$code_read" = 200 ] && [ "$code_admin" = 403 ] && [ "$code_none" = 401 ] && [ "$code_key" = 401 ] \
   && [ "$ctype" = "content-type: text/plain; version=0.0.4; charset=utf-8" ] \
   && [ "$sent_attempts" = "$N" ] && [ "$sent_finished" = "$N" ] && [ "$due" = 0 ] && [ "$breaker_closed" = 1 ] && [ "$audit_rows" = 0 ] \
+  && [ "$lease_zero" = 0 ] && [ "$failed_zero" = 0 ] && [ -n "$start1" ] && [ "$start1" = "$start2" ] \
   && [ "$collect_bad" = 0 ] && [ "$leaks" = 0 ] && [ "$promtool" != "지적 있음" ] || ok=0
 if [ "$ok" = 1 ]; then echo "결과: read_only 컨테이너에서 /metrics가 기대대로 응답한다"; else echo "결과: 기대와 다른 항목이 있다(위 수치 확인)"; fi
 [ "$ok" = 1 ]

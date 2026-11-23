@@ -15,6 +15,14 @@ function samplesOf(
     .map((s) => ({ labels: s.labels, value: s.value }));
 }
 
+/** 증가한 시리즈만. 미리 낸 0 시리즈는 뺀다. */
+function incremented(
+  metrics: ReturnType<typeof createMetrics>,
+  name: string,
+): ReturnType<typeof samplesOf> {
+  return samplesOf(metrics, name).filter((s) => s.value > 0);
+}
+
 describe("counter 저장소(RQ-049, ADR-0012 결정 6)", () => {
   it("같은 라벨 조합의 증가를 합친다", () => {
     const metrics = createMetrics({ callerIds: ["alpha"] });
@@ -45,7 +53,7 @@ describe("counter 저장소(RQ-049, ADR-0012 결정 6)", () => {
     metrics.inc("mailo_claimed_jobs_total", { caller_id: 'bad"id\n' });
     metrics.inc("mailo_claimed_jobs_total", { caller_id: "" });
 
-    expect(samplesOf(metrics, "mailo_claimed_jobs_total")).toEqual([
+    expect(incremented(metrics, "mailo_claimed_jobs_total")).toEqual([
       {
         labels: { caller_id: UNREGISTERED_CALLER, account_id: "default" },
         value: 4,
@@ -80,7 +88,7 @@ describe("counter 저장소(RQ-049, ADR-0012 결정 6)", () => {
 
     metrics.inc("mailo_claim_polls_total", { result: "weird" });
 
-    expect(samplesOf(metrics, "mailo_claim_polls_total")).toEqual([]);
+    expect(incremented(metrics, "mailo_claim_polls_total")).toEqual([]);
     expect(samplesOf(metrics, "mailo_metrics_dropped_samples_total")).toEqual([
       { labels: {}, value: 1 },
     ]);
@@ -92,7 +100,7 @@ describe("counter 저장소(RQ-049, ADR-0012 결정 6)", () => {
     metrics.inc("mailo_claim_polls_total", { result: "claimed", extra: "x" });
     metrics.inc("mailo_claim_polls_total", {});
 
-    expect(samplesOf(metrics, "mailo_claim_polls_total")).toEqual([]);
+    expect(incremented(metrics, "mailo_claim_polls_total")).toEqual([]);
     expect(
       samplesOf(metrics, "mailo_metrics_dropped_samples_total")[0]?.value,
     ).toBe(2);
@@ -106,7 +114,7 @@ describe("counter 저장소(RQ-049, ADR-0012 결정 6)", () => {
     metrics.inc("mailo_lease_recovered_total", {}, Number.NaN);
     metrics.inc("mailo_lease_recovered_total", {}, 1.5);
 
-    expect(samplesOf(metrics, "mailo_lease_recovered_total")).toEqual([]);
+    expect(incremented(metrics, "mailo_lease_recovered_total")).toEqual([]);
   });
 
   it("dropped_samples는 처음부터 0으로 나온다", () => {
@@ -168,11 +176,115 @@ describe("counter 저장소(RQ-049, ADR-0012 결정 6)", () => {
       "mailo_send_paused_all",
     );
 
-    expect(metrics.counterSamples().map((s) => s.name)).toEqual([
-      "mailo_metrics_dropped_samples_total",
+    expect(metrics.counterSamples().filter((s) => s.value > 0)).toEqual([
+      { name: "mailo_metrics_dropped_samples_total", labels: {}, value: 1 },
     ]);
     expect(
       samplesOf(metrics, "mailo_metrics_dropped_samples_total")[0]?.value,
     ).toBe(1);
+  });
+
+  describe("0으로 미리 내는 시리즈(Prometheus increase()가 첫 이벤트를 놓치지 않게 한다)", () => {
+    const names = (m: ReturnType<typeof createMetrics>) =>
+      new Set(m.counterSamples().map((s) => s.name));
+
+    it("라벨 값이 닫힌 열거인 counter는 시작할 때 0으로 나온다(claim_polls 3개, lease_recovered)", () => {
+      const metrics = createMetrics({ callerIds: [] });
+
+      expect(
+        samplesOf(metrics, "mailo_claim_polls_total")
+          .map((s) => [s.labels["result"], s.value])
+          .sort(),
+      ).toEqual([
+        ["claimed", 0],
+        ["empty", 0],
+        ["error", 0],
+      ]);
+      expect(samplesOf(metrics, "mailo_lease_recovered_total")).toEqual([
+        { labels: { account_id: "default" }, value: 0 },
+      ]);
+    });
+
+    it("레지스트리 호출처마다 attempts·finished·claimed·cursor_gap 시리즈를 0으로 낸다", () => {
+      const metrics = createMetrics({ callerIds: ["alpha", "beta"] });
+
+      const count = (name: string, caller: string) =>
+        samplesOf(metrics, name).filter(
+          (s) => s.labels["caller_id"] === caller && s.value === 0,
+        ).length;
+      for (const caller of ["alpha", "beta"]) {
+        expect(count("mailo_attempts_total", caller)).toBe(5);
+        expect(count("mailo_jobs_finished_total", caller)).toBe(4);
+        expect(count("mailo_claimed_jobs_total", caller)).toBe(1);
+        expect(count("mailo_event_cursor_gap_total", caller)).toBe(1);
+      }
+    });
+
+    it("호출처가 없으면 caller_id 시리즈를 만들지 않고 unregistered도 미리 내지 않는다", () => {
+      const metrics = createMetrics({ callerIds: [] });
+
+      expect(samplesOf(metrics, "mailo_attempts_total")).toEqual([]);
+      expect(samplesOf(metrics, "mailo_jobs_finished_total")).toEqual([]);
+      const seeded = createMetrics({ callerIds: ["alpha"] });
+      expect(
+        seeded
+          .counterSamples()
+          .some((s) => s.labels["caller_id"] === UNREGISTERED_CALLER),
+      ).toBe(false);
+    });
+
+    it("조합이 불가능하거나 알림이 쓰지 않는 시리즈(attempt_errors, file_channel_files)는 미리 내지 않는다", () => {
+      const metrics = createMetrics({ callerIds: ["alpha"] });
+
+      expect(names(metrics).has("mailo_attempt_errors_total")).toBe(false);
+      expect(names(metrics).has("mailo_file_channel_files_total")).toBe(false);
+    });
+
+    it("미리 낸 시리즈에 inc하면 0에서 올라가고 시리즈가 늘지 않는다", () => {
+      const metrics = createMetrics({ callerIds: ["alpha"] });
+      const before = metrics.counterSamples().length;
+
+      metrics.inc("mailo_lease_recovered_total");
+      metrics.inc("mailo_jobs_finished_total", {
+        caller_id: "alpha",
+        status: "failed",
+      });
+
+      expect(metrics.counterSamples()).toHaveLength(before);
+      expect(samplesOf(metrics, "mailo_lease_recovered_total")[0]?.value).toBe(
+        1,
+      );
+      expect(
+        samplesOf(metrics, "mailo_jobs_finished_total").find(
+          (s) => s.labels["status"] === "failed",
+        )?.value,
+      ).toBe(1);
+    });
+
+    it("미리 내기는 시리즈 상한을 넘지 않고 dropped_samples를 올리지 않는다", () => {
+      const ids = Array.from({ length: 5 }, (_, i) => `c${i}`);
+      const onSeriesLimit = jest.fn<(name: string) => void>();
+      const metrics = createMetrics({
+        callerIds: ids,
+        maxSeriesPerMetric: 3,
+        onSeriesLimit,
+      });
+
+      expect(samplesOf(metrics, "mailo_claimed_jobs_total")).toHaveLength(3);
+      expect(
+        samplesOf(metrics, "mailo_metrics_dropped_samples_total")[0]?.value,
+      ).toBe(0);
+      expect(onSeriesLimit).not.toHaveBeenCalled();
+    });
+
+    it("호출처 400개에서도 지표당 시리즈가 상한(2000) 안이다(attempts는 호출처당 5개)", () => {
+      const ids = Array.from({ length: 400 }, (_, i) => `c${i}`);
+      const metrics = createMetrics({ callerIds: ids });
+
+      expect(samplesOf(metrics, "mailo_attempts_total")).toHaveLength(2000);
+      expect(
+        samplesOf(metrics, "mailo_metrics_dropped_samples_total")[0]?.value,
+      ).toBe(0);
+    });
   });
 });

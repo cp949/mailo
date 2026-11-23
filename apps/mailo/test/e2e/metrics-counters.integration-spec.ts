@@ -30,6 +30,7 @@ import { fileRequest } from "../support/file-channel.js";
 import {
   duplicateSeries,
   parseMetrics,
+  sumOf,
   valueOf,
   type ParsedSample,
 } from "../support/metrics-text.js";
@@ -111,7 +112,7 @@ describe("e2e: /metrics 인스턴스 counter (RQ-049, ADR-0012 결정 4·7)", ()
     const started = Date.now();
     for (;;) {
       const samples = await scrape();
-      if ((valueOf(samples, name, labels) ?? 0) >= atLeast) return samples;
+      if (sumOf(samples, name, labels) >= atLeast) return samples;
       if (Date.now() - started > timeoutMs)
         throw new Error(
           `지표가 오르지 않았다: ${name} ${JSON.stringify(labels)}`,
@@ -237,7 +238,9 @@ describe("e2e: /metrics 인스턴스 counter (RQ-049, ADR-0012 결정 4·7)", ()
       }),
     ).toBe(1);
     expect(
-      samples.filter((s) => s.name === "mailo_jobs_finished_total"),
+      samples.filter(
+        (s) => s.name === "mailo_jobs_finished_total" && s.value > 0,
+      ),
     ).toEqual([]);
   });
 
@@ -252,7 +255,10 @@ describe("e2e: /metrics 인스턴스 counter (RQ-049, ADR-0012 결정 4·7)", ()
     });
 
     expect(
-      valueOf(samples, "mailo_attempts_total", { result: "permanent" }),
+      valueOf(samples, "mailo_attempts_total", {
+        caller_id: "alpha",
+        result: "permanent",
+      }),
     ).toBe(1);
     expect(
       valueOf(samples, "mailo_jobs_finished_total", {
@@ -283,7 +289,10 @@ describe("e2e: /metrics 인스턴스 counter (RQ-049, ADR-0012 결정 4·7)", ()
     });
 
     expect(
-      valueOf(samples, "mailo_attempts_total", { result: "account" }),
+      valueOf(samples, "mailo_attempts_total", {
+        caller_id: "alpha",
+        result: "account",
+      }),
     ).toBe(1);
     expect(
       valueOf(samples, "mailo_attempt_errors_total", {
@@ -314,7 +323,10 @@ describe("e2e: /metrics 인스턴스 counter (RQ-049, ADR-0012 결정 4·7)", ()
     });
 
     expect(
-      valueOf(samples, "mailo_attempts_total", { result: "internal" }),
+      valueOf(samples, "mailo_attempts_total", {
+        caller_id: "alpha",
+        result: "internal",
+      }),
     ).toBe(1);
     expect(
       valueOf(samples, "mailo_attempt_errors_total", {
@@ -359,7 +371,9 @@ describe("e2e: /metrics 인스턴스 counter (RQ-049, ADR-0012 결정 4·7)", ()
     ).toBe(1);
     // RETRY_WAIT로 돌아간 회수는 종결이 아니다.
     expect(
-      samples.filter((s) => s.name === "mailo_jobs_finished_total"),
+      samples.filter(
+        (s) => s.name === "mailo_jobs_finished_total" && s.value > 0,
+      ),
     ).toEqual([]);
   });
 

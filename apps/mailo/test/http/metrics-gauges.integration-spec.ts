@@ -339,7 +339,7 @@ describe("REST 통합: /metrics 전역 gauge(RQ-049, ADR-0012 결정 4·5)", () 
       ).toEqual([]);
     });
 
-    it("사용량은 한도에서 멈춘다(포화)", async () => {
+    it("시도 쪽 사용량은 한도에서 멈춘다(점유 중이 없을 때 used = limit)", async () => {
       for (let i = 0; i < 3; i++) {
         await createJob(db.pool, { callerId: "alpha" });
         const [job] = await claim(db.pool, {
@@ -362,6 +362,44 @@ describe("REST 통합: /metrics 전역 gauge(RQ-049, ADR-0012 결정 4·5)", () 
       expect(
         valueOf(samples, "mailo_caller_quota_used", { caller_id: "alpha" }),
       ).toBe(2);
+    });
+
+    it("사용량은 점유 중 수를 더하므로 한도를 넘을 수 있고 비율이 1을 넘는다", async () => {
+      // 시도 2건(한도 2에서 멈춘 값)에 점유 중 1건이 더해져 used = 3 > limit = 2다(claim의 사용량 문장과 같다).
+      for (let i = 0; i < 2; i++) {
+        await createJob(db.pool, { callerId: "alpha" });
+        const [job] = await claim(db.pool, {
+          leaseSeconds: 120,
+          limit: 1,
+          deps,
+        });
+        await completeAttempt(
+          db.pool,
+          { id: job!.id, leaseToken: job!.leaseToken },
+          { classification: "SENT" },
+          deps,
+        );
+      }
+      const inflight = await createJob(db.pool, { callerId: "alpha" });
+      await db.pool.query(
+        `UPDATE mail_jobs SET status = 'SENDING', leased_at = now(), lease_token = $2,
+                lease_until = now() + interval '2 minutes' WHERE id = $1`,
+        [inflight, randomUUID()],
+      );
+
+      const samples = await withApp(scrape, {
+        callerFields: { alpha: { sendQuota24h: 2 } },
+      });
+
+      const used = valueOf(samples, "mailo_caller_quota_used", {
+        caller_id: "alpha",
+      })!;
+      const limit = valueOf(samples, "mailo_caller_quota_limit", {
+        caller_id: "alpha",
+      })!;
+      expect(limit).toBe(2);
+      expect(used).toBe(3);
+      expect(used / limit).toBeGreaterThan(1);
     });
 
     it("최신 이벤트의 경과 초는 이벤트가 있는 호출처에만 있다", async () => {

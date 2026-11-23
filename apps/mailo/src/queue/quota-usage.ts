@@ -21,7 +21,7 @@ export const CALLER_QUOTA_USAGE_SQL = `SELECT q.caller_id,
 
 /**
  * 호출처별 할당 사용량을 읽는다. advisory lock을 잡지 않고 쓰지 않는다. 지표용이다(ADR-0012 결정 5).
- * 값은 호출처의 한도에서 멈춘다. 할당이 없는 호출처는 `quotas`에 넣지 않는다. 호출처가 없으면 쿼리하지 않는다.
+ * 시도 쪽 값은 한도에서 멈추지만 점유 중 수를 더하므로 사용량이 한도를 넘을 수 있다. 할당이 없는 호출처는 `quotas`에 넣지 않는다. 호출처가 없으면 쿼리하지 않는다.
  */
 export async function getCallerQuotaUsage(
   db: Queryable,

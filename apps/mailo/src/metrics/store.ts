@@ -151,5 +151,31 @@ export function createMetrics(options: CreateMetricsOptions): MetricsRegistry {
     return samples;
   }
 
+  /** `seed` 지표를 라벨 조합마다 0으로 만든다. 상한에 닿으면 멈추고 `dropped_samples`는 올리지 않는다. */
+  function seedZeroSeries(): void {
+    for (const def of METRICS) {
+      if (def.seed !== true) continue;
+      let combos: Array<Record<string, string>> = [{}];
+      for (const [name, spec] of Object.entries(def.labels)) {
+        const values =
+          spec.kind === "caller"
+            ? [...callerIds].filter((id) => CALLER_ID.test(id))
+            : spec.kind === "account"
+              ? [...accountIds]
+              : [...spec.values];
+        combos = combos.flatMap((combo) =>
+          values.map((value) => ({ ...combo, [name]: value })),
+        );
+      }
+      const store = new Map<string, Series>();
+      for (const labels of combos) {
+        if (store.size >= maxSeries) break;
+        store.set(JSON.stringify(Object.values(labels)), { labels, value: 0 });
+      }
+      stores.set(def.name, store);
+    }
+  }
+  seedZeroSeries();
+
   return { inc, counterSamples };
 }

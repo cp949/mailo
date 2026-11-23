@@ -65,6 +65,15 @@ export function valueOf(
   return found[0]?.value;
 }
 
+/** 이름과 라벨(부분 일치)에 맞는 시리즈 값의 합. 시리즈가 없으면 0이다. */
+export function sumOf(
+  samples: readonly ParsedSample[],
+  name: string,
+  labels: Record<string, string> = {},
+): number {
+  return findSamples(samples, name, labels).reduce((n, s) => n + s.value, 0);
+}
+
 /** 같은 이름·라벨의 시리즈가 둘 이상인 키 목록(중복 검사). */
 export function duplicateSeries(samples: readonly ParsedSample[]): string[] {
   const seen = new Set<string>();

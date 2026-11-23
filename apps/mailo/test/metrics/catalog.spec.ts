@@ -113,6 +113,15 @@ describe("지표 카탈로그 규칙(RQ-049, ADR-0012 결정 3·6)", () => {
       }
   });
 
+  it("mailo_caller_quota_used의 HELP는 값이 한도를 넘을 수 있다고 밝히고 한도에서 멈춘다고 쓰지 않는다(RQ-051)", () => {
+    const help = METRICS.find(
+      (m) => m.name === "mailo_caller_quota_used",
+    )!.help;
+
+    expect(help).toContain("한도를 넘을 수 있");
+    expect(help).not.toContain("한도에서 멈춘다");
+  });
+
   it("카탈로그 밖의 라벨 이름을 등록하면 던진다(기동 때 검사)", () => {
     expect(() => assertCatalog(METRICS)).not.toThrow();
     expect(() =>

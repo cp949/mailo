@@ -51,6 +51,11 @@ export interface MetricDef {
   readonly help: string;
   /** 라벨 이름 → 값 규칙. 선언 순서가 출력 순서다. */
   readonly labels: Readonly<Record<string, LabelSpec>>;
+  /**
+   * true이면 counter를 시작할 때 라벨 조합마다 0으로 미리 낸다(호출처는 레지스트리 ID만). 처음 증가하는 순간에 시리즈가 처음 생기면
+   * Prometheus `increase()`가 그 첫 이벤트를 놓치기 때문이다. 알림 규칙이 쓰는 counter에만 켠다(ADR-0012 구현 중 확정 15).
+   */
+  readonly seed?: true;
 }
 
 const caller = { kind: "caller" } as const;
@@ -153,7 +158,7 @@ const CATALOG = [
     name: "mailo_caller_quota_used",
     type: "gauge",
     scope: "global",
-    help: "전역. 최근 24시간 시도 수와 점유 중 수의 합. 값은 한도에서 멈춘다. 할당을 설정한 호출처만.",
+    help: "전역. 최근 24시간 시도 수(한도에서 멈춘 값)와 점유 중 수의 합. 점유 중 수를 더하므로 한도를 넘을 수 있고 limit 대비 비율이 1을 넘을 수 있다. 할당을 설정한 호출처만.",
     labels: { caller_id: caller },
   },
   {
@@ -190,6 +195,7 @@ const CATALOG = [
     type: "counter",
     scope: "instance",
     help: "인스턴스. 이 프로세스가 기록한 시도 결과 수. LEASE_LOST로 버린 결과는 세지 않는다.",
+    seed: true,
     labels: {
       caller_id: caller,
       account_id: account,
@@ -236,6 +242,7 @@ const CATALOG = [
     type: "counter",
     scope: "instance",
     help: "인스턴스. 이 프로세스가 커밋한 종결 전이 수(결과 기록, 만료 sweep, lease 복구, 취소).",
+    seed: true,
     labels: {
       caller_id: caller,
       account_id: account,
@@ -247,6 +254,7 @@ const CATALOG = [
     type: "counter",
     scope: "instance",
     help: "인스턴스. 점유 루프의 claim 호출 수.",
+    seed: true,
     labels: { result: oneOf(["claimed", "empty", "error"]) },
   },
   {
@@ -254,6 +262,7 @@ const CATALOG = [
     type: "counter",
     scope: "instance",
     help: "인스턴스. 이 프로세스가 점유한 작업 수.",
+    seed: true,
     labels: { caller_id: caller, account_id: account },
   },
   {
@@ -261,6 +270,7 @@ const CATALOG = [
     type: "counter",
     scope: "instance",
     help: "인스턴스. 이 프로세스가 lease 만료로 회수한 작업 수. 중복 발송 가능성의 신호다.",
+    seed: true,
     labels: { account_id: account },
   },
   {
@@ -284,6 +294,7 @@ const CATALOG = [
     type: "counter",
     scope: "instance",
     help: "인스턴스. 이벤트 피드 cursor 공백을 감지한 요청 수.",
+    seed: true,
     labels: { caller_id: caller },
   },
   {

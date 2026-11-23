@@ -14,7 +14,8 @@ function metricsFor() {
   const series = (name: string) =>
     metrics
       .counterSamples()
-      .filter((s) => s.name === name)
+      // 미리 낸 0 시리즈(ADR-0012 구현 중 확정 15)는 뺀다. 이 시험은 증가한 시리즈만 본다.
+      .filter((s) => s.name === name && s.value > 0)
       .map((s) => [s.labels, s.value] as const);
   return { metrics, series };
 }
