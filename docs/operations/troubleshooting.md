@@ -283,7 +283,7 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 | `records_deleted` | 보존 기간이 지난 작업 행(시도·이벤트 포함)과 거부 기록을 삭제했다 |
 | `<이름>_failed`(error) | 위 작업의 실패. `error`에 오류 이름 |
 
-그 밖의 Worker 로그: `worker_started`, `worker_paused`(`inFlight`, 종료 신호 직후 새 점유 중지), `worker_stopping`, `worker_stopped`(`drained`), `job_completed`(`jobId`, `status`, `classification`, `probe`), `poll_loop_crashed`, `maintenance_loop_crashed`.
+그 밖의 Worker 로그: `smtp_plaintext_enabled`(warn, `auth`, `message`, 기동 때 한 번. `MAILO_SMTP_SECURITY=none`이라 인증 정보와 본문이 평문으로 나간다. `deployment.md` "평문 SMTP 모드"), `worker_started`, `worker_paused`(`inFlight`, 종료 신호 직후 새 점유 중지), `worker_stopping`, `worker_stopped`(`drained`), `job_completed`(`jobId`, `status`, `classification`, `probe`), `poll_loop_crashed`, `maintenance_loop_crashed`.
 
 ## 검증하지 않은 것
 

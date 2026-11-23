@@ -114,6 +114,51 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
     );
   });
 
+  it("MAILO_SMTP_SECURITY=none은 평문 연결을 고르고 포트 기본값은 587이며 명시한 포트를 우선한다(RQ-005)", () => {
+    expect(loadConfig(env({ MAILO_SMTP_SECURITY: "none" })).smtp).toMatchObject(
+      { port: 587, security: "none" },
+    );
+    expect(
+      loadConfig(
+        env({ MAILO_SMTP_SECURITY: " none ", MAILO_SMTP_PORT: "1025" }),
+      ).smtp,
+    ).toMatchObject({ port: 1025, security: "none" });
+  });
+
+  it("MAILO_SMTP_SECURITY=none은 NODE_ENV와 무관하게 받는다. 연결 보안 방식은 운영자 설정이다(RQ-005)", () => {
+    // production 검사에 걸리는 공개 샘플 DB 비밀번호·키는 임의 값으로 바꾼다.
+    const production = loadConfig(
+      env({
+        NODE_ENV: "production",
+        MAILO_SMTP_SECURITY: "none",
+        MAILO_DATABASE_URL:
+          "postgres://mailo:production-secret-1@localhost:5432/mailo",
+        MAILO_DB_ENCRYPTION_KEY_V1: randomBytes(32).toString("base64"),
+        MAILO_FINGERPRINT_KEY_V1: randomBytes(32).toString("base64"),
+      }),
+    );
+    expect(production.env).toBe("production");
+    expect(production.smtp.security).toBe("none");
+    for (const nodeEnv of ["development", "test"]) {
+      expect(
+        loadConfig(env({ NODE_ENV: nodeEnv, MAILO_SMTP_SECURITY: "none" })).smtp
+          .security,
+      ).toBe("none");
+    }
+  });
+
+  it.each(["NONE", "plaintext", "off", "starttls,none"])(
+    "MAILO_SMTP_SECURITY의 알 수 없는 값 %s는 기동을 거부하고 오류에 허용 값 목록만 있다(RQ-005)",
+    (value) => {
+      const message = issuesOf({ MAILO_SMTP_SECURITY: value });
+      expect(message).toContain(
+        "MAILO_SMTP_SECURITY은 starttls, tls, none 중 하나여야 한다",
+      );
+      // 오류에는 입력 값을 싣지 않는다(RQ-027).
+      expect(message).not.toContain(value);
+    },
+  );
+
   it("값 변경이 반영된다", () => {
     const config = loadConfig(
       env({

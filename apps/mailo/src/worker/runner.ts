@@ -12,6 +12,7 @@ import {
   DEFAULT_LEASE_MARGIN_MS,
   type MailSender,
   type SmtpSenderConfig,
+  type TlsMode,
 } from "../smtp/index.js";
 import type { Clock } from "./clock.js";
 import { workerOptionsFromConfig, type WorkerOptions } from "./options.js";
@@ -33,6 +34,17 @@ export interface WorkerRunnerDeps {
   /** 점유 루프가 예외로 끝났을 때 부른다(`WorkerDeps.onFatal`). */
   onFatal?: WorkerDeps["onFatal"];
 }
+
+/** `MAILO_SMTP_SECURITY` 값과 발송기 연결 방식의 대응(RQ-005). */
+const TLS_MODE: Record<AppConfig["smtp"]["security"], TlsMode> = {
+  starttls: "STARTTLS",
+  tls: "IMPLICIT",
+  none: "NONE",
+};
+
+/** 평문 모드 경고의 고정 문구. 설정 값과 인증 정보는 넣지 않는다(RQ-027). */
+const PLAINTEXT_WARNING =
+  "평문 SMTP 모드(MAILO_SMTP_SECURITY=none)다. SMTP 인증 정보와 본문이 암호화 없이 전송된다. 사용 판단은 운영자 책임이다";
 
 /** 설정 값을 Worker 옵션으로 바꾼다(`workerOptionsFromConfig`). */
 export function toWorkerOptions(
@@ -72,7 +84,7 @@ export function toSenderConfig(
   return {
     host: smtp.host,
     port: smtp.port,
-    tlsMode: smtp.security === "tls" ? "IMPLICIT" : "STARTTLS",
+    tlsMode: TLS_MODE[smtp.security],
     ...(smtp.auth && {
       auth: { user: smtp.auth.user, pass: smtp.auth.password.reveal() },
     }),
@@ -85,6 +97,13 @@ export function toSenderConfig(
 
 export function createWorkerRunner(deps: WorkerRunnerDeps): WorkerHandle {
   const { config } = deps;
+  // 설정으로 발송기를 만들 때만 평문 경고를 남긴다. 주입한 발송기는 이 설정을 쓰지 않는다.
+  // `auth`는 인증 정보가 평문으로 나가는지만 알린다(값은 싣지 않는다, RQ-005·027).
+  if (deps.sender === undefined && config.smtp.security === "none")
+    deps.logger.warn("smtp_plaintext_enabled", {
+      auth: config.smtp.auth !== null,
+      message: PLAINTEXT_WARNING,
+    });
   const sender =
     deps.sender ?? createSmtpSender(toSenderConfig(config, deps.trustedCa));
   return createWorker(

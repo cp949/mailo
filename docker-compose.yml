@@ -1,5 +1,7 @@
 # 상시 서비스는 Mailo와 PostgreSQL 둘뿐이다(RQ-029). 브로커와 메일 서버를 추가하지 않는다.
+# 예외: 개발용 Mailpit은 profile mailpit으로만 켜지는 opt-in 서비스다. 기본 기동에 들어가지 않고 운영용이 아니다.
 #   docker compose up -d
+#   docker compose --profile mailpit up -d   # 개발용 Mailpit 함께 기동(deployment.md "개발용 Mailpit")
 # 접속값은 .env(.env.example 복사)에서 읽는다. 시크릿은 이미지에 넣지 않는다(RQ-025).
 
 services:
@@ -25,6 +27,29 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+
+  # 개발용 SMTP 수신 서버(GitHub 이슈 #2). 운영용이 아니다. 받은 메일은 컨테이너 /tmp에만 있고 재시작하면 사라진다.
+  # Mailo는 MAILO_SMTP_SECURITY=none, MAILO_SMTP_HOST=mailpit, MAILO_SMTP_PORT=1025로 보낸다(.env.example).
+  mailpit:
+    # 갱신: docker buildx imagetools inspect axllent/mailpit:<태그>로 index digest를 확인해 태그와 함께 바꾼다.
+    image: axllent/mailpit:v1.34.0@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e
+    profiles: ["mailpit"]
+    environment:
+      # .env.example의 가짜 SMTP 사용자·비밀번호를 그대로 둬도 받도록 평문 AUTH를 아무 값으로나 허용한다.
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      # 웹 UI·API만 공개한다. SMTP 1025는 compose 네트워크 안에서 mailo만 쓴다.
+      - "127.0.0.1:${MAILO_MAILPIT_UI_PORT:-8025}:8025"
+    # 이미지 기본 사용자는 root다. 1024 이상 포트만 쓰므로 nobody로 낮춘다.
+    user: "65534:65534"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
   mailo:
     build:

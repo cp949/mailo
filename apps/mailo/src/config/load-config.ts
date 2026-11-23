@@ -28,8 +28,11 @@ import {
 export interface SmtpConfig {
   host: string;
   port: number;
-  /** `starttls`: 587 + STARTTLS 필수(기본). `tls`: 465 implicit TLS. 평문 연결 선택지는 없다(RQ-005). */
-  security: "starttls" | "tls";
+  /**
+   * `starttls`: 587 + STARTTLS 필수(기본). `tls`: 465 implicit TLS. `none`: TLS 없는 평문 연결.
+   * 연결 보안 방식은 운영자 설정이다. `none`은 NODE_ENV와 무관하게 받고 기동 때 warn 로그를 남긴다(RQ-005).
+   */
+  security: "starttls" | "tls" | "none";
   /** 인증이 없는 릴레이(IP 허용)는 null이다. */
   auth: { user: string; password: Secret<string> } | null;
   /** 요청이 `from`을 생략했을 때 쓰는 발신 주소. */
@@ -280,7 +283,7 @@ function loadSmtp(
   }
   const security = reader.oneOf(
     "MAILO_SMTP_SECURITY",
-    ["starttls", "tls"] as const,
+    ["starttls", "tls", "none"] as const,
     "starttls",
   );
   const port = reader.int("MAILO_SMTP_PORT", security === "tls" ? 465 : 587, {
