@@ -19,7 +19,7 @@ export type CancelResult =
    * 이번 호출이 `CANCELED`로 바꿨다. 이벤트를 썼다.
    * `callerId`는 작업의 호출처다. 호출처 범위가 없는 관리 취소가 지표 라벨을 정하는 데 쓴다(ADR-0012 결정 4).
    */
-  | { kind: "canceled"; jobId: string; callerId: string }
+  | { kind: "canceled"; jobId: string; callerId: string; accountId: string }
   /** 이미 `CANCELED`다. 이벤트와 시각을 새로 쓰지 않았다(멱등). */
   | { kind: "already_canceled"; jobId: string }
   /** `SENDING`이거나 종결 상태다. 아무것도 바꾸지 않았다. */
@@ -96,6 +96,7 @@ async function cancelWithin(
   const updated = await client.query<{
     id: string;
     caller_id: string;
+    account_id: string;
     idempotency_key: string;
     attempts: number;
     recipients: JsonValue;
@@ -104,7 +105,7 @@ async function cancelWithin(
        status = 'CANCELED', failure_reason = $1, finished_at = now(),
        body_ciphertext = NULL, body_nonce = NULL, body_key_version = NULL, body_deleted_at = now()
      WHERE ${where(2)} AND status IN ('PENDING', 'RETRY_WAIT')
-     RETURNING id, caller_id, idempotency_key, attempts, recipients`,
+     RETURNING id, caller_id, account_id, idempotency_key, attempts, recipients`,
     [failureReason, ...values],
   );
   const row = updated.rows[0];
@@ -122,6 +123,7 @@ async function cancelWithin(
       kind: "canceled",
       jobId: row.id,
       callerId: row.caller_id,
+      accountId: row.account_id,
     } as const;
   }
 

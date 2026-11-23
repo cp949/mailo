@@ -111,6 +111,8 @@ export interface WorkerDeps {
 export interface WorkerStatus {
   state: "idle" | "running" | "paused" | "stopping" | "stopped";
   inFlight: number;
+  /** 계정 ID → 진행 중 전송 수. 구성한 계정마다 키가 있다(0 포함). `inFlight`의 계정별 분해다. */
+  inFlightByAccount: Readonly<Record<string, number>>;
   /** 점유 루프가 마지막으로 한 바퀴를 시작한 시각. 큐가 비어 있어도 갱신된다. 아직 안 돌았으면 null. */
   lastPollAt: Date | null;
   /** `lastPollAt`부터 지난 초(단조 시계). */
@@ -484,7 +486,10 @@ export function createWorker(
         return;
       }
       for (const job of claimed)
-        metrics.inc("mailo_claimed_jobs_total", { caller_id: job.callerId });
+        metrics.inc("mailo_claimed_jobs_total", {
+          caller_id: job.callerId,
+          account_id: job.accountId,
+        });
       // 점유한 작업은 종료 신호가 와도 끝까지 처리한다. 이미 SENDING이고 lease가 걸려 있다.
       for (const job of claimed)
         track(processJob(job, claimStartedAt), job.accountId);
@@ -816,6 +821,9 @@ export function createWorker(
     return {
       state,
       inFlight: inFlight.size,
+      inFlightByAccount: Object.fromEntries(
+        accountIds.map((id) => [id, inFlightByAccount.get(id) ?? 0]),
+      ),
       lastPollAt: lastPollWall === undefined ? null : new Date(lastPollWall),
       lastPollAgeSeconds:
         lastPollMono === undefined

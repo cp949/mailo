@@ -7,9 +7,10 @@ import { getFeedLagsForCallers } from "../events/index.js";
 import { describeError } from "../logging/index.js";
 import { getAuditStats, type AuditStats } from "../ops/index.js";
 import {
-  getBreakerState,
+  getAccountQuotaUsage,
+  getAccountQueueDepths,
+  getBreakerStates,
   getCallerQuotaUsage,
-  getQueueDepth,
   readSendControls,
   type BreakerSnapshot,
   type QueueDepth,
@@ -40,11 +41,15 @@ export const COLLECT_TOTAL_TIMEOUT_MS = 5000;
 /** 한 번의 DB 수집 결과. 실패한 그룹의 값은 없다. */
 export interface GlobalSnapshot {
   ok: Record<MetricsGroup, boolean>;
-  queue?: QueueDepth;
-  breaker?: BreakerSnapshot;
+  /** 계정 ID → 큐 깊이(구성한 계정마다). */
+  queue?: Map<string, QueueDepth>;
+  /** 계정 ID → 차단기 상태(구성한 계정마다). */
+  breaker?: Map<string, BreakerSnapshot>;
   controls?: SendControls;
   /** 호출처 ID → 사용량. 할당을 설정한 호출처만 있다. */
   quota?: Map<string, number>;
+  /** 계정 ID → 24시간 사용량. `sendQuota24h`를 설정한 계정만 있다. 호출처 사용량(`quota`)과 같은 그룹에서 읽는다. */
+  accountQuota?: Map<string, number>;
   /** 호출처 ID → 최신 이벤트 경과 초. 이벤트가 없는 호출처는 없다. */
   feed?: Map<string, number>;
   audit?: AuditStats;
@@ -125,24 +130,26 @@ export class MetricsCollector {
         c.sendQuota24h === null ? [] : ([[c.id, c.sendQuota24h]] as const),
       ),
     );
+    const accountQuotas = new Map(
+      this.config.smtpAccounts.flatMap((a) =>
+        a.sendQuota24h === null ? [] : ([[a.id, a.sendQuota24h]] as const),
+      ),
+    );
     const callerIds = this.registry.callers.map((c) => c.id);
-    const breakerKey = this.config.worker.breaker.breakerKey;
+    const accountIds = this.config.smtpAccounts.map((a) => a.id);
 
     const groups: Array<[MetricsGroup, (db: pg.PoolClient) => Promise<void>]> =
       [
         [
           "queue",
           async (db) => {
-            snapshot.queue = await getQueueDepth(
-              db,
-              this.config.smtpAccounts.map((a) => a.id),
-            );
+            snapshot.queue = await getAccountQueueDepths(db, accountIds);
           },
         ],
         [
           "breaker",
           async (db) => {
-            snapshot.breaker = await getBreakerState(db, { breakerKey });
+            snapshot.breaker = await getBreakerStates(db, accountIds);
           },
         ],
         [
@@ -155,6 +162,10 @@ export class MetricsCollector {
           "quota",
           async (db) => {
             snapshot.quota = await getCallerQuotaUsage(db, quotas);
+            snapshot.accountQuota = await getAccountQuotaUsage(
+              db,
+              accountQuotas,
+            );
           },
         ],
         [
@@ -202,6 +213,8 @@ export class MetricsCollector {
     // 실패한 그룹의 값은 응답에서 뺀다. 도중에 채워진 값이 있어도 성공하지 못한 그룹은 쓰지 않는다.
     for (const group of METRICS_GROUPS)
       if (!snapshot.ok[group]) delete snapshot[group];
+    // 계정 사용량은 `quota` 그룹의 일부다. 그룹이 실패하면 도중에 채워진 값도 쓰지 않는다.
+    if (!snapshot.ok.quota) delete snapshot.accountQuota;
     return { snapshot, takenAt: performance.now() };
   }
 

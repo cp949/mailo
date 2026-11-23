@@ -15,6 +15,7 @@ const PREFIXES = {
     "mailo_breaker_",
     "mailo_send_paused",
     "mailo_caller_",
+    "mailo_account_",
     "mailo_ops_audit_",
   ],
   instance: [
@@ -180,5 +181,31 @@ describe("지표 카탈로그 규칙(RQ-049, ADR-0012 결정 3·6)", () => {
       "process_cpu_seconds_total",
     ])
       expect(names).toContain(expected);
+  });
+
+  it("계정 지표(RQ-062, ADR-0013 결정 5)는 계정 라벨 하나만 갖고 전역 gauge 규칙을 따른다", () => {
+    const byName = new Map(METRICS.map((m) => [m.name, m]));
+    for (const name of [
+      "mailo_account_paused",
+      "mailo_account_quota_limit",
+      "mailo_account_quota_used",
+    ]) {
+      const def = byName.get(name)!;
+      expect(def.type).toBe("gauge");
+      expect(def.scope).toBe("global");
+      expect(Object.keys(def.labels)).toEqual(["account_id"]);
+    }
+    expect(byName.get("mailo_send_paused_accounts")).toMatchObject({
+      type: "gauge",
+      scope: "global",
+      labels: {},
+    });
+    expect(byName.get("mailo_worker_in_flight")).toMatchObject({
+      type: "gauge",
+      scope: "instance",
+    });
+    expect(Object.keys(byName.get("mailo_worker_in_flight")!.labels)).toEqual([
+      "account_id",
+    ]);
   });
 });

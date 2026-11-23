@@ -133,6 +133,8 @@ export interface ClaimedJob {
  */
 export interface JobTransition {
   callerId: string;
+  /** 작업의 SMTP 계정 ID. 구성에서 빠진 계정이면 지표가 `unregistered`로 센다(ADR-0013 결정 5). */
+  accountId: string;
   status: JobStatus;
 }
 

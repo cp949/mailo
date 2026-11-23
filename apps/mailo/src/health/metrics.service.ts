@@ -1,6 +1,7 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
 import { CALLER_REGISTRY, type CallerRegistry } from "../callers/index.js";
+import { APP_CONFIG, type AppConfig } from "../config/index.js";
 import { FILE_POLLER, type FilePollerRunner } from "../file-channel/index.js";
 import {
   APP_METRICS,
@@ -25,6 +26,7 @@ export class MetricsService {
   constructor(
     private readonly collector: MetricsCollector,
     @Inject(CALLER_REGISTRY) private readonly registry: CallerRegistry,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly moduleRef: ModuleRef,
     @Optional()
     @Inject(APP_METRICS)
@@ -40,10 +42,11 @@ export class MetricsService {
       .get<FilePollerRunner>(FILE_POLLER, { strict: false })
       .status?.();
     const samples: Sample[] = [
-      ...globalSamples(snapshot, this.registry),
+      ...globalSamples(snapshot, this.registry, this.config.smtpAccounts),
       ...(this.counters?.counterSamples() ?? []),
       ...instanceSamples({
         worker,
+        accountIds: this.config.smtpAccounts.map((a) => a.id),
         filePoller,
         snapshot,
         snapshotAgeSeconds: ageSeconds,

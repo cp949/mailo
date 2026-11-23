@@ -11,6 +11,7 @@ export {
 export {
   BACKLOG_COUNT_LIMIT,
   countOrphanAccountJobs,
+  getAccountQueueDepths,
   getQueueBacklog,
   getQueueDepth,
   type QueueBacklog,

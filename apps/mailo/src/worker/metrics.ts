@@ -54,13 +54,14 @@ function finishedLabel(status: JobStatus): string | undefined {
 /** 종결 전이 하나를 센다(종결이 아니면 무시한다). */
 export function countFinished(
   metrics: AppMetrics,
-  callerId: string,
+  job: { callerId: string; accountId: string },
   status: JobStatus,
 ): void {
   const label = finishedLabel(status);
   if (label !== undefined)
     metrics.inc("mailo_jobs_finished_total", {
-      caller_id: callerId,
+      caller_id: job.callerId,
+      account_id: job.accountId,
       status: label,
     });
 }
@@ -71,14 +72,19 @@ export function countFinished(
  */
 export function countAttempt(
   metrics: AppMetrics,
-  job: { callerId: string },
+  job: { callerId: string; accountId: string },
   outcome: AttemptOutcome,
   status: JobStatus,
 ): void {
   const result = attemptResultLabel(outcome);
-  metrics.inc("mailo_attempts_total", { caller_id: job.callerId, result });
+  metrics.inc("mailo_attempts_total", {
+    caller_id: job.callerId,
+    account_id: job.accountId,
+    result,
+  });
   if (result !== "sent")
     metrics.inc("mailo_attempt_errors_total", {
+      account_id: job.accountId,
       result,
       stage: outcome.stage?.toLowerCase() ?? "unknown",
       reason:
@@ -86,7 +92,7 @@ export function countAttempt(
           ? (ACCOUNT_REASON[outcome.reason] ?? "other")
           : "none",
     });
-  countFinished(metrics, job.callerId, status);
+  countFinished(metrics, job, status);
 }
 
 /** 만료 sweep이 커밋한 전이를 센다. */
@@ -94,7 +100,7 @@ export function countSwept(
   metrics: AppMetrics,
   transitions: ReadonlyArray<JobTransition>,
 ): void {
-  for (const t of transitions) countFinished(metrics, t.callerId, t.status);
+  for (const t of transitions) countFinished(metrics, t, t.status);
 }
 
 /** lease 회수가 커밋한 전이를 센다. 회수 건수와 그 결과 종결을 함께 올린다. */
@@ -103,7 +109,7 @@ export function countRecovered(
   transitions: ReadonlyArray<JobTransition>,
 ): void {
   for (const t of transitions) {
-    metrics.inc("mailo_lease_recovered_total");
-    countFinished(metrics, t.callerId, t.status);
+    metrics.inc("mailo_lease_recovered_total", { account_id: t.accountId });
+    countFinished(metrics, t, t.status);
   }
 }

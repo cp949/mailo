@@ -26,13 +26,19 @@ export type LabelName = (typeof ALLOWED_LABELS)[number];
 /** 레지스트리에 없는 호출처를 묶는 값(결정 6). 가짜 호출처 ID로 시리즈를 늘리지 못하게 한다. */
 export const UNREGISTERED_CALLER = "unregistered";
 
-/** 단계 7(다중 SMTP 계정) 전의 유일한 계정 ID(결정 6). `config/load-config.ts`의 `breakerKey`와 같은 상수다. */
+/** 환경 변수로 정의한 계정의 ID. `account_id`를 생략한 증가의 기본 값이다. `config/`의 `DEFAULT_SMTP_ACCOUNT_ID`와 같은 상수다(leaf라 따로 둔다). */
 export const DEFAULT_ACCOUNT_ID = "default";
+
+/**
+ * 구성에 없는 계정의 작업을 묶는 값(ADR-0013 결정 5). 계정이 구성에서 빠진 뒤 남은 작업이 만료 sweep으로 종결되는 경우다.
+ * 계정 ID 형식 검사가 이 값을 예약어로 거부하므로(`config/`의 `RESERVED_ACCOUNT_ID`) 구성한 계정과 겹치지 않는다.
+ */
+export const UNREGISTERED_ACCOUNT = "unregistered";
 
 export type LabelSpec =
   /** 호출처 ID. 기동 때 읽은 레지스트리에 있는 값만 쓰고 그 밖은 `unregistered`다. */
   | { readonly kind: "caller" }
-  /** 계정 ID. 단계 7 전에는 `default`뿐이다. */
+  /** 계정 ID. 기동 때 구성한 계정 ID와 `unregistered`뿐이다(ADR-0013 결정 5). */
   | { readonly kind: "account" }
   /** 값이 코드의 닫힌 집합이다. 집합 밖의 값은 `fallback`으로 센다. `fallback`이 없으면 버린다. */
   | {
@@ -160,6 +166,34 @@ const CATALOG = [
     scope: "global",
     help: "전역. 최근 24시간 시도 수(한도에서 멈춘 값)와 점유 중 수의 합. 점유 중 수를 더하므로 한도를 넘을 수 있고 limit 대비 비율이 1을 넘을 수 있다. 할당을 설정한 호출처만.",
     labels: { caller_id: caller },
+  },
+  {
+    name: "mailo_send_paused_accounts",
+    type: "gauge",
+    scope: "global",
+    help: "전역. 발송을 정지한 계정 수. 구성에 없는 계정의 정지도 센다.",
+    labels: {},
+  },
+  {
+    name: "mailo_account_paused",
+    type: "gauge",
+    scope: "global",
+    help: "전역. 구성한 계정별 발송 정지 여부(0 또는 1).",
+    labels: { account_id: account },
+  },
+  {
+    name: "mailo_account_quota_limit",
+    type: "gauge",
+    scope: "global",
+    help: "전역. 계정의 24시간 발송 할당(sendQuota24h). 설정한 계정만. 이 인스턴스의 계정 구성 값이다.",
+    labels: { account_id: account },
+  },
+  {
+    name: "mailo_account_quota_used",
+    type: "gauge",
+    scope: "global",
+    help: "전역. 계정의 최근 24시간 시도 수(한도에서 멈춘 값)와 점유 중 수의 합. 점유 중 수를 더하므로 한도를 넘을 수 있고 limit 대비 비율이 1을 넘을 수 있다. 할당을 설정한 계정만.",
+    labels: { account_id: account },
   },
   {
     name: "mailo_caller_latest_event_age_seconds",
@@ -327,6 +361,13 @@ const CATALOG = [
     scope: "instance",
     help: "인스턴스. 진행 중인 전송 수. Worker가 꺼져 있으면 시리즈가 없다.",
     labels: {},
+  },
+  {
+    name: "mailo_worker_in_flight",
+    type: "gauge",
+    scope: "instance",
+    help: "인스턴스. 계정별 진행 중인 전송 수. 구성한 계정마다 시리즈가 있다. Worker가 꺼져 있으면 시리즈가 없다.",
+    labels: { account_id: account },
   },
   {
     name: "mailo_worker_last_poll_age_seconds",

@@ -98,10 +98,15 @@ class AppMetricsModule {
       providers: [
         {
           provide: APP_METRICS,
-          inject: [CALLER_REGISTRY],
-          useFactory: (registry: CallerRegistry) =>
+          inject: [CALLER_REGISTRY, APP_CONFIG],
+          useFactory: (registry: CallerRegistry, config: AppConfig) =>
             createMetrics({
               callerIds: registry.callers.map((c) => c.id),
+              // 라벨 값은 구성한 계정 ID와 `unregistered`의 닫힌 집합이다. 시드는 (호출처, 그 호출처의 계정) 쌍이다(ADR-0013 결정 5).
+              accountIds: config.smtpAccounts.map((a) => a.id),
+              callerAccounts: new Map(
+                registry.callers.map((c) => [c.id, c.accountId]),
+              ),
               onSeriesLimit: (metric) =>
                 logger.warn("metrics_series_limit", { metric }),
             }),

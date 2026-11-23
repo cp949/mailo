@@ -197,6 +197,44 @@ export async function getQueueDepth(
 }
 
 /**
+ * 계정별 큐 깊이를 읽는다. `/metrics`의 `mailo_queue_jobs` 등이 계정 라벨로 쓴다(RQ-062, ADR-0013 결정 5).
+ * 계정마다 `getQueueBacklog` 한 문장과 `scheduled`·`sending` 한 문장을 보낸다(계정당 2문장). `sending`은 그 계정의 점유 중 수다
+ * (`SENDING` 부분 인덱스 `mail_jobs_lease_idx`를 쓰므로 점유 중 행만 읽는다).
+ * 구성에 없는 계정은 읽지 않는다. 읽기만 하고 잠그지 않는다. 시각은 DB `now()`다.
+ */
+export async function getAccountQueueDepths(
+  db: Queryable,
+  accountIds: readonly string[],
+): Promise<Map<string, QueueDepth>> {
+  const result = new Map<string, QueueDepth>();
+  for (const accountId of new Set(accountIds)) {
+    const backlog = await getQueueBacklog(db, [accountId]);
+    const { rows } = await db.query<{ scheduled: number; sending: number }>(
+      `SELECT (SELECT count(*) FROM (
+                 SELECT 1 FROM mail_jobs
+                  WHERE status IN ('PENDING', 'RETRY_WAIT') AND next_attempt_at > now()
+                    AND account_id = $2::text
+                  ORDER BY next_attempt_at
+                  LIMIT $1) s)::int AS scheduled,
+              (SELECT count(*) FROM mail_jobs
+                WHERE status = 'SENDING' AND account_id = $2::text)::int AS sending`,
+      [BACKLOG_COUNT_LIMIT + 1, accountId],
+    );
+    const scheduled = rows[0]?.scheduled ?? 0;
+    result.set(accountId, {
+      due: { count: backlog.dueCount, truncated: backlog.truncated },
+      scheduled: {
+        count: Math.min(scheduled, BACKLOG_COUNT_LIMIT),
+        truncated: scheduled > BACKLOG_COUNT_LIMIT,
+      },
+      sending: rows[0]?.sending ?? 0,
+      backlog,
+    });
+  }
+  return result;
+}
+
+/**
  * 구성한 계정에 없는 계정의 비종결 작업(`PENDING`·`RETRY_WAIT`·`SENDING`) 수를 계정별로 센다(ADR-0013 결정 2).
  * 기동 때 한 번 부르는 점검용이다. 이 작업은 점유되지 않고 만료 sweep이 `EXPIRED`로 만든다.
  * 계정 ID와 건수만 읽는다.

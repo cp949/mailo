@@ -49,7 +49,7 @@ describe("Worker counter 라벨(RQ-049, ADR-0012 결정 4)", () => {
 
     countAttempt(
       metrics,
-      { callerId: "alpha" },
+      { callerId: "alpha", accountId: "default" },
       { classification: "SENT" },
       "SENT",
     );
@@ -66,7 +66,7 @@ describe("Worker counter 라벨(RQ-049, ADR-0012 결정 4)", () => {
 
     countAttempt(
       metrics,
-      { callerId: "alpha" },
+      { callerId: "alpha", accountId: "default" },
       { classification: "TRANSIENT", stage: "DATA" },
       "RETRY_WAIT",
     );
@@ -84,7 +84,7 @@ describe("Worker counter 라벨(RQ-049, ADR-0012 결정 4)", () => {
 
     countAttempt(
       metrics,
-      { callerId: "alpha" },
+      { callerId: "alpha", accountId: "default" },
       {
         classification: "ACCOUNT",
         reason: "RATE_LIMIT",
@@ -111,13 +111,13 @@ describe("Worker counter 라벨(RQ-049, ADR-0012 결정 4)", () => {
 
     countAttempt(
       metrics,
-      { callerId: "alpha" },
+      { callerId: "alpha", accountId: "default" },
       { classification: "PERMANENT", stage: "NEW_STAGE" },
       "FAILED",
     );
     countAttempt(
       metrics,
-      { callerId: "alpha" },
+      { callerId: "alpha", accountId: "default" },
       { classification: "PERMANENT" },
       "FAILED",
     );
@@ -139,9 +139,9 @@ describe("Worker counter 라벨(RQ-049, ADR-0012 결정 4)", () => {
     const { metrics, series } = metricsFor();
 
     countSwept(metrics, [
-      { callerId: "alpha", status: "EXPIRED" },
-      { callerId: "alpha", status: "EXPIRED" },
-      { callerId: "gone", status: "EXPIRED" },
+      { callerId: "alpha", accountId: "default", status: "EXPIRED" },
+      { callerId: "alpha", accountId: "default", status: "EXPIRED" },
+      { callerId: "gone", accountId: "default", status: "EXPIRED" },
     ]);
 
     expect(series("mailo_jobs_finished_total")).toEqual([
@@ -157,8 +157,8 @@ describe("Worker counter 라벨(RQ-049, ADR-0012 결정 4)", () => {
     const { metrics, series } = metricsFor();
 
     countRecovered(metrics, [
-      { callerId: "alpha", status: "RETRY_WAIT" },
-      { callerId: "alpha", status: "FAILED" },
+      { callerId: "alpha", accountId: "default", status: "RETRY_WAIT" },
+      { callerId: "alpha", accountId: "default", status: "FAILED" },
     ]);
 
     expect(series("mailo_lease_recovered_total")).toEqual([
@@ -167,5 +167,90 @@ describe("Worker counter 라벨(RQ-049, ADR-0012 결정 4)", () => {
     expect(series("mailo_jobs_finished_total")).toEqual([
       [{ caller_id: "alpha", account_id: "default", status: "failed" }, 1],
     ]);
+  });
+
+  describe("account_id 라벨은 작업의 계정이다 (RQ-062, ADR-0013 결정 5)", () => {
+    function multi() {
+      const metrics = createMetrics({
+        callerIds: ["alpha", "beta"],
+        accountIds: ["default", "marketing"],
+      });
+      const series = (name: string) =>
+        metrics
+          .counterSamples()
+          .filter((s) => s.name === name && s.value > 0)
+          .map((s) => [s.labels, s.value] as const);
+      return { metrics, series };
+    }
+
+    it("시도·실패 분류·종결이 작업의 계정으로 센다", () => {
+      const { metrics, series } = multi();
+
+      countAttempt(
+        metrics,
+        { callerId: "beta", accountId: "marketing" },
+        { classification: "SENT" },
+        "SENT",
+      );
+      countAttempt(
+        metrics,
+        { callerId: "alpha", accountId: "default" },
+        { classification: "PERMANENT", stage: "RCPT" },
+        "FAILED",
+      );
+
+      expect(series("mailo_attempts_total")).toEqual(
+        expect.arrayContaining([
+          [{ caller_id: "beta", account_id: "marketing", result: "sent" }, 1],
+          [
+            { caller_id: "alpha", account_id: "default", result: "permanent" },
+            1,
+          ],
+        ]),
+      );
+      expect(series("mailo_attempt_errors_total")).toEqual([
+        [
+          {
+            account_id: "default",
+            result: "permanent",
+            stage: "rcpt",
+            reason: "none",
+          },
+          1,
+        ],
+      ]);
+      expect(series("mailo_jobs_finished_total")).toEqual(
+        expect.arrayContaining([
+          [{ caller_id: "beta", account_id: "marketing", status: "sent" }, 1],
+        ]),
+      );
+    });
+
+    it("구성 밖 계정의 sweep 종결과 lease 회수는 unregistered로 센다", () => {
+      const { metrics, series } = multi();
+
+      countSwept(metrics, [
+        { callerId: "beta", accountId: "retired", status: "EXPIRED" },
+      ]);
+      countRecovered(metrics, [
+        { callerId: "beta", accountId: "marketing", status: "RETRY_WAIT" },
+        { callerId: "beta", accountId: "retired", status: "FAILED" },
+      ]);
+
+      expect(series("mailo_jobs_finished_total")).toEqual([
+        [
+          { caller_id: "beta", account_id: "unregistered", status: "expired" },
+          1,
+        ],
+        [
+          { caller_id: "beta", account_id: "unregistered", status: "failed" },
+          1,
+        ],
+      ]);
+      expect(series("mailo_lease_recovered_total")).toEqual([
+        [{ account_id: "marketing" }, 1],
+        [{ account_id: "unregistered" }, 1],
+      ]);
+    });
   });
 });

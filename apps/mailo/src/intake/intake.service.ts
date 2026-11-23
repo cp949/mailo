@@ -137,6 +137,7 @@ export class IntakeService {
       // 이번 호출이 커밋한 종결 전이만 센다. 멱등 반복(`already_canceled`)은 세지 않는다.
       this.metrics.inc("mailo_jobs_finished_total", {
         caller_id: callerId,
+        account_id: result.accountId,
         status: "canceled",
       });
     }

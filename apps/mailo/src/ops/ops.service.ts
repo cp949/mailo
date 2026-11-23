@@ -177,6 +177,7 @@ export class OpsService {
       // 호출처 범위가 없는 취소도 작업의 호출처로 센다. 멱등 반복은 세지 않는다.
       this.metrics.inc("mailo_jobs_finished_total", {
         caller_id: result.callerId,
+        account_id: result.accountId,
         status: "canceled",
       });
     }

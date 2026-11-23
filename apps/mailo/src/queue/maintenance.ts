@@ -65,6 +65,7 @@ export async function sweepExpired(
     const { rows } = await client.query<{
       id: string;
       caller_id: string;
+      account_id: string;
       idempotency_key: string;
       attempts: number;
       recipients: JsonValue;
@@ -79,7 +80,7 @@ export async function sweepExpired(
        UPDATE mail_jobs SET
          status = 'EXPIRED', failure_reason = 'EXPIRED', finished_at = now()
        FROM due WHERE mail_jobs.id = due.id
-       RETURNING mail_jobs.id, caller_id, idempotency_key, attempts, recipients`,
+       RETURNING mail_jobs.id, caller_id, account_id, idempotency_key, attempts, recipients`,
       [batchSize],
     );
     for (const row of rows) {
@@ -92,7 +93,11 @@ export async function sweepExpired(
         attemptCount: row.attempts,
         recipients: row.recipients,
       });
-      transitions.push({ callerId: row.caller_id, status: "EXPIRED" });
+      transitions.push({
+        callerId: row.caller_id,
+        accountId: row.account_id,
+        status: "EXPIRED",
+      });
     }
     return rows.length;
   });

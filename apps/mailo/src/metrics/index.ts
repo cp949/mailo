@@ -2,6 +2,7 @@ export {
   ALLOWED_LABELS,
   DEFAULT_ACCOUNT_ID,
   METRICS,
+  UNREGISTERED_ACCOUNT,
   UNREGISTERED_CALLER,
   assertCatalog,
   findMetric,

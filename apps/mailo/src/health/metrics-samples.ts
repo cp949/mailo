@@ -1,12 +1,10 @@
 import type { CallerRegistry } from "../callers/index.js";
 import type { FilePollerStatus } from "../file-channel/index.js";
-import { DEFAULT_ACCOUNT_ID, type Sample } from "../metrics/index.js";
+import type { Sample } from "../metrics/index.js";
 import { PRIORITIES } from "../queue/index.js";
 import type { WorkerStatus } from "../worker/index.js";
 import { lastReasonOf } from "./breaker-reason.js";
 import { METRICS_GROUPS, type GlobalSnapshot } from "./metrics-collector.js";
-
-const account = { account_id: DEFAULT_ACCOUNT_ID };
 
 const sample = (
   name: string,
@@ -15,72 +13,93 @@ const sample = (
 ): Sample => ({ name, labels, value });
 
 /**
- * 전역 gauge 시리즈(ADR-0012 결정 4). 실패한 그룹은 시리즈를 내지 않는다.
- * 호출처 라벨은 이 인스턴스의 레지스트리 ID만 쓴다. DB에 남은 레지스트리 밖 호출처의 값은 시리즈로 만들지 않는다(결정 6).
+ * 전역 gauge 시리즈(ADR-0012 결정 4, ADR-0013 결정 5). 실패한 그룹은 시리즈를 내지 않는다.
+ * 호출처 라벨은 이 인스턴스의 레지스트리 ID, 계정 라벨은 이 인스턴스가 구성한 계정 ID만 쓴다.
+ * DB에 남은 레지스트리·구성 밖 호출처·계정의 값은 시리즈로 만들지 않는다(결정 6). 구성 밖 계정의 정지는 `mailo_send_paused_accounts`가 센다.
  */
 export function globalSamples(
   snapshot: GlobalSnapshot,
   registry: CallerRegistry,
+  accounts: ReadonlyArray<{ id: string; sendQuota24h: number | null }>,
 ): Sample[] {
   const out: Sample[] = [];
 
   if (snapshot.queue !== undefined) {
-    const { due, scheduled, sending, backlog } = snapshot.queue;
-    out.push(
-      sample("mailo_queue_jobs", due.count, { ...account, state: "due" }),
-      sample("mailo_queue_jobs", scheduled.count, {
-        ...account,
-        state: "scheduled",
-      }),
-      sample("mailo_queue_jobs", sending, { ...account, state: "sending" }),
-      sample("mailo_queue_jobs_truncated", due.truncated ? 1 : 0, {
-        ...account,
-        state: "due",
-      }),
-      sample("mailo_queue_jobs_truncated", scheduled.truncated ? 1 : 0, {
-        ...account,
-        state: "scheduled",
-      }),
-    );
-    for (const priority of PRIORITIES)
+    for (const { id } of accounts) {
+      const depth = snapshot.queue.get(id);
+      if (depth === undefined) continue;
+      const { due, scheduled, sending, backlog } = depth;
+      const account = { account_id: id };
       out.push(
-        sample(
-          "mailo_queue_oldest_due_age_seconds",
-          backlog.byPriority[priority].oldestDueAgeSeconds ?? 0,
-          { ...account, priority: priority.toLowerCase() },
-        ),
+        sample("mailo_queue_jobs", due.count, { ...account, state: "due" }),
+        sample("mailo_queue_jobs", scheduled.count, {
+          ...account,
+          state: "scheduled",
+        }),
+        sample("mailo_queue_jobs", sending, { ...account, state: "sending" }),
+        sample("mailo_queue_jobs_truncated", due.truncated ? 1 : 0, {
+          ...account,
+          state: "due",
+        }),
+        sample("mailo_queue_jobs_truncated", scheduled.truncated ? 1 : 0, {
+          ...account,
+          state: "scheduled",
+        }),
       );
+      for (const priority of PRIORITIES)
+        out.push(
+          sample(
+            "mailo_queue_oldest_due_age_seconds",
+            backlog.byPriority[priority].oldestDueAgeSeconds ?? 0,
+            { ...account, priority: priority.toLowerCase() },
+          ),
+        );
+    }
   }
 
   if (snapshot.breaker !== undefined) {
-    const { state, lastReason } = snapshot.breaker;
-    for (const candidate of ["closed", "open", "half_open"] as const)
-      out.push(
-        sample("mailo_breaker_state", state === candidate ? 1 : 0, {
-          ...account,
-          state: candidate,
-        }),
-      );
-    if (state !== "closed" && lastReason !== null)
-      out.push(
-        sample("mailo_breaker_reason_info", 1, {
-          ...account,
-          reason: lastReasonOf(lastReason),
-        }),
-      );
+    for (const { id } of accounts) {
+      const breaker = snapshot.breaker.get(id);
+      if (breaker === undefined) continue;
+      const { state, lastReason } = breaker;
+      const account = { account_id: id };
+      for (const candidate of ["closed", "open", "half_open"] as const)
+        out.push(
+          sample("mailo_breaker_state", state === candidate ? 1 : 0, {
+            ...account,
+            state: candidate,
+          }),
+        );
+      if (state !== "closed" && lastReason !== null)
+        out.push(
+          sample("mailo_breaker_reason_info", 1, {
+            ...account,
+            reason: lastReasonOf(lastReason),
+          }),
+        );
+    }
   }
 
   if (snapshot.controls !== undefined) {
     const paused = new Set(snapshot.controls.pausedCallerIds);
+    const pausedAccounts = new Set(snapshot.controls.pausedAccountIds);
     out.push(
       sample("mailo_send_paused_all", snapshot.controls.allPaused ? 1 : 0),
       // 레지스트리에 없는 호출처의 정지도 센다.
       sample("mailo_send_paused_callers", paused.size),
+      // 구성에 없는 계정의 정지도 센다.
+      sample("mailo_send_paused_accounts", pausedAccounts.size),
     );
     for (const caller of registry.callers)
       out.push(
         sample("mailo_caller_paused", paused.has(caller.id) ? 1 : 0, {
           caller_id: caller.id,
+        }),
+      );
+    for (const { id } of accounts)
+      out.push(
+        sample("mailo_account_paused", pausedAccounts.has(id) ? 1 : 0, {
+          account_id: id,
         }),
       );
   }
@@ -95,6 +114,22 @@ export function globalSamples(
         sample("mailo_caller_quota_used", snapshot.quota.get(caller.id) ?? 0, {
           caller_id: caller.id,
         }),
+      );
+    }
+  }
+
+  if (snapshot.accountQuota !== undefined) {
+    for (const account of accounts) {
+      if (account.sendQuota24h === null) continue;
+      out.push(
+        sample("mailo_account_quota_limit", account.sendQuota24h, {
+          account_id: account.id,
+        }),
+        sample(
+          "mailo_account_quota_used",
+          snapshot.accountQuota.get(account.id) ?? 0,
+          { account_id: account.id },
+        ),
       );
     }
   }
@@ -139,6 +174,8 @@ const WORKER_STATES = [
 /** 이 인스턴스의 Worker·파일 폴러·수집 상태(ADR-0012 결정 4). 메모리 값만 읽는다. */
 export function instanceSamples(input: {
   worker: WorkerStatus | undefined;
+  /** 이 인스턴스가 구성한 계정 ID. 계정별 진행 중 전송 수 시리즈의 라벨 값이다. */
+  accountIds: readonly string[];
   filePoller: FilePollerStatus | undefined;
   snapshot: GlobalSnapshot;
   snapshotAgeSeconds: number;
@@ -160,6 +197,12 @@ export function instanceSamples(input: {
       sample("mailo_worker_claim_failure_streak", worker.claimFailureStreak),
       sample("mailo_worker_poll_loop_crashed", worker.pollLoopCrashed ? 1 : 0),
     );
+    for (const id of input.accountIds)
+      out.push(
+        sample("mailo_worker_in_flight", worker.inFlightByAccount[id] ?? 0, {
+          account_id: id,
+        }),
+      );
     if (worker.lastPollAgeSeconds !== null)
       out.push(
         sample("mailo_worker_last_poll_age_seconds", worker.lastPollAgeSeconds),

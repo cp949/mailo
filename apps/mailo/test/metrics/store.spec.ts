@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import {
+  UNREGISTERED_ACCOUNT,
   UNREGISTERED_CALLER,
   createMetrics,
   noopMetrics,
@@ -285,6 +286,153 @@ describe("counter 저장소(RQ-049, ADR-0012 결정 6)", () => {
       expect(
         samplesOf(metrics, "mailo_metrics_dropped_samples_total")[0]?.value,
       ).toBe(0);
+    });
+  });
+});
+
+describe("account_id 라벨은 닫힌 집합이다 (RQ-062, ADR-0013 결정 5)", () => {
+  const accountValues = (
+    m: ReturnType<typeof createMetrics>,
+    name: string,
+  ): string[] =>
+    [...new Set(samplesOf(m, name).map((s) => s.labels["account_id"]!))].sort();
+
+  it("구성한 계정 ID만 라벨 값으로 쓰고 그 밖의 값은 unregistered 하나로 모은다", () => {
+    const metrics = createMetrics({
+      callerIds: ["alpha"],
+      accountIds: ["default", "marketing"],
+    });
+
+    metrics.inc("mailo_claimed_jobs_total", {
+      caller_id: "alpha",
+      account_id: "marketing",
+    });
+    for (const id of ["retired", "Bad Id", 'x"y', "", "a".repeat(99)])
+      metrics.inc("mailo_claimed_jobs_total", {
+        caller_id: "alpha",
+        account_id: id,
+      });
+
+    expect(incremented(metrics, "mailo_claimed_jobs_total")).toEqual([
+      {
+        labels: { caller_id: "alpha", account_id: "marketing" },
+        value: 1,
+      },
+      {
+        labels: { caller_id: "alpha", account_id: UNREGISTERED_ACCOUNT },
+        value: 5,
+      },
+    ]);
+  });
+
+  it("account_id를 생략하면 default이고 default가 구성에 없으면 unregistered다", () => {
+    const withDefault = createMetrics({
+      callerIds: [],
+      accountIds: ["default", "marketing"],
+    });
+    const withoutDefault = createMetrics({
+      callerIds: [],
+      accountIds: ["marketing"],
+    });
+
+    withDefault.inc("mailo_lease_recovered_total");
+    withoutDefault.inc("mailo_lease_recovered_total");
+
+    expect(incremented(withDefault, "mailo_lease_recovered_total")).toEqual([
+      { labels: { account_id: "default" }, value: 1 },
+    ]);
+    expect(incremented(withoutDefault, "mailo_lease_recovered_total")).toEqual([
+      { labels: { account_id: UNREGISTERED_ACCOUNT }, value: 1 },
+    ]);
+  });
+
+  it("라벨 값 집합은 구성한 계정과 unregistered를 넘지 않는다. 서로 다른 값 수천 개를 넣어도 시리즈가 늘지 않는다", () => {
+    const accountIds = ["default", "a", "b"];
+    const metrics = createMetrics({ callerIds: ["alpha"], accountIds });
+
+    for (let i = 0; i < 3000; i += 1) {
+      metrics.inc("mailo_lease_recovered_total", { account_id: `x${i}` });
+      metrics.inc("mailo_attempt_errors_total", {
+        account_id: `x${i}`,
+        result: "transient",
+        stage: "data",
+        reason: "none",
+      });
+    }
+
+    expect(accountValues(metrics, "mailo_lease_recovered_total")).toEqual(
+      [...accountIds, UNREGISTERED_ACCOUNT].sort(),
+    );
+    expect(accountValues(metrics, "mailo_attempt_errors_total")).toEqual([
+      UNREGISTERED_ACCOUNT,
+    ]);
+  });
+
+  describe("시드는 (호출처, 그 호출처의 계정) 쌍으로 만든다", () => {
+    it("callerAccounts가 있으면 호출처당 자기 계정 시리즈만 0으로 낸다", () => {
+      const metrics = createMetrics({
+        callerIds: ["alpha", "beta"],
+        accountIds: ["default", "marketing"],
+        callerAccounts: new Map([
+          ["alpha", "default"],
+          ["beta", "marketing"],
+        ]),
+      });
+
+      const pairs = (name: string) =>
+        samplesOf(metrics, name)
+          .map((s) => `${s.labels["caller_id"]}/${s.labels["account_id"]}`)
+          .sort();
+      expect([...new Set(pairs("mailo_attempts_total"))]).toEqual([
+        "alpha/default",
+        "beta/marketing",
+      ]);
+      expect(pairs("mailo_claimed_jobs_total")).toEqual([
+        "alpha/default",
+        "beta/marketing",
+      ]);
+      // 호출처당 attempts 5, finished 4 시리즈다.
+      expect(samplesOf(metrics, "mailo_attempts_total")).toHaveLength(10);
+      expect(samplesOf(metrics, "mailo_jobs_finished_total")).toHaveLength(8);
+      // 계정만 가진 counter는 구성한 모든 계정을 낸다.
+      expect(accountValues(metrics, "mailo_lease_recovered_total")).toEqual([
+        "default",
+        "marketing",
+      ]);
+    });
+
+    it("호출처 50개 x 계정 20개에서도 시드가 시리즈 상한(2000) 안에서 잘리지 않는다", () => {
+      const callerIds = Array.from({ length: 50 }, (_, i) => `caller${i}`);
+      const accountIds = [
+        "default",
+        ...Array.from({ length: 19 }, (_, i) => `acct${i}`),
+      ];
+      const callerAccounts = new Map(
+        callerIds.map((id, i) => [id, accountIds[i % accountIds.length]!]),
+      );
+      const onSeriesLimit = jest.fn<(name: string) => void>();
+
+      const metrics = createMetrics({
+        callerIds,
+        accountIds,
+        callerAccounts,
+        onSeriesLimit,
+      });
+
+      expect(samplesOf(metrics, "mailo_attempts_total")).toHaveLength(50 * 5);
+      expect(samplesOf(metrics, "mailo_jobs_finished_total")).toHaveLength(
+        50 * 4,
+      );
+      expect(samplesOf(metrics, "mailo_claimed_jobs_total")).toHaveLength(50);
+      expect(samplesOf(metrics, "mailo_lease_recovered_total")).toHaveLength(
+        20,
+      );
+      expect(onSeriesLimit).not.toHaveBeenCalled();
+      // 곱집합이었다면 attempts가 50 x 20 x 5 = 5000으로 상한에서 잘렸다.
+      const crossProduct = createMetrics({ callerIds, accountIds });
+      expect(samplesOf(crossProduct, "mailo_attempts_total")).toHaveLength(
+        2000,
+      );
     });
   });
 });

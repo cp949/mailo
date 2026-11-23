@@ -401,10 +401,12 @@ describe("PostgreSQL 통합: 지표용 읽기 함수(RQ-049, ADR-0012 결정 4·
         onLeaseRecovered: (t) => seen.push(...t),
       });
 
-      expect(seen).toEqual([{ callerId: "alpha", status: "RETRY_WAIT" }]);
+      expect(seen).toEqual([
+        { callerId: "alpha", accountId: "default", status: "RETRY_WAIT" },
+      ]);
     });
 
-    it("취소 결과가 호출처 ID를 담는다(관리 토큰 취소의 호출처 라벨용)", async () => {
+    it("취소 결과가 호출처 ID와 계정 ID를 담는다(관리 토큰 취소의 지표 라벨용)", async () => {
       const id = await createJob(db.pool, { callerId: "alpha" });
 
       const result = await cancelJob(
@@ -417,6 +419,7 @@ describe("PostgreSQL 통합: 지표용 읽기 함수(RQ-049, ADR-0012 결정 4·
         kind: "canceled",
         jobId: id,
         callerId: "alpha",
+        accountId: "default",
       });
     });
   });

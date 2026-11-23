@@ -392,7 +392,11 @@ export async function recoverExpiredLeases(
         { classification: "LEASE_EXPIRED" },
         deps,
       );
-      transitions.push({ callerId: row.caller_id, status: result.status });
+      transitions.push({
+        callerId: row.caller_id,
+        accountId: row.account_id,
+        status: result.status,
+      });
     }
     return rows.length;
   });
