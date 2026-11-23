@@ -145,6 +145,9 @@ export function createWorkerRunner(deps: WorkerRunnerDeps): WorkerHandle {
           ),
         ),
       from: account.from,
+      // 계정 한도(ADR-0013 결정 3 라·바). 없으면 null이고 Worker가 기본식·무제한을 쓴다.
+      concurrency: account.concurrency,
+      sendQuota24h: account.sendQuota24h,
     });
   }
   const inner = createWorker(

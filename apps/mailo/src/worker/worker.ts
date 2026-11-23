@@ -51,13 +51,25 @@ import {
 } from "../logging/index.js";
 import { noopMetrics, type AppMetrics } from "../metrics/index.js";
 import { countAttempt, countRecovered, countSwept } from "./metrics.js";
-import { validateWorkerOptions, type WorkerOptions } from "./options.js";
+import {
+  WorkerOptionsError,
+  validateWorkerOptions,
+  type WorkerOptions,
+} from "./options.js";
+import { accountSlotCap, claimLimit, rotateFrom } from "./slots.js";
 
 /** 작업이 고정한 SMTP 계정 하나의 발송기와 기본 발신 주소(ADR-0013 결정 2). */
 export interface WorkerAccount {
   sender: MailSender;
   /** 작업의 `envelope.from`이 null일 때 쓰는 이 계정의 발신 주소(`SmtpAccount.from`). */
   from: string;
+  /**
+   * 이 인스턴스가 이 계정에 동시에 쓰는 슬롯 상한(`SmtpAccount.concurrency`, 1~`options.concurrency`). 생략하거나 null이면
+   * `max(1, C - (N - 1))`이다(ADR-0013 결정 3 바). 인스턴스별 상한이라 계정 하나의 전체 동시 전송 수는 인스턴스 수 × 이 값 이하다.
+   */
+  concurrency?: number | null;
+  /** 이 계정의 24시간 rolling 발송 할당(`SmtpAccount.sendQuota24h`, RQ-055). 생략하거나 null이면 무제한이다. */
+  sendQuota24h?: number | null;
 }
 
 export interface WorkerDeps {
@@ -164,6 +176,45 @@ function resolveAccounts(deps: WorkerDeps): ReadonlyMap<string, WorkerAccount> {
   ]);
 }
 
+/** 24시간 할당의 rolling 창(초). 호출처 할당과 같다(RQ-032). */
+const ACCOUNT_QUOTA_WINDOW_SECONDS = 86_400;
+
+/**
+ * 계정 구성이 Worker 옵션과 맞는지 확인한다(ADR-0013 결정 1·3). 어긋나면 기동을 거부한다.
+ * - 계정 수 N은 전체 동시성 C 이하여야 한다. 계정마다 슬롯 하나를 보장하려는 조건이다.
+ * - 계정의 `concurrency`는 1 이상 C 이하의 정수다.
+ * - 계정의 `sendQuota24h`는 양의 정수다. 사용량은 최근 24시간의 시도 기록을 세므로 기록 보존이 24시간 이상이어야 한다.
+ * 오류에는 필드 이름만 담는다. 계정 ID·한도 값은 담지 않는다.
+ */
+function validateAccounts(
+  accounts: ReadonlyMap<string, WorkerAccount>,
+  options: WorkerOptions,
+): void {
+  if (accounts.size > options.concurrency)
+    throw new WorkerOptionsError("accounts");
+  let hasQuota = false;
+  for (const account of accounts.values()) {
+    const { concurrency, sendQuota24h } = account;
+    if (
+      concurrency != null &&
+      (!Number.isInteger(concurrency) ||
+        concurrency < 1 ||
+        concurrency > options.concurrency)
+    )
+      throw new WorkerOptionsError("accountConcurrency");
+    if (sendQuota24h != null) {
+      if (!Number.isInteger(sendQuota24h) || sendQuota24h < 1)
+        throw new WorkerOptionsError("accountQuota");
+      hasQuota = true;
+    }
+  }
+  if (
+    hasQuota &&
+    options.retention.recordSeconds < ACCOUNT_QUOTA_WINDOW_SECONDS
+  )
+    throw new WorkerOptionsError("accountQuota.retention");
+}
+
 export function createWorker(
   deps: WorkerDeps,
   options: WorkerOptions,
@@ -171,7 +222,19 @@ export function createWorker(
   validateWorkerOptions(options);
   const { pool, bodyCipher } = deps;
   const accounts = resolveAccounts(deps);
+  validateAccounts(accounts, options);
   const accountIds = [...accounts.keys()];
+  // 계정별 슬롯 상한 `cap_a`(ADR-0013 결정 3 바). 기동 때 한 번 정한다.
+  const caps = new Map(
+    accountIds.map((id) => [
+      id,
+      accountSlotCap(
+        { concurrency: accounts.get(id)!.concurrency ?? null },
+        options.concurrency,
+        accountIds.length,
+      ),
+    ]),
+  );
   const clock = deps.clock ?? systemClock;
   const random = deps.random ?? Math.random;
   const claimRandom = deps.claimRandom ?? Math.random;
@@ -191,11 +254,18 @@ export function createWorker(
   // drain 시간 초과 때 진행 중 전송을 끊는 신호. 끊긴 작업은 결과를 기록하지 않는다.
   const sendController = new AbortController();
   const inFlight = new Set<Promise<void>>();
+  // 계정별 진행 중 전송 수. 슬롯 상한(`cap_a`)과 비교한다. `inFlight.size`의 계정별 분해다.
+  const inFlightByAccount = new Map<string, number>();
+  // 계정별 claim 오류 백오프의 끝(단조 시계 ms). 이 시각 전에는 그 계정의 claim을 부르지 않는다.
+  const claimBackoffUntil = new Map<string, number>();
+  // 24시간 할당을 넘긴 계정. 상태가 바뀔 때만 로그를 남긴다(RQ-055).
+  const quotaBlockedAccounts = new Set<string>();
   // 할당 초과 호출처. 상태가 바뀔 때만 로그를 남겨 폴링마다 반복되지 않게 한다(RQ-032).
   let quotaBlocked = new Set<string>();
   // 마지막으로 관찰한 발송 정지 상태. 바뀔 때만 로그를 남긴다(RQ-043). 처음 관찰이 정지면 `send_paused`를 한 번 남긴다.
   let observedAllPaused = false;
   let observedPausedCallers = new Set<string>();
+  let observedPausedAccounts = new Set<string>();
   let wakeUp: (() => void) | undefined;
   let pollLoop: Promise<void> | undefined;
   let lastPollMono: number | undefined;
@@ -214,9 +284,17 @@ export function createWorker(
 
   // --- 점유·전송 루프 ---------------------------------------------------------
 
-  function track(work: Promise<void>): void {
+  function track(work: Promise<void>, accountId: string): void {
+    inFlightByAccount.set(
+      accountId,
+      (inFlightByAccount.get(accountId) ?? 0) + 1,
+    );
     const wrapped: Promise<void> = work.finally(() => {
       inFlight.delete(wrapped);
+      inFlightByAccount.set(
+        accountId,
+        (inFlightByAccount.get(accountId) ?? 1) - 1,
+      );
       wakeUp?.();
     });
     inFlight.add(wrapped);
@@ -245,7 +323,22 @@ export function createWorker(
     quotaBlocked = next;
   }
 
-  /** 발송 정지 상태가 바뀐 경우에만 로그를 남긴다. 범위와 호출처 ID만 담는다(ADR-0011 결정 2). */
+  /** 계정 24시간 할당 초과 상태가 바뀐 경우에만 로그를 남긴다. 계정 ID와 한도만 담는다(RQ-055). */
+  function reportAccountQuota(
+    accountId: string,
+    blocked: { limit: number } | null,
+  ): void {
+    if (blocked) {
+      if (!quotaBlockedAccounts.has(accountId)) {
+        quotaBlockedAccounts.add(accountId);
+        log.warn("account_quota_exceeded", { accountId, limit: blocked.limit });
+      }
+    } else if (quotaBlockedAccounts.delete(accountId)) {
+      log.info("account_quota_recovered", { accountId });
+    }
+  }
+
+  /** 발송 정지 상태가 바뀐 경우에만 로그를 남긴다. 범위와 호출처·계정 ID만 담는다(ADR-0011 결정 2, ADR-0013 결정 3 다). */
   function reportSendControls(controls: SendControls): void {
     if (controls.allPaused !== observedAllPaused) {
       if (controls.allPaused) log.warn("send_paused", { scope: "all" });
@@ -262,6 +355,16 @@ export function createWorker(
         log.info("send_resumed", { scope: "caller", callerId: id });
     }
     observedPausedCallers = next;
+    const nextAccounts = new Set(controls.pausedAccountIds);
+    for (const id of nextAccounts) {
+      if (!observedPausedAccounts.has(id))
+        log.warn("send_paused", { scope: "account", accountId: id });
+    }
+    for (const id of observedPausedAccounts) {
+      if (!nextAccounts.has(id))
+        log.info("send_resumed", { scope: "account", accountId: id });
+    }
+    observedPausedAccounts = nextAccounts;
   }
 
   async function waitForWork(delayMs: number): Promise<void> {
@@ -295,38 +398,76 @@ export function createWorker(
       const claimed: ClaimedJob[] = [];
       // lease는 claim 쿼리 안에서 시작하므로 호출 전 시각이 가장 이른 기준이다(단조 시계).
       const claimStartedAt = clock.now();
-      let failed = false;
-      // 계정마다 claim을 부른다(ADR-0013 결정 3 가). lease 복구는 라운드의 첫 호출에서만 한다.
+      // 계정마다 claim을 부른다(ADR-0013 결정 3 가·바). 라운드마다 시작 계정을 무작위로 돌려 앞 계정이 슬롯을 독점하지 않게 한다.
+      // 계정 하나일 때는 난수를 뽑지 않는다. lease 복구는 라운드에서 처음 부르는 claim에서만 한다.
       // 구성에서 빠진 계정의 작업은 어느 호출도 점유하지 않는다. 만료 sweep이 EXPIRED로 만든다(ADR-0013 결정 2).
-      // 한 계정의 오류는 그 계정에서 끝내고 이미 점유한 작업과 다른 계정은 계속 처리한다.
-      for (const [index, accountId] of accountIds.entries()) {
-        const room = free - claimed.length;
-        if (room <= 0) break;
+      const round =
+        accountIds.length > 1
+          ? rotateFrom(
+              accountIds,
+              Math.floor(claimRandom() * accountIds.length),
+            )
+          : accountIds;
+      let recover = true;
+      let attempted = 0;
+      let failures = 0;
+      let saturated = false;
+      for (const accountId of round) {
+        const remaining = free - claimed.length;
+        if (remaining <= 0) break;
+        const until = claimBackoffUntil.get(accountId);
+        if (until !== undefined && clock.now() < until) continue;
+        const limit = claimLimit({
+          cap: caps.get(accountId)!,
+          inFlight:
+            (inFlightByAccount.get(accountId) ?? 0) +
+            claimed.filter((j) => j.accountId === accountId).length,
+          remaining,
+        });
+        if (limit <= 0) continue;
+        attempted += 1;
+        const quota = accounts.get(accountId)!.sendQuota24h ?? undefined;
+        const recoverLeases = recover;
+        recover = false;
         try {
-          claimed.push(
-            ...(await claim(pool, {
-              accountId,
-              recoverLeases: index === 0,
-              leaseSeconds: options.leaseSeconds,
-              limit: room,
-              deps: completeDeps,
-              // [0, 1) 난수라 비율 0이면 항상 우선순위 경로, 1이면 항상 대기 순서 경로다.
-              order:
-                claimRandom() < options.claimFifoRatio ? "fifo" : "priority",
-              onSendControls: reportSendControls,
-              onLeaseRecovered: (transitions) =>
-                countRecovered(metrics, transitions),
-              ...(options.callerQuotas && {
-                callerQuotas: options.callerQuotas,
-                onQuotaBlocked: reportQuotaBlocked,
-              }),
-            })),
-          );
+          const jobs = await claim(pool, {
+            accountId,
+            recoverLeases,
+            leaseSeconds: options.leaseSeconds,
+            limit,
+            deps: completeDeps,
+            // [0, 1) 난수라 비율 0이면 항상 우선순위 경로, 1이면 항상 대기 순서 경로다.
+            order: claimRandom() < options.claimFifoRatio ? "fifo" : "priority",
+            onSendControls: reportSendControls,
+            onLeaseRecovered: (transitions) =>
+              countRecovered(metrics, transitions),
+            ...(options.callerQuotas && {
+              callerQuotas: options.callerQuotas,
+              onQuotaBlocked: reportQuotaBlocked,
+            }),
+            ...(quota !== undefined && {
+              accountQuota: quota,
+              onAccountQuota: (blocked: { limit: number } | null) =>
+                reportAccountQuota(accountId, blocked),
+            }),
+          });
+          claimed.push(...jobs);
+          // 요청한 만큼 가득 점유한 계정이 있으면 더 있을 수 있다.
+          if (jobs.length >= limit) saturated = true;
           claimFailures.delete(accountId);
+          claimBackoffUntil.delete(accountId);
+          metrics.inc("mailo_claim_polls_total", {
+            result: jobs.length > 0 ? "claimed" : "empty",
+          });
         } catch (error) {
-          failed = true;
+          failures += 1;
           const streak = (claimFailures.get(accountId) ?? 0) + 1;
           claimFailures.set(accountId, streak);
+          // 한 계정의 오류는 그 계정에서만 지수 백오프한다. 다른 계정은 계속 점유한다.
+          claimBackoffUntil.set(
+            accountId,
+            clock.now() + claimBackoffMs(streak),
+          );
           metrics.inc("mailo_claim_polls_total", { result: "error" });
           log.error("claim_failed", {
             accountId,
@@ -336,10 +477,6 @@ export function createWorker(
         }
       }
       claimFailureStreak = Math.max(0, ...claimFailures.values());
-      if (!failed)
-        metrics.inc("mailo_claim_polls_total", {
-          result: claimed.length > 0 ? "claimed" : "empty",
-        });
       // drain 상한이 지나 전송을 끊은 뒤에 늦게 돌아온 점유는 처리하지 않는다. lease 만료 뒤 복구가 다룬다.
       if (sendController.signal.aborted) {
         if (claimed.length > 0)
@@ -349,18 +486,22 @@ export function createWorker(
       for (const job of claimed)
         metrics.inc("mailo_claimed_jobs_total", { caller_id: job.callerId });
       // 점유한 작업은 종료 신호가 와도 끝까지 처리한다. 이미 SENDING이고 lease가 걸려 있다.
-      for (const job of claimed) track(processJob(job, claimStartedAt));
-      // 요청한 만큼 가득 점유했으면 바로 다음 점유를 시도하고, 모자라면 쉰다.
-      // 계정 호출이 실패했고 점유한 것이 없으면 연속 실패 횟수에 따라 지수 백오프한다.
-      if (failed && claimed.length === 0)
-        await waitForWork(
-          Math.min(
-            MAX_POLL_ERROR_BACKOFF_MS,
-            options.pollMs * 2 ** Math.min(claimFailureStreak, 10),
-          ),
-        );
-      else if (claimed.length < free) await waitForWork(pollDelay());
+      for (const job of claimed)
+        track(processJob(job, claimStartedAt), job.accountId);
+      // 한 라운드에서 가득 점유한 계정이 있으면 바로 다음 라운드를 돌고, 아니면 쉰다.
+      // 호출한 계정이 모두 실패했으면 연속 실패 횟수에 따라 지수 백오프한다(계정 하나일 때 이전 동작과 같다).
+      if (attempted > 0 && failures === attempted)
+        await waitForWork(claimBackoffMs(claimFailureStreak));
+      else if (!saturated) await waitForWork(pollDelay());
     }
+  }
+
+  /** claim 오류 뒤 기다리는 시간. `pollMs`에서 시작해 연속 실패마다 2배, 상한 30초. */
+  function claimBackoffMs(streak: number): number {
+    return Math.min(
+      MAX_POLL_ERROR_BACKOFF_MS,
+      options.pollMs * 2 ** Math.min(streak, 10),
+    );
   }
 
   async function processJob(
@@ -606,6 +747,7 @@ export function createWorker(
     log.info("worker_started", {
       concurrency: options.concurrency,
       pollMs: options.pollMs,
+      accounts: accountIds.length,
     });
   }
 

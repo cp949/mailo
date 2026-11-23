@@ -15,7 +15,6 @@ export interface AccountReportCaller {
 /**
  * - `account_unused`(info): 어느 호출처도 참조하지 않는 계정. 허용하지만 알린다.
  * - `allowed_from_other_account`(warn): 호출처의 `allowedFrom`이 다른 계정의 `from`과 같다. 별칭을 계정이 공유할 수 있어 거부하지 않는다.
- * - `account_limits_not_enforced`(warn): 계정에 `sendQuota24h`·`concurrency`를 설정했지만 구현 묶음 B 전에는 점유에 쓰지 않는다.
  */
 export function reportAccountConfig(
   logger: AppLogger,
@@ -26,12 +25,6 @@ export function reportAccountConfig(
   for (const account of accounts) {
     if (!used.has(account.id))
       logger.info("account_unused", { accountId: account.id });
-    if (account.sendQuota24h !== null || account.concurrency !== null)
-      logger.warn("account_limits_not_enforced", {
-        accountId: account.id,
-        message:
-          "sendQuota24h·concurrency는 검증만 하고 아직 점유에 쓰지 않는다(ADR-0013 구현 묶음 B)",
-      });
   }
   for (const caller of callers) {
     const others = new Set(

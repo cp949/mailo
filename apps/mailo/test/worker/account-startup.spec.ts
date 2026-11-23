@@ -106,7 +106,7 @@ describe("기동 때 계정 구성 점검(ADR-0013 결정 1·6)", () => {
     expect(lines.join("\n")).not.toContain("allowed_from_other_account");
   });
 
-  it("한도(sendQuota24h·concurrency)를 설정한 계정은 아직 쓰지 않는다고 warn으로 알린다(묶음 A)", () => {
+  it("한도(sendQuota24h·concurrency)를 설정한 계정도 더는 account_limits_not_enforced를 남기지 않는다(묶음 B가 점유에 쓴다, ADR-0013 결정 3)", () => {
     const { logger, events } = collect();
 
     reportAccountConfig(
@@ -123,11 +123,10 @@ describe("기동 때 계정 구성 점검(ADR-0013 결정 1·6)", () => {
       ],
     );
 
-    expect(
-      events()
-        .filter((e) => e["event"] === "account_limits_not_enforced")
-        .map((e) => e["accountId"]),
-    ).toEqual(["default", "mk"]);
+    expect(events().map((e) => e["event"])).not.toContain(
+      "account_limits_not_enforced",
+    );
+    expect(events()).toEqual([]);
   });
 
   it("어떤 점검 로그에도 host·from 값이 없다(RQ-027)", () => {

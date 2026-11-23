@@ -5,7 +5,7 @@ export interface CountingPool {
   pool: pg.Pool;
   /** 지금까지 보낸 문장 수(BEGIN·COMMIT 포함) */
   count(): number;
-  /** 문장의 공백을 줄인 앞 60자. 문장 수가 어긋났을 때 진단용이다. */
+  /** 문장의 공백을 줄인 앞 400자. 문장 수가 어긋났을 때 진단용이다. */
   statements(): string[];
   reset(): void;
 }
@@ -18,7 +18,7 @@ export function countingPool(real: pg.Pool): CountingPool {
       typeof first === "string"
         ? first
         : ((first as { text?: string } | undefined)?.text ?? "");
-    log.push(text.replace(/\s+/g, " ").trim().slice(0, 60));
+    log.push(text.replace(/\s+/g, " ").trim().slice(0, 400));
   };
   const wrapClient = (client: pg.PoolClient): pg.PoolClient =>
     new Proxy(client, {
