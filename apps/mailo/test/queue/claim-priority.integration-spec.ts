@@ -373,16 +373,18 @@ describe("PostgreSQL 통합: 점유 경로와 우선순위 (RQ-035·036, ADR-000
       ).rejects.toMatchObject({ code: "23514" });
     });
 
-    it("우선순위 점유 인덱스가 유효한 부분 인덱스로 있다", async () => {
+    it("우선순위 점유 인덱스가 계정 단위 유효한 부분 인덱스로 있다(0005의 인덱스는 0012·0015가 계정 단위로 대체했다, ADR-0013 결정 4)", async () => {
       const { rows } = await db.pool.query(
         `SELECT pg_get_indexdef(i.indexrelid) AS def, i.indisvalid AS valid
            FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
-          WHERE c.relname = 'mail_jobs_priority_claim_idx'
+          WHERE c.relname = 'mail_jobs_account_priority_claim_idx'
             AND c.relnamespace = current_schema()::regnamespace`,
       );
       expect(rows).toHaveLength(1);
       expect(rows[0].valid).toBe(true);
-      expect(rows[0].def).toContain("(priority DESC, next_attempt_at, id)");
+      expect(rows[0].def).toContain(
+        "(account_id, priority DESC, next_attempt_at, id)",
+      );
       expect(rows[0].def).toContain("WHERE (status = ANY");
     });
   });
