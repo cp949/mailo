@@ -149,8 +149,6 @@ export interface StartRestAppOptions {
   fileChannelCallers?: readonly string[];
   /** 호출처 레지스트리 항목에 더할 필드(호출처 ID별). 예: `{ alpha: { allowedRecipientDomains: ["example.com"] } }`. */
   callerFields?: Record<string, Record<string, unknown>>;
-  /** 비default SMTP 계정 구성을 허용한다. 묶음 B 전의 기동 거부를 우회하는 테스트 전용 옵션이다. */
-  allowNonDefaultAccounts?: boolean;
   /** HTTP 서버 시간제한. 느린 연결 종료 테스트가 줄여 쓴다. 생략하면 운영 기본값이다. */
   httpTimeouts?: HttpServerTimeouts;
 }
@@ -180,9 +178,6 @@ export async function startRestApp(
       ...(options.workerRunner ? { workerRunner: options.workerRunner } : {}),
       ...(options.worker ? { worker: options.worker } : {}),
       ...(options.httpTimeouts ? { http: options.httpTimeouts } : {}),
-      ...(options.allowNonDefaultAccounts
-        ? { allowNonDefaultAccounts: true }
-        : {}),
     });
     await app.listen(0, "127.0.0.1");
   } catch (error) {

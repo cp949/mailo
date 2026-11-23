@@ -125,8 +125,6 @@ describe("e2e: 다중 SMTP 계정 — 계정별 전송·고정·발신 주소 (R
         ...options.env,
       },
       callerFields: options.callers ?? { beta: { accountId: "marketing" } },
-      // 묶음 B 전의 비default 계정 기동 거부를 우회한다(테스트 전용 옵션, 거부 자체는 아래 테스트가 확인한다).
-      allowNonDefaultAccounts: true,
       ...(options.worker === false ? {} : { worker: { trustedCa: fakeA.ca } }),
     });
     return app;
@@ -399,48 +397,80 @@ describe("e2e: 다중 SMTP 계정 — 계정별 전송·고정·발신 주소 (R
     });
   });
 
-  describe("묶음 B 전의 방어: 비default 계정 구성은 앱 기동을 거부한다(ADR-0013 구현 중 확정 2026-11-24 리뷰 반영)", () => {
-    function startRefused(env: NodeJS.ProcessEnv): Promise<Error | undefined> {
-      return startRestApp({
+  describe("계정 격리: 한 계정의 SMTP 장애 (RQ-054, ADR-0013 결정 3)", () => {
+    const breakerState = async (key: string) =>
+      (
+        await pool.query<{ state: string }>(
+          "SELECT state FROM mail_circuit_breaker WHERE breaker_key = $1",
+          [key],
+        )
+      ).rows[0]!.state;
+
+    it("marketing의 인증 오류로 marketing 차단기만 열리고 default 호출처는 계속 발송한다. 복구되면 대표 작업이 닫는다", async () => {
+      fakeB.behavior.auth = () => ({
+        code: 535,
+        text: "5.7.8 Username and Password not accepted",
+      });
+      try {
+        await startApp();
+        const betaJobs: string[] = [];
+        for (let i = 0; i < 4; i += 1)
+          betaJobs.push(
+            (
+              await submit(
+                `iso-beta-${i}`,
+                BETA_KEY,
+                plainMail({ from: MARKETING_FROM }),
+              )
+            ).json.jobId,
+          );
+        await waitFor(async () => (await breakerState("marketing")) === "open");
+
+        // marketing이 열려 있는 동안 default 호출처의 작업은 나간다.
+        const alpha = await submit("iso-alpha", ALPHA_KEY);
+        await waitSent(alpha.json.jobId);
+        expect(await breakerState("default")).toBe("closed");
+        expect(fakeB.messages).toHaveLength(0);
+
+        // marketing SMTP가 복구되고 대기 시간이 지나면 대표 작업이 가서 차단기를 닫는다.
+        delete fakeB.behavior.auth;
+        await pool.query(
+          "UPDATE mail_circuit_breaker SET open_until = now() - interval '1 second' WHERE breaker_key = 'marketing'",
+        );
+        await pool.query(
+          "UPDATE mail_jobs SET next_attempt_at = now() - interval '1 second' WHERE status = 'RETRY_WAIT'",
+        );
+        for (const id of betaJobs) await waitSent(id);
+        expect(await breakerState("marketing")).toBe("closed");
+        expect(fakeB.messages).toHaveLength(4);
+      } finally {
+        delete fakeB.behavior.auth;
+      }
+    });
+  });
+
+  describe("비default 계정 구성의 기동 (ADR-0013 구현 순서, 묶음 B)", () => {
+    it("계정 파일에 marketing이 있어도 옵션 없이 앱이 기동하고 계정 목록에 담는다(묶음 A의 기동 거부는 계정별 claim이 성립해 제거했다)", async () => {
+      app = await startRestApp({
         pool,
         env: {
           MAILO_SMTP_HOST: fakeA.host,
           MAILO_SMTP_PORT: String(fakeA.port),
           MAILO_SMTP_USER: DEFAULT_USER,
           MAILO_SMTP_FROM: DEFAULT_FROM,
-          ...env,
+          MAILO_SMTP_ACCOUNTS_FILE: accountsFile(),
+          MAILO_SMTP_SECRET_MARKETING: MARKETING_PASSWORD,
         },
         callerFields: { beta: { accountId: "marketing" } },
-      }).then(
-        async (started) => {
-          await started.close();
-          return undefined;
-        },
-        (error: unknown) => error as Error,
-      );
-    }
-
-    it("계정 파일에 marketing이 있으면 거부하고 메시지에는 계정 ID만 있다", async () => {
-      const failure = await startRefused({
-        MAILO_SMTP_ACCOUNTS_FILE: accountsFile(),
-        MAILO_SMTP_SECRET_MARKETING: MARKETING_PASSWORD,
-        MAILO_SMTP_PASSWORD: CANARY.smtpPassword,
       });
 
-      expect(failure).toBeDefined();
-      expect(failure!.message).toContain(
-        "SMTP 계정 marketing은 default가 아니라",
-      );
-      for (const canary of [
-        MARKETING_PASSWORD,
-        CANARY.smtpPassword,
-        MARKETING_USER,
-        DEFAULT_USER,
-      ])
-        expect(failure!.message).not.toContain(canary);
+      expect(app.config.smtpAccounts.map((a) => a.id)).toEqual([
+        "default",
+        "marketing",
+      ]);
     });
 
-    it("default만 파일로 정의하면(비default 없음) 기동한다", async () => {
+    it("default만 파일로 정의해도 기동한다", async () => {
       const filePath = accountsFile([marketingAccount({ id: "default" })]);
       app = await startRestApp({
         pool,
@@ -458,12 +488,18 @@ describe("e2e: 다중 SMTP 계정 — 계정별 전송·고정·발신 주소 (R
       expect(app.config.smtpAccounts.map((a) => a.id)).toEqual(["default"]);
     });
 
-    it("main.ts는 거부를 우회하는 옵션을 쓰지 않는다", () => {
-      const main = readFileSync(
-        fileURLToPath(new URL("../../src/main.ts", import.meta.url)),
-        "utf8",
-      );
-      expect(main).not.toContain("allowNonDefaultAccounts");
+    it("기동 거부용 테스트 옵션(allowNonDefaultAccounts)은 소스에 남아 있지 않다", () => {
+      for (const file of [
+        "../../src/main.ts",
+        "../../src/app.ts",
+        "../../src/app.module.ts",
+      ]) {
+        const text = readFileSync(
+          fileURLToPath(new URL(file, import.meta.url)),
+          "utf8",
+        );
+        expect(text).not.toContain("allowNonDefaultAccounts");
+      }
     });
   });
 

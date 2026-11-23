@@ -57,13 +57,12 @@ export interface SmtpAccount {
   /** 연결·응답 대기 초. lease보다 작아야 한다(추정). */
   timeoutSeconds: number;
   /**
-   * 계정 24시간 발송 할당(결정 3). null이면 무제한이다. 환경 변수로 정의한 `default`는 항상 null이다.
-   * 구현 묶음 A는 값을 검증만 하고 점유에 쓰지 않는다. 계정 단위 점유는 묶음 B다.
+   * 계정 24시간 발송 할당(결정 3 라). null이면 무제한이다. 환경 변수로 정의한 `default`는 항상 null이다.
+   * Worker가 점유 전에 사용량과 비교한다(`claim`의 `accountQuota`, RQ-055).
    */
   sendQuota24h: number | null;
   /**
-   * 이 인스턴스가 이 계정에 동시에 쓰는 슬롯 상한(결정 3). null이면 기본식을 쓴다. 환경 변수로 정의한 `default`는 항상 null이다.
-   * 구현 묶음 A는 값을 검증만 하고 쓰지 않는다.
+   * 이 인스턴스가 이 계정에 동시에 쓰는 슬롯 상한(결정 3 바). null이면 `max(1, C - (N - 1))`을 쓴다. 환경 변수로 정의한 `default`는 항상 null이다.
    */
   concurrency: number | null;
 }

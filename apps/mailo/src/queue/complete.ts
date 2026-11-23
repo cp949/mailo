@@ -294,7 +294,7 @@ async function applyOutcome(
       job.caller_id,
       // 로그의 `instance`와 행을 잇는다(migrations/0003). 수신자·본문 정보가 아니다.
       instance,
-      // 계정 24시간 할당(묶음 B)이 조인 없이 세기 위한 복사본이다(migrations/0011).
+      // 계정 24시간 할당이 조인 없이 세기 위한 복사본이다(migrations/0011, `ACCOUNT_QUOTA_USAGE_SQL`).
       job.account_id,
     ],
   );
