@@ -5,6 +5,7 @@
 import type pg from "pg";
 import type { AppConfig } from "../config/index.js";
 import type { AppLogger } from "../logging/index.js";
+import type { AppMetrics } from "../metrics/index.js";
 import type { BodyCipher } from "../queue/index.js";
 import {
   checkSmtpTimeouts,
@@ -29,6 +30,8 @@ export interface WorkerRunnerDeps {
   clock?: Clock;
   /** 앱이 만든 로거. 로거는 `createApp` 한 곳에서 만든다(M10). */
   logger: AppLogger;
+  /** counter 증가 대상(RQ-049). 생략하면 세지 않는다. */
+  metrics?: AppMetrics;
   /** 호출처별 24시간 발송 할당(호출처 ID -> 건수, RQ-032). 생략하면 모든 호출처가 무제한이다. */
   callerQuotas?: ReadonlyMap<string, number>;
   /** 점유 루프가 예외로 끝났을 때 부른다(`WorkerDeps.onFatal`). */
@@ -115,6 +118,7 @@ export function createWorkerRunner(deps: WorkerRunnerDeps): WorkerHandle {
       ...(deps.clock && { clock: deps.clock }),
       ...(deps.onFatal && { onFatal: deps.onFatal }),
       logger: deps.logger,
+      ...(deps.metrics && { metrics: deps.metrics }),
       instance: config.instanceId,
     },
     toWorkerOptions(config, deps.callerQuotas),

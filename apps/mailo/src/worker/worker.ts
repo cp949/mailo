@@ -48,6 +48,8 @@ import {
   silentLogger,
   type AppLogger,
 } from "../logging/index.js";
+import { noopMetrics, type AppMetrics } from "../metrics/index.js";
+import { countAttempt, countRecovered, countSwept } from "./metrics.js";
 import { validateWorkerOptions, type WorkerOptions } from "./options.js";
 
 export interface WorkerDeps {
@@ -66,6 +68,8 @@ export interface WorkerDeps {
    */
   claimRandom?: () => number;
   logger?: AppLogger;
+  /** counter 증가 대상(RQ-049, ADR-0012 결정 7). 생략하면 아무것도 세지 않는다. */
+  metrics?: AppMetrics;
   /** 로그의 `instance`와 같은 값. 시도 기록(`mail_attempts.instance`)에 남겨 로그와 DB 행을 잇는다. 생략하면 NULL이다. */
   instance?: string;
   /**
@@ -138,6 +142,7 @@ export function createWorker(
   const random = deps.random ?? Math.random;
   const claimRandom = deps.claimRandom ?? Math.random;
   const log = deps.logger ?? silentLogger;
+  const metrics = deps.metrics ?? noopMetrics;
   const completeDeps: CompleteDeps = {
     retry: { ...options.retry, random },
     breaker: options.breaker,
@@ -262,14 +267,20 @@ export function createWorker(
           // [0, 1) 난수라 비율 0이면 항상 우선순위 경로, 1이면 항상 대기 순서 경로다.
           order: claimRandom() < options.claimFifoRatio ? "fifo" : "priority",
           onSendControls: reportSendControls,
+          onLeaseRecovered: (transitions) =>
+            countRecovered(metrics, transitions),
           ...(options.callerQuotas && {
             callerQuotas: options.callerQuotas,
             onQuotaBlocked: reportQuotaBlocked,
           }),
         });
         claimFailureStreak = 0;
+        metrics.inc("mailo_claim_polls_total", {
+          result: claimed.length > 0 ? "claimed" : "empty",
+        });
       } catch (error) {
         claimFailureStreak += 1;
+        metrics.inc("mailo_claim_polls_total", { result: "error" });
         log.error("claim_failed", {
           error: describeError(error),
           streak: claimFailureStreak,
@@ -288,6 +299,8 @@ export function createWorker(
           log.warn("claim_after_drain_timeout", { count: claimed.length });
         return;
       }
+      for (const job of claimed)
+        metrics.inc("mailo_claimed_jobs_total", { caller_id: job.callerId });
       // 점유한 작업은 종료 신호가 와도 끝까지 처리한다. 이미 SENDING이고 lease가 걸려 있다.
       for (const job of claimed) track(processJob(job, claimStartedAt));
       // 요청한 만큼 가득 점유했으면 바로 다음 점유를 시도하고, 모자라면 쉰다.
@@ -417,6 +430,7 @@ export function createWorker(
           classification: outcome.classification,
           probe: job.isProbe,
         });
+        countAttempt(metrics, job, outcome, result.status);
         const breaker = result.breaker;
         if (
           outcome.classification === "ACCOUNT" &&
@@ -477,12 +491,13 @@ export function createWorker(
     let nextCleanupAt = clock.now();
     while (!stopController.signal.aborted) {
       await drainBatches("sweep_expired", () =>
-        sweepExpired(pool, SWEEP_BATCH),
+        sweepExpired(pool, SWEEP_BATCH, (t) => countSwept(metrics, t)),
       );
       // claim도 점유 전에 복구하지만, 점유가 멈춘 상태(차단기 open, 대기 작업 없음)에서도 회수가 돌게 한다.
       await drainBatches("lease_recovered", () =>
         recoverExpiredLeases(pool, completeDeps, SWEEP_BATCH, {
           exclusive: true,
+          onRecovered: (t) => countRecovered(metrics, t),
         }),
       );
       if (clock.now() >= nextCleanupAt) {

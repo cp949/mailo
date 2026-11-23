@@ -28,7 +28,11 @@ import { HealthModule } from "./health/index.js";
 import { HttpModule } from "./http/index.js";
 import { IntakeModule } from "./intake/index.js";
 import { APP_LOGGER, type AppLogger } from "./logging/index.js";
-import { APP_METRICS, createMetrics } from "./metrics/index.js";
+import {
+  APP_METRICS,
+  createMetrics,
+  type AppMetrics,
+} from "./metrics/index.js";
 import { OpsModule } from "./ops/index.js";
 import { QueueModule } from "./queue/index.js";
 import { SmtpModule, type MailSender } from "./smtp/index.js";
@@ -138,6 +142,7 @@ export class AppModule {
             QUEUE_BODY_CIPHER,
             CALLER_REGISTRY,
             APP_LOGGER,
+            APP_METRICS,
           ],
           useFactory: (
             pool: pg.Pool,
@@ -145,6 +150,7 @@ export class AppModule {
             bodyCipher: QueueBodyCipher,
             registry: CallerRegistry,
             logger: AppLogger,
+            metrics: AppMetrics,
           ): WorkerRunner => {
             if (options.workerRunner) return options.workerRunner;
             if (!options.worker) return new NoopWorkerRunner();
@@ -153,6 +159,7 @@ export class AppModule {
               config,
               bodyCipher,
               logger,
+              metrics,
               // 호출처별 24시간 발송 할당(RQ-032). 레지스트리는 기동 때 한 번 읽으므로 변경은 재시작 뒤 반영된다.
               callerQuotas: new Map(
                 registry.callers.flatMap((c) =>
@@ -180,6 +187,7 @@ export class AppModule {
             QUEUE_BODY_CIPHER,
             QUEUE_FINGERPRINTER,
             APP_LOGGER,
+            APP_METRICS,
           ],
           useFactory: (
             pool: pg.Pool,
@@ -189,6 +197,7 @@ export class AppModule {
             cipher: QueueBodyCipher,
             fingerprinter: QueueFingerprinter,
             logger: AppLogger,
+            metrics: AppMetrics,
           ): FilePollerRunner => {
             const { fileChannel } = config;
             if (fileChannel.root === null) {
@@ -209,6 +218,7 @@ export class AppModule {
               jobExpirySeconds: config.queue.jobExpirySeconds,
               defaultFrom: config.smtp.defaultFrom,
               logger,
+              metrics,
             });
           },
         },

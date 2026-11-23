@@ -1,8 +1,9 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import type pg from "pg";
 import { CALLER_REGISTRY, type CallerRegistry } from "../callers/index.js";
 import { PG_POOL, withTransaction } from "../db/index.js";
 import { problems } from "../http/index.js";
+import { APP_METRICS, noopMetrics, type AppMetrics } from "../metrics/index.js";
 import {
   cancelJobAsOperator,
   clearPause,
@@ -36,6 +37,9 @@ export class OpsService {
   constructor(
     @Inject(PG_POOL) private readonly pool: pg.Pool,
     @Inject(CALLER_REGISTRY) private readonly registry: CallerRegistry,
+    @Optional()
+    @Inject(APP_METRICS)
+    private readonly metrics: AppMetrics = noopMetrics,
   ) {}
 
   async pause(actor: string, scope: SendScope): Promise<PauseChange> {
@@ -90,8 +94,14 @@ export class OpsService {
     if (result.kind === "not_found") throw problems.notFound();
     if (result.kind === "not_cancelable")
       throw problems.jobNotCancelable(result.status);
-    if (result.kind === "canceled")
+    if (result.kind === "canceled") {
       logger.log({ event: "ops_job_canceled", actor, jobId });
+      // 호출처 범위가 없는 취소도 작업의 호출처로 센다. 멱등 반복은 세지 않는다.
+      this.metrics.inc("mailo_jobs_finished_total", {
+        caller_id: result.callerId,
+        status: "canceled",
+      });
+    }
     const job = await findJobByIdForOperator(this.pool, jobId);
     // 취소 직후 보존 삭제와 겹친 경우다.
     if (job === null) throw problems.notFound();

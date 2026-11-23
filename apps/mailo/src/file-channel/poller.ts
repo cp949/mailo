@@ -24,6 +24,7 @@ import {
   silentLogger,
   type AppLogger,
 } from "../logging/index.js";
+import { noopMetrics, type AppMetrics } from "../metrics/index.js";
 import { inspectDir, isPermissive, type DirKind } from "./dir-check.js";
 import { FileChannelStartError } from "./errors.js";
 import { isStale } from "./errno.js";
@@ -43,6 +44,8 @@ export interface FilePollerDeps {
   /** `IngestDeps.defaultFrom`과 같다. */
   defaultFrom: string;
   logger?: AppLogger;
+  /** counter 증가 대상(RQ-049, ADR-0012 결정 4). 생략하면 세지 않는다. */
+  metrics?: AppMetrics;
   /** 현재 시각(ms). 임시 파일 나이 계산에 쓴다. */
   now?: () => number;
   /** `IngestDeps.beforeDelete`와 같다. 테스트용이다. */
@@ -179,6 +182,7 @@ async function checkRoot(root: string): Promise<void> {
 export function createFilePoller(deps: FilePollerDeps): FilePoller {
   const { config } = deps;
   const log = deps.logger ?? silentLogger;
+  const metrics = deps.metrics ?? noopMetrics;
   const now = deps.now ?? Date.now;
   const callers = deps.registry.callers.filter((c) => c.fileChannel);
   const ingestDeps: IngestDeps = {
@@ -192,6 +196,13 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
     logger: log,
     ...(deps.beforeDelete && { beforeDelete: deps.beforeDelete }),
   };
+
+  /** 파일 하나의 처리 결과를 센다. 호출처 ID와 결과 코드만 쓰고 파일 이름·내용은 쓰지 않는다(RQ-027). */
+  const countFile = (callerId: string, result: string): void =>
+    metrics.inc("mailo_file_channel_files_total", {
+      caller_id: callerId,
+      result,
+    });
 
   const stopController = new AbortController();
   let state: "idle" | "running" | "stopped" = "idle";
@@ -389,16 +400,22 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
         errorBudget.consecutive = 0;
         if (result.outcome !== "gone") nlinkZeroStreaks.clear(path);
         if (result.settled) settled += 1;
-        if (result.deleteFailed !== undefined) summary.deleteFailed += 1;
+        if (result.deleteFailed !== undefined) {
+          summary.deleteFailed += 1;
+          countFile(caller.id, "delete_failed");
+        }
         switch (result.outcome) {
           case "registered":
             summary.registered += 1;
+            countFile(caller.id, "registered");
             break;
           case "duplicate":
             summary.duplicates += 1;
+            countFile(caller.id, "duplicate");
             break;
           case "rejected":
             summary.rejected += 1;
+            countFile(caller.id, "rejected");
             break;
           case "rejected_repeat":
             summary.rejectedRepeats += 1;
@@ -412,6 +429,7 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
             break;
           case "unreadable":
             summary.unreadable += 1;
+            countFile(caller.id, "unreadable");
             break;
         }
       } catch (error) {
