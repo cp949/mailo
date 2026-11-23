@@ -6,7 +6,11 @@ import {
   expect,
   it,
 } from "@jest/globals";
-import { getQueueBacklog, BACKLOG_COUNT_LIMIT } from "../../src/queue/index.js";
+import {
+  getQueueBacklog,
+  BACKLOG_COUNT_LIMIT,
+  type Priority,
+} from "../../src/queue/index.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
 import { createJob, migrate, pastDue } from "../support/queue-fixtures.js";
 import {
@@ -112,6 +116,19 @@ describe("PostgreSQL 통합: 헬스 운영자 응답 (RQ-031)", () => {
       dueCount: 0,
       dueCountTruncated: false,
       oldestDueAgeSeconds: null,
+      dueCountByPriority: { LOW: 0, NORMAL: 0, HIGH: 0, URGENT: 0 },
+      dueCountTruncatedByPriority: {
+        LOW: false,
+        NORMAL: false,
+        HIGH: false,
+        URGENT: false,
+      },
+      oldestDueAgeSecondsByPriority: {
+        LOW: null,
+        NORMAL: null,
+        HIGH: null,
+        URGENT: null,
+      },
     });
   });
 
@@ -130,5 +147,119 @@ describe("PostgreSQL 통합: 헬스 운영자 응답 (RQ-031)", () => {
     expect(backlog.dueCount).toBe(BACKLOG_COUNT_LIMIT);
     expect(backlog.truncated).toBe(true);
     expect(backlog.oldestDueAgeSeconds).toBeGreaterThanOrEqual(0);
+  });
+
+  describe("등급별 적체 (RQ-037, ADR-0009)", () => {
+    async function graded(
+      priority: Priority,
+      waited: number,
+      status = "PENDING",
+    ): Promise<string> {
+      const id = await createJob(db.pool, { callerId: "alpha", priority });
+      await db.pool.query(
+        "UPDATE mail_jobs SET status = $3, next_attempt_at = now() - make_interval(secs => $2) WHERE id = $1",
+        [id, waited, status],
+      );
+      return id;
+    }
+
+    it("운영자 토큰 응답에 네 등급의 dueCount·oldestDueAgeSeconds가 등급 이름 키로 있다", async () => {
+      await graded("LOW", 200);
+      await graded("LOW", 50, "RETRY_WAIT");
+      await graded("NORMAL", 90);
+      await graded("URGENT", 10);
+      await graded("URGENT", -3600, "RETRY_WAIT"); // 미래 재시도는 세지 않는다
+      const sending = await graded("HIGH", 30);
+      await db.pool.query(
+        `UPDATE mail_jobs SET status = 'SENDING', lease_token = gen_random_uuid(),
+                leased_at = now(), lease_until = now() + interval '1 minute' WHERE id = $1`,
+        [sending],
+      );
+
+      const { queue } = (await (
+        await getJson(app, "/health/ready", OPS_TOKEN)
+      ).json()) as { queue: Record<string, Record<string, unknown>> };
+
+      expect(queue["dueCount"]).toBe(4);
+      expect(queue["dueCountByPriority"]).toEqual({
+        LOW: 2,
+        NORMAL: 1,
+        HIGH: 0,
+        URGENT: 1,
+      });
+      expect(queue["dueCountTruncatedByPriority"]).toEqual({
+        LOW: false,
+        NORMAL: false,
+        HIGH: false,
+        URGENT: false,
+      });
+      const ages = queue["oldestDueAgeSecondsByPriority"] as Record<
+        string,
+        number | null
+      >;
+      expect(Object.keys(ages).sort()).toEqual(
+        ["HIGH", "LOW", "NORMAL", "URGENT"].sort(),
+      );
+      expect(ages["HIGH"]).toBeNull();
+      expect(ages["LOW"]).toBeGreaterThanOrEqual(200);
+      expect(ages["LOW"]).toBeLessThan(210);
+      expect(ages["NORMAL"]).toBeGreaterThanOrEqual(90);
+      expect(ages["NORMAL"]).toBeLessThan(100);
+      expect(ages["URGENT"]).toBeGreaterThanOrEqual(10);
+      expect(ages["URGENT"]).toBeLessThan(20);
+    });
+
+    it("전체·등급별 적체를 문장 하나로 읽어 헬스의 문 시간제한 하나 안에 든다", async () => {
+      await graded("HIGH", 10);
+      let queries = 0;
+      const counting = {
+        query: (...args: Parameters<typeof db.pool.query>) => {
+          queries += 1;
+          return (db.pool.query as (...a: unknown[]) => unknown)(...args);
+        },
+      } as unknown as typeof db.pool;
+
+      const backlog = await getQueueBacklog(counting);
+
+      expect(queries).toBe(1);
+      expect(backlog.dueCount).toBe(1);
+      expect(backlog.byPriority.HIGH.dueCount).toBe(1);
+    });
+
+    it("운영자 토큰이 없으면 등급별 수치도 나오지 않는다", async () => {
+      await graded("URGENT", 10);
+      for (const auth of [ALPHA_KEY, null]) {
+        const text = await (await getJson(app, "/health/ready", auth)).text();
+        expect(text).not.toContain("ByPriority");
+        expect(text).not.toContain("URGENT");
+      }
+    });
+
+    it(`등급별 수치는 등급마다 ${BACKLOG_COUNT_LIMIT}건 상한이 따로 걸린다`, async () => {
+      await graded("LOW", 5);
+      await graded("LOW", 6);
+      await db.pool.query(
+        `INSERT INTO mail_jobs (id, caller_id, idempotency_key, fingerprint, fingerprint_key_version,
+                                expires_at, recipients, priority)
+         SELECT gen_random_uuid(), 'bulk', 'bulk-' || g, '\\x00', 1, now() + interval '1 day', '{}'::jsonb, 40
+           FROM generate_series(1, ${BACKLOG_COUNT_LIMIT + 5}) g`,
+      );
+
+      const backlog = await getQueueBacklog(db.pool);
+
+      expect(backlog.byPriority.URGENT).toMatchObject({
+        dueCount: BACKLOG_COUNT_LIMIT,
+        truncated: true,
+      });
+      expect(backlog.byPriority.LOW).toMatchObject({
+        dueCount: 2,
+        truncated: false,
+      });
+      expect(backlog.byPriority.NORMAL).toEqual({
+        dueCount: 0,
+        truncated: false,
+        oldestDueAgeSeconds: null,
+      });
+    });
   });
 });

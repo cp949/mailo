@@ -34,7 +34,7 @@
 | 유일성 | `(caller_id, Key)`. REST와 파일 채널이 같은 범위를 쓴다 |
 | 같은 Key, 같은 내용 | 200, 기존 작업 반환 |
 | 같은 Key, 다른 내용 | 409. 두 번째 메일은 등록하지 않는다 |
-| 내용 동일 판정 | 복호화한 평문의 지문. to, cc, bcc, from, replyTo, 제목, text, html이 범위다. 암호문은 비교하지 않는다 |
+| 내용 동일 판정 | 복호화한 평문의 지문. to, cc, bcc, from, replyTo, 제목, text, html, priority가 범위다. `priority` 생략과 `NORMAL`은 같다(RQ-034). 암호문은 비교하지 않는다 |
 | 보존 | 작업 종결 후 30일(추정). 종결되지 않은 작업의 Key는 지우지 않는다. 지난 뒤 같은 Key는 새 요청이다 |
 | Key로 쓸 값 | 요청 단위로 고유한 값. outbox 행 ID 등. 사용자 ID처럼 공유되는 값은 409를 일으킨다 |
 
@@ -80,13 +80,14 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 응답.
 
 - 등록(202, 200)과 조회는 같은 `Job` 스키마를 쓰고 `Location: /jobs/{jobId}`를 반환한다. 본문과 수신자는 포함하지 않는다.
-- `Job` 필드: `jobId`, `idempotencyKey`, `status`, `attempts`, `createdAt`, `expiresAt`, `sentAt`, `failedAt`, `failureReason`, `lastError`, `rejectedRecipients`.
+- `Job` 필드: `jobId`, `idempotencyKey`, `status`, `priority`, `attempts`, `createdAt`, `expiresAt`, `sentAt`, `failedAt`, `failureReason`, `lastError`, `rejectedRecipients`.
 - `attempts`는 차단기를 연 계정 상태 오류 시도를 뺀 횟수다. 차단기가 `closed`로 남은 계정 상태 오류는 포함한다(ADR-0007 구현 중 확정 8).
 - `failureReason`은 `PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`, `EXPIRED`다.
 - `lastError`는 `category`(`TRANSIENT`, `PERMANENT`, `ACCOUNT`, `LEASE_EXPIRED`), `smtpCode`, `enhancedCode`, `occurredAt`이다. SMTP 응답 텍스트는 API에 노출하지 않는다.
 - `rejectedRecipients`는 `address`, `smtpCode`, `enhancedCode`다. 응답 텍스트는 없다.
 - 오류 `type`은 `urn:mailo:problem:<이름>` 8종이다. 401은 `WWW-Authenticate: Bearer`를 반환한다.
 - 예상하지 못한 서버 오류(DB 장애 포함)는 모두 503(`service-unavailable`)이다. 500은 쓰지 않는다. 호출처는 같은 Key로 재시도한다(ADR-0005 결정 5).
+- `priority`(선택, `LOW`·`NORMAL`·`HIGH`·`URGENT`, 대소문자 구분, 생략은 `NORMAL`)가 그 밖의 값이면 `/priority` `INVALID_FORMAT`이다. 암호화 평문 안의 `priority`는 `/content` `UNKNOWN_FIELD`다(RQ-033).
 - 정의되지 않은 필드(`UNKNOWN_FIELD`)의 `pointer`는 빈 문자열(본문 전체)이다. 필드 이름도 요청에서 온 값이라 되돌려 주지 않는다.
 - `content`의 형식(점으로 구분한 다섯 부분)이 틀리면 복호화 전에 `INVALID_FORMAT`이다. 형식은 맞지만 헤더를 해석할 수 없으면 `DECRYPTION_FAILED`다.
 - 큐 내부의 실패 원인은 `failureReason`으로 변환한다. `PERMANENT`는 `PERMANENT_ERROR`, `ATTEMPTS_EXHAUSTED`는 `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_REPEATED`는 `ACCOUNT_ERROR_REPEATED`다. `EXPIRED`는 그대로다.

@@ -61,6 +61,8 @@ export function presentJob(job: JobView) {
     jobId: job.id,
     idempotencyKey: job.idempotencyKey,
     status: job.status,
+    // 등급 이름만 내보낸다. DB 순위 숫자는 노출하지 않는다(RQ-037).
+    priority: job.priority,
     attempts: job.attempts,
     createdAt: job.createdAt.toISOString(),
     expiresAt: job.expiresAt.toISOString(),

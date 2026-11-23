@@ -16,8 +16,9 @@
  * - subject, text, html: 변환하지 않는다. 한 글자라도 다르면 다른 요청이다.
  *   text와 html은 undefined와 null이 같고(null), 빈 문자열("")은 null과 다르다.
  * - policy(요청별 정책 필드): 평탄한 맵. undefined 값은 버리고 키를 코드 유닛 순으로 정렬한다.
- *   값은 string, 유한한 number, boolean, null만 허용한다. 현재 정의된 정책 필드는 없다(메시지별 정책은
- *   미결정, RQ 미결정 항목). 필드가 추가되면 요청 스키마와 함께 이 맵에 넣어 지문 범위에서 빠지지 않게 한다.
+ *   값은 string, 유한한 number, boolean, null만 허용한다. 필드가 추가되면 요청 스키마와 함께 이 맵에 넣어
+ *   지문 범위에서 빠지지 않게 한다. 기본값인 요청은 키를 넣지 않는다. 그래야 필드 도입 전 지문과 같다.
+ *   - `priority`: 우선순위 등급 이름. `NORMAL`(생략 포함)이면 키가 없다(RQ-034, `envelope/open-request.ts`).
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { KeyRing } from "./key-ring.js";

@@ -50,6 +50,11 @@ export interface WorkerConfig {
   pollMs: number;
   /** 동시에 전송하는 작업 수 상한. 값이 클수록 DB 커넥션을 더 쓴다(작업당 순간 1개). */
   concurrency: number;
+  /**
+   * claim 호출이 대기 순서 경로(우선순위 무시)를 고를 확률(RQ-035, `MAILO_CLAIM_FIFO_RATIO`). 0 이상 1 이하.
+   * 기본 0.1은 추정값이다. 0이면 항상 우선순위 경로다. 작업 건수가 아니라 claim 호출 수 기준이다.
+   */
+  claimFifoRatio: number;
   retention: WorkerRetentionOptions;
 }
 

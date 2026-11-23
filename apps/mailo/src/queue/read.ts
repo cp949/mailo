@@ -6,6 +6,7 @@
  */
 import type { Queryable } from "../db/index.js";
 import type { JsonValue } from "../events/index.js";
+import { priorityFromRank, type Priority } from "./priority.js";
 import type { JobStatus } from "./types.js";
 
 export interface JobLastError {
@@ -20,6 +21,8 @@ export interface JobView {
   id: string;
   idempotencyKey: string;
   status: JobStatus;
+  /** 등록한 우선순위 등급(RQ-037). 도입 전 작업은 `NORMAL`이다. DB 순위 숫자는 내보내지 않는다. */
+  priority: Priority;
   attempts: number;
   createdAt: Date;
   expiresAt: Date;
@@ -36,6 +39,7 @@ interface JobRow {
   id: string;
   idempotency_key: string;
   status: JobStatus;
+  priority: number;
   attempts: number;
   created_at: Date;
   expires_at: Date;
@@ -50,7 +54,7 @@ interface JobRow {
 
 // 마지막 오류는 SENT가 아닌 가장 최근 시도다. SENT 작업도 이전 시도의 오류를 보여 준다.
 const SELECT_JOB = `
-  SELECT j.id, j.idempotency_key, j.status, j.attempts, j.created_at, j.expires_at,
+  SELECT j.id, j.idempotency_key, j.status, j.priority, j.attempts, j.created_at, j.expires_at,
          j.finished_at, j.failure_reason,
          le.classification AS le_classification, le.response_code AS le_response_code,
          le.enhanced_code AS le_enhanced_code, le.finished_at AS le_finished_at,
@@ -72,6 +76,7 @@ function toView(row: JobRow): JobView {
     id: row.id,
     idempotencyKey: row.idempotency_key,
     status: row.status,
+    priority: priorityFromRank(row.priority),
     attempts: row.attempts,
     createdAt: row.created_at,
     expiresAt: row.expires_at,

@@ -1140,6 +1140,139 @@ describe("파일 채널 폴러 (RQ-002, ADR-0004)", () => {
     });
   });
 
+  describe("우선순위 (RQ-033·034, ADR-0009)", () => {
+    const ranks = async (): Promise<Record<string, number>> =>
+      Object.fromEntries(
+        (
+          await pool.query<{ idempotency_key: string; priority: number }>(
+            "SELECT idempotency_key, priority FROM mail_jobs",
+          )
+        ).rows.map((r) => [r.idempotency_key, r.priority]),
+      );
+
+    it("생략은 NORMAL이고 평문 JSON·JWS·JWE 파일의 네 등급을 그대로 저장한다", async () => {
+      const jweOf = async (key: string, priority: string) =>
+        json({
+          version: 1,
+          idempotencyKey: key,
+          to: ["kim@example.com"],
+          from: "no-reply@example.com",
+          priority,
+          content: await encryptContent(rsaKey(MAILO_JWE_KID), {
+            caller: "alpha",
+            content: { subject: "제목", text: "본문" },
+          }),
+        });
+      h.drop(
+        "alpha",
+        "omit.json",
+        json(fileRequest({ idempotencyKey: "omit" })),
+      );
+      for (const p of ["LOW", "NORMAL", "HIGH", "URGENT"]) {
+        h.drop(
+          "alpha",
+          `plain-${p}.json`,
+          json(fileRequest({ idempotencyKey: `plain-${p}`, priority: p })),
+        );
+        h.drop(
+          "signed",
+          `jws-${p}.json`,
+          signedFile(fileRequest({ idempotencyKey: `jws-${p}`, priority: p })),
+        );
+        h.drop("alpha", `jwe-${p}.json`, await jweOf(`jwe-${p}`, p));
+      }
+
+      const summary = await h.makePoller().pollOnce();
+
+      expect(total(summary, "registered")).toBe(13);
+      expect(await rejections()).toEqual([]);
+      const expected: Record<string, number> = { omit: 20 };
+      for (const [p, r] of [
+        ["LOW", 10],
+        ["NORMAL", 20],
+        ["HIGH", 30],
+        ["URGENT", 40],
+      ] as const)
+        for (const kind of ["plain", "jws", "jwe"])
+          expected[`${kind}-${p}`] = r;
+      expect(await ranks()).toEqual(expected);
+    });
+
+    it("잘못된 priority는 VALIDATION_FAILED로 거부하고 원본을 지우며 값이 로그·거부 기록에 없다", async () => {
+      const values = [null, 40, "", "urgent", CANARY.raw];
+      values.forEach((priority, i) =>
+        h.drop(
+          "alpha",
+          `bad-${i}.json`,
+          json(fileRequest({ idempotencyKey: `bad-${i}`, priority })),
+        ),
+      );
+
+      const summary = await h.makePoller().pollOnce();
+
+      expect(total(summary, "rejected")).toBe(values.length);
+      expect(await jobs()).toEqual([]);
+      const rows = await rejections();
+      expect(rows.map((r) => r.reason_code)).toEqual(
+        values.map(() => "VALIDATION_FAILED"),
+      );
+      expect(files("alpha")).toEqual([]);
+      expect(JSON.stringify(rows)).not.toContain(CANARY.raw);
+      expect(h.logs.join("\n")).not.toContain(CANARY.raw);
+    });
+
+    it("JWE 복호화 평문 안의 priority는 VALIDATION_FAILED로 거부한다", async () => {
+      const content = await encryptContent(rsaKey(MAILO_JWE_KID), {
+        caller: "alpha",
+        content: { subject: "제목", text: "본문", priority: "URGENT" },
+      });
+      h.drop(
+        "alpha",
+        "inner.json",
+        json({
+          version: 1,
+          idempotencyKey: "inner",
+          to: ["kim@example.com"],
+          from: "no-reply@example.com",
+          content,
+        }),
+      );
+
+      await h.makePoller().pollOnce();
+
+      expect(await jobs()).toEqual([]);
+      expect(await rejections()).toMatchObject([
+        { file_name: "inner.json", reason_code: "VALIDATION_FAILED" },
+      ]);
+    });
+
+    it("같은 Key의 생략·NORMAL은 중복이고 등급을 바꾸면 FINGERPRINT_MISMATCH이며 기존 작업의 등급은 그대로다", async () => {
+      const poller = h.makePoller();
+      h.drop("alpha", "a.json", json(fileRequest({ idempotencyKey: "pk" })));
+      await poller.pollOnce();
+      h.drop(
+        "alpha",
+        "b.json",
+        json(fileRequest({ idempotencyKey: "pk", priority: "NORMAL" })),
+      );
+      const dup = await poller.pollOnce();
+      expect(total(dup, "duplicates")).toBe(1);
+
+      h.drop(
+        "alpha",
+        "c.json",
+        json(fileRequest({ idempotencyKey: "pk", priority: "URGENT" })),
+      );
+      const changed = await poller.pollOnce();
+
+      expect(total(changed, "rejected")).toBe(1);
+      expect(await rejections()).toMatchObject([
+        { file_name: "c.json", reason_code: "FINGERPRINT_MISMATCH" },
+      ]);
+      expect(await ranks()).toEqual({ pk: 20 });
+    });
+  });
+
   describe("로그와 기록에 내용이 없다 (RQ-027)", () => {
     it("거부한 파일의 본문 canary가 로그·거부 기록·이벤트 어디에도 없다", async () => {
       const limit = 4096;

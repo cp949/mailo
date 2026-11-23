@@ -1,4 +1,5 @@
 import type { JsonValue } from "../events/index.js";
+import type { Priority } from "./priority.js";
 
 export type JobStatus =
   | "PENDING"
@@ -63,6 +64,11 @@ export interface RegisterInput {
   canonicalRequest: string;
   /** 만료 TTL 초. 만료 시각은 DB now()에 더해 계산한다(ADR-0002 결정 10). */
   expiresInSeconds: number;
+  /**
+   * 발송 우선순위(RQ-033). 생략하면 `NORMAL`이다. 중복 판정은 지문(`canonicalRequest`)이 하므로
+   * 같은 Key의 기존 행이 있으면 이 값으로 기존 행을 바꾸지 않는다(RQ-034).
+   */
+  priority?: Priority;
   /**
    * true이면 새 작업을 만들지 않는다. 같은 Key의 기존 작업이 있을 때만 `duplicate`·`fingerprint_mismatch`를 돌려주고
    * 없으면 `denied`다. 호출자의 승인 정책(예: 발신 주소 허용 범위)을 통과하지 못한 요청이 이미 등록된 Key를

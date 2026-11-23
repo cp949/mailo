@@ -59,9 +59,11 @@ docker compose up -d --build
 - 트랜잭션 안에서 쓸 수 없는 문장(`CREATE INDEX CONCURRENTLY`)은 파일 첫 줄에 `-- mailo:no-transaction`을 둔다. 이 파일은 `BEGIN` 없이 실행된다. 규칙:
   - 문장은 정확히 하나여야 한다. 실행기가 주석·문자열·달러 인용 안의 `;`를 빼고 세어 둘 이상이거나 판정이 애매하면(닫히지 않은 따옴표·`E'...'`) 실행 전에 거부한다. 여러 문장을 한 번에 보내면 PostgreSQL이 암묵 트랜잭션으로 묶어 `CONCURRENTLY`가 실패하기 때문이다.
   - 성공하면 `schema_migrations`에 기록한다. 실패하면 기록하지 않아 다음 실행(컨테이너 재시작 포함)에서 다시 시도하므로 문장은 멱등해야 한다(`IF NOT EXISTS` 등).
-  - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다).
+  - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX CONCURRENTLY`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다).
+  - 실행기는 표식 파일을 실행한 뒤 기록 전에 현재 schema의 `INVALID` 인덱스(`pg_index.indisvalid = false`)를 조회한다. 있으면 기록하지 않고 인덱스 이름을 담은 오류로 실패한다. `IF NOT EXISTS`는 같은 이름의 `INVALID` 인덱스가 있으면 건너뛰고 성공하기 때문이다. 같은 schema에서 수동 `CREATE INDEX CONCURRENTLY`가 진행 중이어도 실패한다.
   - 같은 실행에서 앞서 적용한 파일은 이미 커밋돼 있다. 표식 파일이 실패해도 앞 파일은 롤백되지 않는다.
-  - 현재 파일(`0001`~`0003`)은 모두 트랜잭션 실행이다.
+  - 현재 파일 중 `0005_job_priority_claim_index.sql`만 표식 파일이다. 나머지(`0001`~`0004`)는 트랜잭션 실행이다.
+  - `0005`의 확인·복구 절차는 `troubleshooting.md` "등급별 적체"다.
 - 잠금 대기: 기본(트랜잭션) 실행은 풀에 `lock_timeout`이 걸려 있으면 그 값(CLI는 10초)을 쓰고, 없으면(0) 10초를 `SET LOCAL`로 건다. 표식 파일은 같은 값을 세션 `SET`으로 걸고 끝나면 `RESET`한다. 마이그레이션이 다른 쿼리를 막는 잠금을 10초 넘게 기다리면 실패한다(`55P03`). 인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
 
 ### 마이그레이션 일회성 실행(선택)
@@ -84,12 +86,38 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 - 확인한 것: 로컬 PostgreSQL 17에서 위 권한으로 `mail_intake_rejections`의 INSERT·UPDATE·DELETE(식별 컬럼 포함)와 `pg_current_xact_id()`가 되고 `CREATE TABLE`은 `permission denied`였다. 확인하지 않은 것: 이 권한으로 앱 전체(Worker, 이벤트 피드, 보존 삭제)를 돌리는 것, override 파일의 실제 기동(`docker compose config` 문법 확인만 했다). 이 구성은 기본이 아니다.
 - 이 파일을 쓰면 기동 때 자동 마이그레이션이 없으므로 배포 절차에서 `mailo-migrate`가 끝났는지 확인한다(`docker compose ps -a mailo-migrate`의 종료 코드 0).
 - 현재 파일: `0001_queue_schema.sql`(5개 테이블, PostgreSQL 13 이상 필요), `0002_caller_quota.sql`(`mail_attempts.caller_id` 추가·채움, 부분 인덱스 2개), `0003_attempt_instance.sql`(`mail_attempts.instance` NULL 허용 컬럼과 길이 CHECK(`NOT VALID`) 추가. PostgreSQL 11 이상에서 테이블을 다시 쓰지 않는다).
+- `0004_job_priority.sql`(`mail_jobs.priority smallint NOT NULL DEFAULT 20`과 허용 순위 CHECK(`NOT VALID`) 추가. 상수 DEFAULT 컬럼 추가는 PostgreSQL 11 이상에서 테이블을 다시 쓰지 않는다(문서 기준, 미측정)), `0005_job_priority_claim_index.sql`(우선순위 점유 인덱스 `mail_jobs_priority_claim_idx`를 `CREATE INDEX CONCURRENTLY IF NOT EXISTS`로 만든다).
 - `0002`는 `mail_attempts` 전체를 `UPDATE`하고 인덱스를 `CONCURRENTLY` 없이 만든다. 시도 행이 많은 DB에서는 적용 중 쓰기가 잠시 막힐 수 있다(코드 읽기 결과, 대용량에서 측정하지 않았다).
 - 이전 버전 인스턴스가 `0002` 적용 뒤에도 돌면 `caller_id` 없이 시도를 기록한다. 그런 행은 호출처 할당 사용량에 잡히지 않는다(마이그레이션 주석). 롤링 배포가 끝나면 사라진다.
 
 ```txt
 위험도: 중간 (스키마 변경)
 롤백: down 마이그레이션 없음. 적용 전 pg_dump 백업을 복원한다
+```
+
+### 우선순위 도입 배포 순서
+
+근거: RQ-038, ADR-0009.
+
+이전 버전 인스턴스는 요청의 `priority`를 정의되지 않은 필드(`UNKNOWN_FIELD`)로 거부한다. 그래서 호출처가 `priority`를 보내기 시작하는 시점은 모든 인스턴스가 새 버전이 된 뒤다.
+
+1. 마이그레이션 `0004`·`0005`를 적용한다(기동 때 자동 또는 `mailo-migrate`). `0005`는 `CONCURRENTLY`라 쓰기를 막지 않지만 큰 테이블에서는 오래 걸릴 수 있다(미측정).
+2. 모든 Mailo 인스턴스를 새 버전으로 바꾼다. 이 동안(이전·새 인스턴스 혼용) 호출처는 `priority`를 보내지 않는다. 이전 인스턴스가 섞여 있으면 점유 순서만 예전과 같아지고 정합성 문제는 없다.
+3. 인덱스가 유효한지 확인한다(`troubleshooting.md` "등급별 적체"의 `indisvalid` 조회).
+4. 호출처가 `priority` 전송을 시작한다(`caller-onboarding.md` "우선순위").
+
+롤백:
+
+1. 호출처 relay와 파일 게시를 일시 중지한다. 진행 중 요청과 Mailo 파일 폴러 처리가 끝날 때까지 기다린다. 이전 버전에 `priority`를 보내면 REST는 400, 파일은 수집 거부가 된다.
+2. 등록 응답을 확인하지 못한 요청과 inbox에 남은 파일은 같은 호출처의 `GET /jobs?idempotencyKey=`로 확인한다. 작업이 있으면 이미 등록된 것으로 호출처에 기록하고 재전송 대상에서 제외한다. 파일은 새 게시가 멈췄고 같은 Key의 DB 등록을 확인한 뒤 기존 호출처 파일 관리 절차로 정리한다. 작업이 `PENDING`이어도 등록 확인은 끝난 것이다. 발송 결과는 기존 조회·이벤트 피드로 추적한다.
+3. `LOW`·`HIGH`·`URGENT`로 등록된 요청에서 `priority`만 제거해 같은 Key로 재요청하지 않는다. 지문의 `policy.priority`가 달라져 REST는 409, 파일은 `FINGERPRINT_MISMATCH`가 된다. 새 Key로 재등록하면 별도 작업이 생겨 중복 발송할 수 있다. 조회 실패나 Key 보존 기간 경과로 등록 여부를 확정할 수 없으면 해당 요청의 재전송을 보류하고 복구 후 확인한다.
+4. 아직 등록되지 않은 요청에서 `priority`를 제거하면 `NORMAL`로 등록된다. 이 의미 변경을 허용할 요청만 이전 버전으로 전달한다. 기존 등급을 유지해야 하는 요청은 호출처에서 보관하고 우선순위 지원 버전 복구 후 같은 Key·같은 내용·같은 등급으로 전달한다.
+   - 파일 JWS는 `priority`도 서명 대상이다. 등급을 제거할 파일은 호출처의 서명 파이프라인에서 새 payload를 서명한다. 게시된 파일을 제자리 수정하지 않고 기존 임시 파일 → rename 절차로 다시 게시한다.
+5. 이전 버전으로 되돌린다. `priority` 컬럼과 인덱스는 남겨 둔다. 이전 버전은 이 컬럼을 읽지 않고, 새로 등록한 행은 DEFAULT(`NORMAL`)가 된다. 등록된 작업의 등급은 남지만 이전 Worker는 등급을 무시하고 점유한다. `priority`를 보내지 않도록 확인한 뒤 호출처 relay와 파일 게시를 재개한다.
+
+```txt
+위험도: 중간 (미확인 요청의 등급 제거는 지문 충돌, 새 Key 재등록은 중복 발송 가능)
+롤백: 미확인 요청을 정리한 뒤 앱만 이전 버전으로 되돌린다. 스키마는 그대로 둔다
 ```
 
 ## 환경 변수
@@ -135,6 +163,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_LEASE_SECONDS` | 120 | 5~86400 | 작업 점유 lease. `stop_grace_period`와 연동 |
 | `MAILO_WORKER_POLL_MS` | 1000 | 50~600000 | claim 폴링 간격(±10% 흩뿌림) |
 | `MAILO_WORKER_CONCURRENCY` | 4 | 1~100 | 동시 전송 수 |
+| `MAILO_CLAIM_FIFO_RATIO` | 0.1 | 0 이상 1 이하(소수 가능) | claim 호출이 우선순위를 무시하고 가장 오래 기다린 순서로 고를 확률(RQ-035). 기본값은 추정이다. 0이면 항상 우선순위 순서, 1이면 항상 대기 순서다. 작업 건수가 아니라 claim 호출 수 기준이라 작업 건수 비율은 정확히 이 값이 아니다. 범위 밖·숫자 아님은 기동 실패 |
 | `MAILO_RETRY_MAX_ATTEMPTS` | 8 | 1~100 | 첫 시도 포함. 계정 상태 오류 시도는 제외 |
 | `MAILO_RETRY_MODE` | `exponential` | `exponential`, `fixed` | |
 | `MAILO_RETRY_BASE_SECONDS` | 60 | 1~86400 | |
@@ -271,6 +300,9 @@ secrets:
 | ---- | ---- | ------- |
 | `queue.dueCount` | 점유 대상(`PENDING`·`RETRY_WAIT`, `next_attempt_at` 경과) 작업 수. 상한 10000 | `queue.dueCountTruncated`가 true면 더 있다. 차단기가 `open`이거나 호출처 할당에 걸린 작업도 센다 |
 | `queue.oldestDueAgeSeconds` | 가장 오래 기다린 작업이 점유 가능해진 뒤 지난 초. 없으면 null | 이 값이 커지는데 `worker.lastPollAgeSeconds`도 크면 점유 정지다. 차단기가 `closed`이고 할당에 걸리지 않았는데 커지면 이상이다 |
+| `queue.dueCountByPriority` | 등급(`LOW`·`NORMAL`·`HIGH`·`URGENT`)별 `dueCount`. 네 키가 항상 있다. 상한 10000이 등급마다 따로 걸린다 | 등급별 합은 `dueCount`와 다를 수 있다(상한이 따로 걸린다). 읽는 순서는 `troubleshooting.md` "등급별 적체" |
+| `queue.dueCountTruncatedByPriority` | 등급별 `dueCountTruncated` | true인 등급은 10000건보다 많다 |
+| `queue.oldestDueAgeSecondsByPriority` | 등급별 `oldestDueAgeSeconds`. 그 등급의 대기 작업이 없으면 null | `LOW`만 커지는 것은 우선순위 경로의 정상 동작이다. 만료(기본 24시간)에 가까워지면 "굶음의 한계"를 본다(`caller-onboarding.md` "우선순위") |
 | `worker.state` | `idle`, `running`, `paused`, `stopping`, `stopped`. Worker를 켜지 않은 앱(테스트)은 `disabled` | `running`이 아니면 종료 중이거나 시작 전이다 |
 | `worker.lastPollAt`, `worker.lastPollAgeSeconds` | 점유 루프가 마지막으로 한 바퀴를 시작한 시각과 경과 초. 큐가 비어 있어도 갱신된다 | 폴링 간격(기본 1초)과 DB 시간제한(기본 최대 35초)보다 훨씬 크면 루프가 DB에서 멈춘 것이다(추정 기준: 2분 이상) |
 | `worker.claimFailureStreak` | 점유가 연속으로 실패한 횟수 | 0보다 크면 `claim_failed` 로그를 본다 |
@@ -366,7 +398,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 
 - 컨테이너 기동, 재생성, 재시작 후 자동 복구(RQ-025·026의 미충족 조건).
 - 실제 SIGTERM을 받은 컨테이너의 종료 시간(`pause` 먼저 호출하는 새 종료 순서 포함).
-- 마이그레이션의 대용량 DB 적용 시간.
+- 마이그레이션의 대용량 DB 적용 시간. `0005`(`CREATE INDEX CONCURRENTLY`)를 쓰기 부하 중에 적용한 시간도 측정하지 않았다.
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
 - `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).

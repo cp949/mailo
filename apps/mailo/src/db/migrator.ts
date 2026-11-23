@@ -121,11 +121,36 @@ function parseMigration(name: string, sql: string): PendingMigration {
 }
 
 /**
+ * 현재 schema(`current_schema()`)에 INVALID 인덱스가 있으면 이름을 담아 예외를 던진다.
+ * 마이그레이션은 advisory lock으로 직렬화되므로 다른 마이그레이션이 만드는 중인 인덱스와 겹치지 않는다.
+ * 운영자가 같은 schema에서 수동으로 `CREATE INDEX CONCURRENTLY`를 돌리는 중이면 그 인덱스도 걸린다(보수적으로 실패한다).
+ */
+async function assertNoInvalidIndexes(
+  client: pg.PoolClient,
+  name: string,
+): Promise<void> {
+  const { rows } = await client.query<{ index_name: string }>(
+    `SELECT c.relname AS index_name
+       FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+      WHERE NOT i.indisvalid AND c.relnamespace = current_schema()::regnamespace
+      ORDER BY c.relname`,
+  );
+  if (rows.length > 0)
+    throw new Error(
+      `마이그레이션 ${name}: INVALID 인덱스가 있어 적용으로 기록하지 않는다(${rows
+        .map((r) => r.index_name)
+        .join(", ")}). DROP INDEX CONCURRENTLY로 지운 뒤 다시 실행한다`,
+    );
+}
+
+/**
  * migrations 디렉터리의 `NNNN_이름.sql`을 파일명 순서로 적용한다.
  * - 기본: 파일마다 트랜잭션 하나이며 실패하면 그 파일만 롤백하고 중단한다. 트랜잭션 안에서 `SET LOCAL lock_timeout`을 건다.
  * - 첫 줄이 `-- mailo:no-transaction`이면 BEGIN 없이 실행한다. 문장 하나만 허용한다(검사 실패는 실행 전에 거부).
  *   실패하면 `schema_migrations`에 기록하지 않아 다음 실행에서 다시 시도하므로 문장은 멱등해야 한다(`IF NOT EXISTS` 등).
- *   `CREATE INDEX CONCURRENTLY`가 실패하면 INVALID 인덱스가 남는다. 운영자가 `DROP INDEX`로 지운 뒤 다시 실행한다.
+ *   `CREATE INDEX CONCURRENTLY`가 실패하면 INVALID 인덱스가 남는다. 운영자가 `DROP INDEX CONCURRENTLY`로 지운 뒤 다시 실행한다.
+ *   실행 뒤 기록 전에 현재 schema의 INVALID 인덱스를 찾아, 있으면 기록하지 않고 인덱스 이름을 담아 실패한다(fail-closed).
+ *   `IF NOT EXISTS`는 같은 이름의 INVALID 인덱스가 있으면 아무것도 하지 않고 성공하기 때문이다(ADR-0009 구현 중 확정).
  * - `lock_timeout`: 풀에 이미 걸려 있으면(`SHOW lock_timeout`이 0이 아님) 그 값을 쓰고, 없으면 `options.lockTimeoutMillis`(기본 10초)를 건다.
  *   인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
  * 적용 기록은 `schema_migrations`에 남기며, 이미 적용한 파일은 건너뛴다.
@@ -190,6 +215,7 @@ export async function runMigrations(
         } finally {
           if (needsDefault) await client.query("RESET lock_timeout");
         }
+        await assertNoInvalidIndexes(client, migration.name);
         await client.query("INSERT INTO schema_migrations (name) VALUES ($1)", [
           migration.name,
         ]);

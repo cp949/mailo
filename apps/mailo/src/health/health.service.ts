@@ -5,7 +5,12 @@ import { APP_CONFIG, type AppConfig } from "../config/index.js";
 import { PG_POOL } from "../db/index.js";
 import { getFeedLag } from "../events/index.js";
 import { FILE_POLLER, type FilePollerRunner } from "../file-channel/index.js";
-import { getBreakerState, getQueueBacklog } from "../queue/index.js";
+import {
+  PRIORITIES,
+  getBreakerState,
+  getQueueBacklog,
+  type Priority,
+} from "../queue/index.js";
 import { WORKER_RUNNER, type WorkerRunner } from "../worker-port.js";
 
 const logger = new Logger("health");
@@ -22,6 +27,16 @@ const LAST_REASON: Record<string, string> = {
   RATE_LIMIT: "QUOTA_BURST",
   OTHER: "OTHER",
 };
+
+/** 등급별 적체 값을 등급 이름 키의 객체로 펼친다. 키 순서는 `PRIORITIES`(LOW → URGENT)다. */
+function byPriority<V, T>(
+  values: Record<Priority, V>,
+  pick: (value: V) => T,
+): Record<Priority, T> {
+  const result = {} as Record<Priority, T>;
+  for (const p of PRIORITIES) result[p] = pick(values[p]);
+  return result;
+}
 
 export interface ReadyResult {
   httpStatus: 200 | 503;
@@ -43,6 +58,12 @@ export interface ReadyResult {
       dueCount: number;
       dueCountTruncated: boolean;
       oldestDueAgeSeconds: number | null;
+      /** 등급별 `dueCount`(RQ-037). 네 등급이 항상 키로 있다. 등급마다 상한(10000)이 따로 걸린다. */
+      dueCountByPriority: Record<Priority, number>;
+      /** 등급별 `dueCountTruncated`. true이면 그 등급에 상한보다 많은 작업이 있다. */
+      dueCountTruncatedByPriority: Record<Priority, boolean>;
+      /** 등급별 `oldestDueAgeSeconds`. 그 등급의 대기 작업이 없으면 null이다. */
+      oldestDueAgeSecondsByPriority: Record<Priority, number | null>;
     };
     /** 운영자 토큰 호출에만 있다. 이 프로세스의 Worker 상태. 발송이 멈췄는지 가르는 신호다. */
     worker?:
@@ -200,6 +221,18 @@ export class HealthService {
                   dueCount: backlog.dueCount,
                   dueCountTruncated: backlog.truncated,
                   oldestDueAgeSeconds: backlog.oldestDueAgeSeconds,
+                  dueCountByPriority: byPriority(
+                    backlog.byPriority,
+                    (v) => v.dueCount,
+                  ),
+                  dueCountTruncatedByPriority: byPriority(
+                    backlog.byPriority,
+                    (v) => v.truncated,
+                  ),
+                  oldestDueAgeSecondsByPriority: byPriority(
+                    backlog.byPriority,
+                    (v) => v.oldestDueAgeSeconds,
+                  ),
                 },
                 worker: this.workerStatus(),
                 filePoller: this.filePollerStatus(),

@@ -21,6 +21,11 @@ export interface WorkerOptions {
   pollMs: number;
   /** 동시에 전송하는 작업 수의 상한. 이 값이 커질수록 DB 커넥션을 더 쓴다(작업당 순간 1개). */
   concurrency: number;
+  /**
+   * claim 호출마다 대기 순서 경로(`fifo`)를 고를 확률. 0 이상 1 이하(RQ-035, `MAILO_CLAIM_FIFO_RATIO`).
+   * 0이면 항상 우선순위 경로, 1이면 항상 대기 순서 경로다. 기본 0.1은 추정값이다.
+   */
+  claimFifoRatio: number;
   /** 만료·lease 복구 sweep 주기(ms). 상태 조회 정확도를 정한다. */
   sweepIntervalMs: number;
   /** 본문 삭제·보존 삭제 주기(ms). */
@@ -76,6 +81,7 @@ export function workerOptionsFromConfig(
     leaseSeconds: w.lease.seconds,
     pollMs: w.pollMs,
     concurrency: w.concurrency,
+    claimFifoRatio: w.claimFifoRatio,
     sweepIntervalMs: w.retention.maintenanceIntervalMs,
     cleanupIntervalMs: w.retention.maintenanceIntervalMs,
     retention: {
@@ -114,6 +120,12 @@ export function validateWorkerOptions(options: WorkerOptions): void {
   }
   if (!Number.isInteger(options.concurrency))
     throw new WorkerOptionsError("concurrency");
+  if (
+    !Number.isFinite(options.claimFifoRatio) ||
+    options.claimFifoRatio < 0 ||
+    options.claimFifoRatio > 1
+  )
+    throw new WorkerOptionsError("claimFifoRatio");
   if (!Number.isInteger(options.poisonMaxAttempts))
     throw new WorkerOptionsError("poisonMaxAttempts");
   if (

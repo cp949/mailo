@@ -45,7 +45,7 @@ paths:
         - 같은 `(caller_id, Idempotency-Key)`가 있고 내용이 같으면 200과 기존 작업을 반환한다.
         - 같은 Key에 내용이 다르면 409다. 두 번째 메일은 등록하지 않는다.
         - 내용 동일 여부는 복호화 뒤 평문의 지문으로 판정한다(ADR-0005 결정 3). 암호문은 비교하지 않는다.
-        - 지문 범위는 to, cc, bcc, from, replyTo, subject, text, html이다. 재시도할 때 한 필드라도 바꾸면 409다.
+        - 지문 범위는 to, cc, bcc, from, replyTo, subject, text, html, priority다. 재시도할 때 한 필드라도 바꾸면 409다. `priority` 생략과 `NORMAL`은 같은 내용이다(RQ-034).
         - 평문 모드(`subject`, `text`, `html`)와 암호화 모드(`content`)는 한 요청에서 섞을 수 없다.
         - 암호화 모드는 수신자·발신자를 먼저 검증하고, 복호화한 뒤에 제목·본문을 검증한다(ADR-0008 결정 3). 지문은 그 뒤에 계산한다. 복호화한 제목·본문의 검증 오류 위치는 모두 `/content`다.
         - 원시 요청이 2 MiB를 넘으면 본문을 읽기 전에도 413으로 거부할 수 있다.
@@ -78,6 +78,14 @@ paths:
                 value:
                   to: [kim@example.com]
                   content: eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoibWFpbG8tMjAyNi0xMSIsImNhbGxlciI6ImJpbGxpbmcifQ.Qm9ndXNFbmNyeXB0ZWRLZXlFeGFtcGxl.U29tZUl2RXhhbXBs.Qm9ndXNDaXBoZXJ0ZXh0RXhhbXBsZQ.Qm9ndXNUYWdFeGFtcGxlMTIzNDU
+              urgent:
+                summary: 우선순위 지정 (인증 코드)
+                description: '`priority`는 최상위 평문 필드다. 암호화 모드에서도 `content` 바깥에 둔다.'
+                value:
+                  to: [kim@example.com]
+                  subject: 인증 코드
+                  text: 인증 코드는 123456입니다.
+                  priority: URGENT
       responses:
         '202':
           description: 새 작업을 등록했다. relay는 완료로 처리한다.
@@ -403,6 +411,9 @@ paths:
                       dueCount: 412
                       dueCountTruncated: false
                       oldestDueAgeSeconds: 960
+                      dueCountByPriority: { LOW: 300, NORMAL: 100, HIGH: 10, URGENT: 2 }
+                      dueCountTruncatedByPriority: { LOW: false, NORMAL: false, HIGH: false, URGENT: false }
+                      oldestDueAgeSecondsByPriority: { LOW: 960, NORMAL: 950, HIGH: 940, URGENT: 930 }
                     worker:
                       state: running
                       inFlight: 0
@@ -536,6 +547,14 @@ components:
       maxLength: 255
       pattern: '^[^\r\n]*$'
       description: 제목. 255자 이하이고 CR·LF를 포함하지 않는다.
+    Priority:
+      type: string
+      enum: [LOW, NORMAL, HIGH, URGENT]
+      description: |
+        발송 우선순위(RQ-033·035). 대소문자를 구분한다. 생략하면 `NORMAL`이다.
+        Worker는 높은 등급(`URGENT` → `HIGH` → `NORMAL` → `LOW`)을 먼저 점유한다. 같은 등급은 오래 기다린 순서다.
+        claim 호출의 일부(기본 약 10%, 추정)는 등급을 무시하고 가장 오래 기다린 작업을 고른다. 낮은 등급이 완전히 굶지 않게 하기 위해서다.
+        `URGENT`는 즉시 전송을 뜻하지 않는다. 재시도 대기, 호출처 할당, 차단기는 모든 등급에 같게 적용된다.
     JweCompact:
       type: string
       pattern: '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
@@ -570,6 +589,7 @@ components:
         - `from`을 생략하면 Mailo의 기본 발신 주소(SMTP 발신 계정)를 쓴다. 쓸 수 있는 `from`은 Mailo의 기본 발신 주소와 호출처에 등록된 `allowedFrom`뿐이다(대소문자 무시). 그 밖의 주소는 400 `FROM_NOT_ALLOWED`(위치 `/from`)다. 같은 `Idempotency-Key`로 이미 등록된 요청의 재전송은 이 검사를 받지 않는다. Gmail은 인증 계정과 다른 From을 덮어쓸 수 있다.
         - `replyTo`는 주소 형식만 검증하고 허용 범위를 두지 않는다.
         - 제목+text+html은 UTF-8로 1 MiB 이하다. 원시 요청은 2 MiB 이하다.
+        - `priority`를 생략하면 `NORMAL`이다. `null`, 숫자, 빈 문자열, 정의되지 않은 값(소문자 포함)은 400 `INVALID_FORMAT`(위치 `/priority`)다. 암호화 평문 안의 `priority`는 `UNKNOWN_FIELD`(위치 `/content`)다.
       required: [to]
       additionalProperties: false
       properties:
@@ -603,6 +623,8 @@ components:
           description: HTML 본문.
         content:
           $ref: '#/components/schemas/JweCompact'
+        priority:
+          $ref: '#/components/schemas/Priority'
       oneOf:
         - title: 평문 모드
           required: [subject]
@@ -689,6 +711,7 @@ components:
         - jobId
         - idempotencyKey
         - status
+        - priority
         - attempts
         - createdAt
         - expiresAt
@@ -706,6 +729,10 @@ components:
           $ref: '#/components/schemas/IdempotencyKey'
         status:
           $ref: '#/components/schemas/JobStatus'
+        priority:
+          allOf:
+            - $ref: '#/components/schemas/Priority'
+          description: 등록한 우선순위. 생략해 등록한 작업과 이 기능 도입 전에 등록한 작업은 `NORMAL`이다. 이벤트 피드에는 없다.
         attempts:
           type: integer
           minimum: 0
@@ -988,7 +1015,13 @@ components:
         queue:
           type: object
           description: 운영자 토큰이 있을 때만 반환한다. 점유 대상 작업의 적체. 차단기가 `open`이거나 호출처 할당에 걸린 작업도 센다.
-          required: [dueCount, dueCountTruncated, oldestDueAgeSeconds]
+          required:
+            - dueCount
+            - dueCountTruncated
+            - oldestDueAgeSeconds
+            - dueCountByPriority
+            - dueCountTruncatedByPriority
+            - oldestDueAgeSecondsByPriority
           additionalProperties: false
           properties:
             dueCount:
@@ -1003,6 +1036,36 @@ components:
               type: [integer, 'null']
               minimum: 0
               description: 가장 오래 기다린 작업이 점유 가능해진 뒤 지난 초. 대기 작업이 없으면 `null`이다.
+            dueCountByPriority:
+              type: object
+              description: 등급별 `dueCount`(RQ-037). 네 등급이 항상 키로 있다. 상한 10000이 등급마다 따로 걸려 합이 `dueCount`와 다를 수 있다.
+              required: [LOW, NORMAL, HIGH, URGENT]
+              additionalProperties: false
+              properties:
+                LOW: { type: integer, minimum: 0, maximum: 10000 }
+                NORMAL: { type: integer, minimum: 0, maximum: 10000 }
+                HIGH: { type: integer, minimum: 0, maximum: 10000 }
+                URGENT: { type: integer, minimum: 0, maximum: 10000 }
+            dueCountTruncatedByPriority:
+              type: object
+              description: 등급별 `dueCountTruncated`. true인 등급은 상한보다 많다.
+              required: [LOW, NORMAL, HIGH, URGENT]
+              additionalProperties: false
+              properties:
+                LOW: { type: boolean }
+                NORMAL: { type: boolean }
+                HIGH: { type: boolean }
+                URGENT: { type: boolean }
+            oldestDueAgeSecondsByPriority:
+              type: object
+              description: 등급별 `oldestDueAgeSeconds`. 그 등급의 대기 작업이 없으면 `null`이다.
+              required: [LOW, NORMAL, HIGH, URGENT]
+              additionalProperties: false
+              properties:
+                LOW: { type: [integer, 'null'], minimum: 0 }
+                NORMAL: { type: [integer, 'null'], minimum: 0 }
+                HIGH: { type: [integer, 'null'], minimum: 0 }
+                URGENT: { type: [integer, 'null'], minimum: 0 }
         worker:
           type: object
           description: 운영자 토큰이 있을 때만 반환한다. 응답한 인스턴스의 Worker 상태. Worker를 켜지 않은 앱은 `state`가 `disabled`뿐이다.
@@ -1161,6 +1224,7 @@ components:
         jobId: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e90
         idempotencyKey: outbox-8841
         status: PENDING
+        priority: NORMAL
         attempts: 0
         createdAt: '2026-11-23T09:30:00Z'
         expiresAt: '2026-11-24T09:30:00Z'
@@ -1175,6 +1239,7 @@ components:
         jobId: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e90
         idempotencyKey: outbox-8841
         status: RETRY_WAIT
+        priority: NORMAL
         attempts: 1
         createdAt: '2026-11-23T09:30:00Z'
         expiresAt: '2026-11-24T09:30:00Z'
@@ -1193,6 +1258,7 @@ components:
         jobId: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e90
         idempotencyKey: outbox-8841
         status: SENT
+        priority: NORMAL
         attempts: 2
         createdAt: '2026-11-23T09:30:00Z'
         expiresAt: '2026-11-24T09:30:00Z'
@@ -1214,6 +1280,7 @@ components:
         jobId: 9b7c1e34-2d5a-4f60-8a1c-6e0d3f9b5a22
         idempotencyKey: outbox-8842
         status: FAILED
+        priority: NORMAL
         attempts: 1
         createdAt: '2026-11-23T09:31:00Z'
         expiresAt: '2026-11-24T09:31:00Z'

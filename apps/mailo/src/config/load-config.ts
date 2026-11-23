@@ -439,6 +439,11 @@ function loadWorkerConfig(
       min: 1,
       max: 100,
     }),
+    // RQ-035: 기본 0.1은 추정값이다. 범위 밖·숫자 아님은 기동 거부다.
+    claimFifoRatio: reader.decimal("MAILO_CLAIM_FIFO_RATIO", 0.1, {
+      min: 0,
+      max: 1,
+    }),
     retention: {
       bodyGraceSeconds,
       recordRetentionSeconds,

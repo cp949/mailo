@@ -3,7 +3,7 @@
  *
  * 순서(바꾸지 않는다)
  * 1. JWS 구조 파싱 2. 서명 검증(`caller`·`iat` 포함) 3. payload 파싱·스키마 검증 4. 복호화
- * 5. 복호화한 제목·본문 입력 검증(RQ-030) 6. 지문 계산(ADR-0005).
+ * 5. 복호화한 제목·본문 입력 검증(RQ-030) 6. 지문 계산(ADR-0005). 우선순위는 지문의 `policy`에 넣는다(RQ-034).
  * 서명을 복호화보다 먼저 검증한다. 위조 파일의 복호화를 시도하지 않는다.
  * 제목이 암호화돼 있으면 CR/LF 검사를 복호화 전에 할 수 없으므로 5단계에서 한다.
  *
@@ -17,8 +17,10 @@
  */
 import {
   canonicalizeFingerprintInput,
+  type PolicyValue,
   type QueueFingerprinter,
 } from "../crypto/index.js";
+import { DEFAULT_PRIORITY, type Priority } from "../queue/index.js";
 import {
   validateMailRequest,
   type MailRequestLimits,
@@ -66,6 +68,8 @@ export interface OpenRequestSuccess {
   request: ValidatedMailRequest;
   /** 파일 채널의 `idempotencyKey`. REST는 null이고 호출자가 헤더에서 받는다. */
   idempotencyKey: string | null;
+  /** 요청한 우선순위(RQ-033). 생략하면 `NORMAL`이다. 지문에 들어 있다. */
+  priority: Priority;
   fingerprint: {
     /** 정규화한 평문 요청. `queue.register`의 `canonicalRequest`로 그대로 넘긴다. 평문을 포함하므로 로그에 남기지 않는다. */
     canonicalRequest: string;
@@ -91,6 +95,17 @@ const CONTENT_FIELDS = new Set([
   "content",
   "attachments",
 ]);
+
+/**
+ * 지문 `policy`에 넣을 우선순위(RQ-034, ADR-0005 결정 3의 요청별 정책 필드).
+ * - `NORMAL`(생략 포함)은 키를 넣지 않는다. 그래서 도입 전 지문과 같다.
+ * - 그 밖의 등급은 `policy.priority`에 등급 이름을 넣는다. DB 순위 숫자는 넣지 않는다.
+ */
+function priorityPolicy(
+  priority: Priority,
+): Readonly<Record<string, PolicyValue>> {
+  return priority === DEFAULT_PRIORITY ? {} : { priority };
+}
 
 function decodeJson(bytes: Uint8Array): unknown {
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -166,13 +181,17 @@ export async function openRequest(
   }
 
   // 6. 지문 계산
-  const canonicalRequest = canonicalizeFingerprintInput(request);
+  const canonicalRequest = canonicalizeFingerprintInput({
+    ...request,
+    policy: priorityPolicy(schema.priority),
+  });
   const { digest, keyVersion } =
     ctx.fingerprinter.fingerprint(canonicalRequest);
   return {
     ok: true,
     request,
     idempotencyKey: schema.idempotencyKey,
+    priority: schema.priority,
     fingerprint: { canonicalRequest, digest, keyVersion },
     signed,
     encrypted,

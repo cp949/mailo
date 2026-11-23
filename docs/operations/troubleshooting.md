@@ -31,6 +31,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | 증상 | 먼저 볼 곳 |
 | ---- | ---------- |
 | 작업이 `PENDING`·`RETRY_WAIT`에 머문다 | 차단기, 호출처 할당, `claim_failed` |
+| `URGENT`·`HIGH`가 늦게 나가거나 `LOW`가 만료된다 | "등급별 적체" |
 | 작업이 `SENDING`에 오래 머문다 | lease 만료(`lease_recovered`, `LEASE_EXPIRED`), 프로세스 재시작 |
 | 같은 메일이 두 번 갔다 | `LEASE_EXPIRED` 시도, `drain_timeout`, `lease_lost` |
 | 입력 폴더의 파일이 남는다 | `file_poll`의 `unreadable`·`deleteFailed`, `file_inbox_missing` |
@@ -194,6 +195,61 @@ SELECT gid, prepared FROM pg_prepared_xacts;   -- 끝나지 않은 prepared tran
 - 호출처 쪽 원인도 본다. cursor를 저장하지 않아 같은 구간을 다시 읽거나, `type` 필터를 바꾸면서 같은 cursor를 쓰면 이벤트를 놓친 것처럼 보인다(cursor는 필터마다 따로 저장한다).
 - 호출처가 30일 넘게 폴링하지 않으면 그 사이 이벤트가 삭제됐다. 이 경우는 작업 상태 조회로 보완한다(Key 보존도 종결 후 30일이다).
 
+## 등급별 적체
+
+우선순위(RQ-033·035)가 기대대로 동작하는지 볼 때 쓴다. 점유 규칙: claim 호출마다 `MAILO_CLAIM_FIFO_RATIO`(기본 0.1)의 확률로 가장 오래 기다린 순서, 나머지는 `URGENT` → `HIGH` → `NORMAL` → `LOW` 순서로 고른다. 같은 등급은 오래 기다린 순서다.
+
+순서대로 본다.
+
+1. 운영자 토큰 `GET /health/ready`의 `queue.dueCountByPriority`·`queue.oldestDueAgeSecondsByPriority`로 어느 등급이 쌓였는지 본다(`deployment.md` "헬스").
+   ```sh
+   curl -s -H "Authorization: Bearer $MAILO_OPS_TOKEN" http://<host>:3000/health/ready
+   ```
+2. 차단기 `circuitBreaker.state`를 본다. `open`이면 `URGENT`도 점유하지 않는다. `half_open`이면 대표 작업 1건만 점유한다("전역 차단기가 open일 때").
+3. 쌓인 등급의 작업이 할당을 넘긴 호출처의 것인지 본다(`caller_quota_exceeded`, "호출처 할당 초과"). 할당은 모든 등급을 합산하므로 `URGENT`도 할당을 넘기면 점유하지 않는다.
+4. 슬롯 사용을 본다. `worker.inFlight`가 `MAILO_WORKER_CONCURRENCY`와 같은 상태가 이어지면 빈 슬롯이 없어 `URGENT`도 기다린다. 진행 중 전송은 끊지 않는다. 슬롯이 비면 Worker가 polling 대기에서 일찍 깨어날 수 있다. 점유 시점은 빈 슬롯과 다음 점유 실행에 따라 달라지며, 폴링 간격은 고정 지연 하한이 아니다. Worker가 빈 슬롯은 있으나 할 일이 없어 대기 중이면 새 `URGENT`는 다음 polling까지 기다린다. 이 대기는 `MAILO_WORKER_POLL_MS`(기본 1000ms)에 ±10% jitter를 더한 값이다(`worker/worker.ts` `pollDelay`). claim이 연속 실패하면 대기가 `pollMs × 2^n`(n 최대 10)으로 늘어난다.
+5. 재시도 대기를 본다. `next_attempt_at`이 미래인 작업은 등급과 무관하게 점유하지 않는다. 헬스 수치에도 세지 않는다.
+6. 인덱스가 유효한지 본다. `INVALID`이거나 없으면 우선순위 점유와 등급별 헬스 수치가 순차 읽기로 느려진다(정합성 문제는 없다). 검토 측정(2026-11-23, 대기 30만 건)에서 우선순위 claim이 0.08ms → 170ms(Seq Scan, 디스크 정렬), 등급별 헬스가 4.6 → 58ms였다. 적체가 더 크면 운영자 헬스의 적체 문장이 문 시간제한(2초)에 걸려 503이 될 수 있다(추정, 측정하지 않았다).
+
+```sql
+-- 등급별 상태 분포(10 LOW, 20 NORMAL, 30 HIGH, 40 URGENT)
+SELECT priority, status, count(*) FROM mail_jobs
+ WHERE status IN ('PENDING', 'RETRY_WAIT', 'SENDING') GROUP BY 1, 2 ORDER BY 1 DESC, 2;
+-- 등급별 재시도 대기(아직 점유 대상이 아닌 작업)
+SELECT priority, count(*), min(next_attempt_at) FROM mail_jobs
+ WHERE status IN ('PENDING', 'RETRY_WAIT') AND next_attempt_at > now() GROUP BY 1 ORDER BY 1 DESC;
+-- 우선순위 점유 인덱스 유효성. valid가 false이거나 행이 없으면 아래 복구를 한다
+SELECT c.relname, i.indisvalid AS valid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+ WHERE c.relname = 'mail_jobs_priority_claim_idx';
+```
+
+해석:
+
+- `LOW`의 `oldestDueAgeSeconds`만 커지는 것은 정상 동작이다. 대기 순서 경로가 처리량의 일부(claim 호출의 약 10%)만 오래된 작업에 준다.
+- 굶음의 한계: 유입이 처리량보다 많은 상태가 이어지면 낮은 등급 작업은 만료 시각(기본 24시간, `MAILO_JOB_EXPIRY_SECONDS`)을 넘겨 `EXPIRED`가 될 수 있다. 조치는 처리량을 늘리거나(`MAILO_WORKER_CONCURRENCY`), 호출처가 등급을 용도대로 쓰게 하거나(`caller-onboarding.md` "우선순위"), `MAILO_CLAIM_FIFO_RATIO`를 올리는 것이다. 값을 바꾸면 재시작이 필요하다.
+- 모든 작업이 `URGENT`이면 등급 효과가 없다. Mailo에는 호출처별 등급 제한이 없다(RQ-033). 등급별 상태 분포를 호출처별로 나눠 보려면 위 첫 SQL에 `caller_id`를 더한다.
+
+인덱스 복구. 마이그레이션 실행기는 `-- mailo:no-transaction` 파일을 실행한 뒤 현재 schema에 `INVALID` 인덱스가 있으면 기록하지 않고 실패한다(fail-closed, `src/db/migrator.ts`). 오류 메시지에 인덱스 이름이 있다. `IF NOT EXISTS`가 `INVALID` 인덱스를 건너뛰고 적용으로 기록되는 것을 막기 위해서다. 이 실패는 앱 기동 실패(`migrate-cli` 종료)로 보인다.
+
+1. 오류 메시지의 인덱스를 지운다.
+   ```sql
+   DROP INDEX CONCURRENTLY IF EXISTS mail_jobs_priority_claim_idx;
+   ```
+2. `CONCURRENTLY`가 실패한 원인을 없앤다(잠금 대기 `55P03`이면 긴 트랜잭션을 확인한다).
+3. 마이그레이션을 다시 실행한다(컨테이너 재시작 또는 `pnpm --filter @cp949/mailo migrate`). `0005`가 다시 실행돼 기록된다.
+
+수동으로 만든 인덱스가 위 조회에서 `valid = false`이면 같은 방법으로 지우고 다시 만든다.
+
+```sql
+CREATE INDEX CONCURRENTLY mail_jobs_priority_claim_idx
+  ON mail_jobs (priority DESC, next_attempt_at, id) WHERE status IN ('PENDING', 'RETRY_WAIT');
+```
+
+```txt
+위험도: 중간 (인덱스 재생성. 쓰기는 막지 않지만 큰 테이블에서 오래 걸린다)
+롤백: 불필요. 인덱스가 없는 동안 우선순위 점유가 느려질 뿐 동작은 같다
+```
+
 ## 호출처 할당 초과
 
 신호: `caller_quota_exceeded`(warn, `callerId`, `limit`)는 할당을 넘긴 호출처가 새로 생겼을 때 한 번, `caller_quota_recovered`(info, `callerId`)는 풀렸을 때 한 번 남는다. 폴링마다 반복되지 않는다.
@@ -231,6 +287,6 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 
 ## 검증하지 않은 것
 
-- 위 신호와 SQL을 운영 환경에서 실행해 결과를 확인하지 않았다. 로그 이벤트 이름과 필드는 코드와 통합 테스트(차단기, 할당, 파일 폴러)로 확인했다. `breaker_not_closed`는 `worker/worker.integration-spec.ts`가 단언한다.
+- 위 신호와 SQL을 운영 환경에서 실행해 결과를 확인하지 않았다. "등급별 적체"의 SQL은 로컬 PostgreSQL 17의 테스트 schema에서 실행해 문법과 결과 열을 확인했다(2026-11-23). 로그 이벤트 이름과 필드는 코드와 통합 테스트(차단기, 할당, 파일 폴러)로 확인했다. `breaker_not_closed`는 `worker/worker.integration-spec.ts`가 단언한다.
 - 실제 Gmail의 응답 코드·텍스트로 `lastReason` 분류를 대조하지 않았다(ADR-0007 구현 중 확정 2).
 - 긴 트랜잭션의 원인 목록(`pg_dump`, prepared transaction)은 일반 지식이며 Mailo 피드로 재현하지 않았다.

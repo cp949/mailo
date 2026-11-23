@@ -5,7 +5,8 @@
  * - 수신자: `{to, cc, bcc}`. 종결 이벤트가 그대로 복사한다.
  * - 봉투(envelope): `{from, replyTo}`. 요청이 생략하면 null이고, Worker가 `from` null을 SMTP 발신 계정으로 채운다.
  * - 본문 바이트: UTF-8 JSON `{v:1, subject, text, html}`(`worker/body-content.ts`와 같은 형식). `QueueBodyCipher`가 봉인한다.
- * - 지문 입력: 발송 결과에 영향을 주는 모든 필드(ADR-0005 결정 3).
+ * - 지문 입력: 발송 결과에 영향을 주는 모든 필드(ADR-0005 결정 3). 우선순위 포함(RQ-034).
+ * - 우선순위: 요청 등급(RQ-033). 큐가 DB 순위로 바꿔 저장한다.
  */
 import type { RegisterInput } from "../queue/index.js";
 import type { OpenRequestSuccess } from "./open-request.js";
@@ -37,6 +38,7 @@ export function toRegisterInput(
     ),
     canonicalRequest: opened.fingerprint.canonicalRequest,
     expiresInSeconds: args.expiresInSeconds,
+    priority: opened.priority,
     ...(args.denyNew === true && { denyNew: true }),
   };
 }

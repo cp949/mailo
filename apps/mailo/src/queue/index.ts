@@ -5,7 +5,20 @@ export {
   getQueueBacklog,
   type QueueBacklog,
 } from "./backlog.js";
-export { claim, type ClaimOptions, type QuotaBlock } from "./claim.js";
+export {
+  claim,
+  type ClaimOptions,
+  type ClaimOrder,
+  type QuotaBlock,
+} from "./claim.js";
+export {
+  DEFAULT_PRIORITY,
+  PRIORITIES,
+  PRIORITY_RANK,
+  isPriority,
+  priorityFromRank,
+  type Priority,
+} from "./priority.js";
 export {
   completeAttempt,
   recoverExpiredLeases,

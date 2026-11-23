@@ -885,3 +885,147 @@ describe("openRequest: 거부 사유에 값이 없다 (RQ-027)", () => {
     }
   });
 });
+
+// 우선순위 도입 전 REST 요청의 지문을 고정한다(RQ-034, ADR-0009). 값은 도입 전 코드로 계산했다.
+// 리터럴로 둔다. 생략·NORMAL 요청의 지문이 바뀌면 기존 작업의 같은 Key 재요청이 409가 된다.
+describe("openRequest: 우선순위 도입 전 지문 골든 값 (RQ-034, ADR-0009)", () => {
+  it("우선순위를 생략한 요청의 정규화 문자열과 지문이 도입 전 값과 같다", async () => {
+    const result = await openRequest({ kind: "rest", body: MAIL }, makeCtx());
+    if (!result.ok) throw new Error("성공해야 한다");
+    expect(result.fingerprint.canonicalRequest).toBe(
+      '["mailo-fp-v1","no-reply@example.com",null,["kim@example.com"],[],[],"주문 접수 안내","주문이 접수되었습니다.",null,[]]',
+    );
+    expect(Buffer.from(result.fingerprint.digest).toString("hex")).toBe(
+      "e3bc91ec3b45a14ca49bb3f12fc6bea7091ccf7069683d0e636f899da732297f",
+    );
+  });
+});
+
+describe("openRequest: 우선순위 (RQ-033·034, ADR-0009)", () => {
+  const rest = (extra: Record<string, unknown> = {}): OpenRequestInput => ({
+    kind: "rest",
+    body: { ...MAIL, ...extra },
+  });
+  const opened = async (input: OpenRequestInput) => {
+    const result = await openRequest(input, makeCtx());
+    if (!result.ok) throw new Error(`성공해야 한다: ${result.reason}`);
+    return result;
+  };
+  const hex = (digest: Uint8Array) => Buffer.from(digest).toString("hex");
+
+  it("생략하면 NORMAL이고 NORMAL을 명시해도 정규화 문자열과 지문이 도입 전 골든 값과 같다", async () => {
+    const omitted = await opened(rest());
+    const normal = await opened(rest({ priority: "NORMAL" }));
+
+    expect(omitted.priority).toBe("NORMAL");
+    expect(normal.priority).toBe("NORMAL");
+    expect(normal.fingerprint.canonicalRequest).toBe(
+      omitted.fingerprint.canonicalRequest,
+    );
+    expect(hex(normal.fingerprint.digest)).toBe(
+      "e3bc91ec3b45a14ca49bb3f12fc6bea7091ccf7069683d0e636f899da732297f",
+    );
+  });
+
+  it.each(["LOW", "HIGH", "URGENT"] as const)(
+    "%s는 policy.priority에 등급 이름으로 들어가 지문이 NORMAL과 다르다",
+    async (priority) => {
+      const normal = await opened(rest());
+      const graded = await opened(rest({ priority }));
+
+      expect(graded.priority).toBe(priority);
+      const canonical = JSON.parse(graded.fingerprint.canonicalRequest);
+      // 정규화 배열의 마지막 칸이 policy다. 순위 숫자는 넣지 않는다.
+      expect(canonical.at(-1)).toEqual([["priority", priority]]);
+      expect(hex(graded.fingerprint.digest)).not.toBe(
+        hex(normal.fingerprint.digest),
+      );
+    },
+  );
+
+  it("등급마다 지문이 서로 다르다", async () => {
+    const digests = new Set<string>();
+    for (const priority of ["LOW", "NORMAL", "HIGH", "URGENT"])
+      digests.add(hex((await opened(rest({ priority }))).fingerprint.digest));
+    expect(digests.size).toBe(4);
+  });
+
+  it.each([
+    ["null", null],
+    ["숫자", 40],
+    ["빈 문자열", ""],
+    ["소문자", "urgent"],
+    ["정의되지 않은 이름", "CRITICAL"],
+    ["앞뒤 공백", " URGENT"],
+    ["배열", ["URGENT"]],
+    ["객체", { name: "URGENT" }],
+  ])(
+    "REST·파일 모두 %s 값은 /priority INVALID_FORMAT 검증 오류다",
+    async (_name, value) => {
+      for (const input of [
+        rest({ priority: value }),
+        signed(fileRequest({ priority: value })),
+      ]) {
+        const failure = await failureOf(input);
+        expect(failure.reason).toBe("VALIDATION_FAILED");
+        expect(failure.issues).toEqual([
+          { pointer: "/priority", code: "INVALID_FORMAT" },
+        ]);
+      }
+    },
+  );
+
+  it("파일 JWS의 네 등급을 그대로 보존하고 priority는 서명 대상이다", async () => {
+    for (const priority of ["LOW", "NORMAL", "HIGH", "URGENT"] as const) {
+      const result = await opened(signed(fileRequest({ priority })));
+      expect(result).toMatchObject({ signed: true, priority });
+    }
+
+    const jws = signJws({
+      secret: SECRET_ALPHA,
+      payload: fileRequest({ priority: "LOW" }),
+      nowMs: NOW,
+    });
+    const tampered = {
+      ...jws,
+      payload: b64url(JSON.stringify(fileRequest({ priority: "URGENT" }))),
+    };
+    expect(
+      (await failureOf({ kind: "file", bytes: asBytes(tampered) })).reason,
+    ).toBe("SIGNATURE_INVALID");
+  });
+
+  it("JWE 요청은 바깥 priority를 보존하고 평문과 같은 등급이면 같은 지문이다", async () => {
+    const content = await encryptContent(key1, {
+      content: { subject: MAIL.subject, text: MAIL.text },
+    });
+    const viaJwe = await opened({
+      kind: "rest",
+      body: { to: MAIL.to, from: MAIL.from, content, priority: "URGENT" },
+    });
+    const plain = await opened(rest({ priority: "URGENT" }));
+
+    expect(viaJwe).toMatchObject({ encrypted: true, priority: "URGENT" });
+    expect(viaJwe.fingerprint.canonicalRequest).toBe(
+      plain.fingerprint.canonicalRequest,
+    );
+  });
+
+  it("JWE 복호화 평문 안의 priority는 UNKNOWN_FIELD다", async () => {
+    const content = await encryptContent(key1, {
+      content: { subject: MAIL.subject, text: MAIL.text, priority: "URGENT" },
+    });
+    const failure = await failureOf({
+      kind: "rest",
+      body: { to: MAIL.to, from: MAIL.from, content },
+    });
+    expect(failure.issues).toEqual([
+      { pointer: "/content", code: "UNKNOWN_FIELD" },
+    ]);
+  });
+
+  it("잘못된 priority 값의 canary가 실패 결과에 나오지 않는다(RQ-027)", async () => {
+    const failure = await failureOf(rest({ priority: "CANARY-PRIORITY-0d9e" }));
+    expect(JSON.stringify(failure)).not.toContain("CANARY");
+  });
+});

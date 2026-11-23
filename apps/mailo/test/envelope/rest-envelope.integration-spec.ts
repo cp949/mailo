@@ -142,6 +142,44 @@ describe("REST 통합: JWE 봉투 암호화 (RQ-022, ADR-0008)", () => {
     expect(rows[0].recipients.to).toEqual(TO); // 수신자는 평문이다
   });
 
+  it("JWE 요청의 바깥 priority 네 등급을 그대로 보존하고 같은 등급의 평문 재요청은 200, 다른 등급은 409다 (RQ-033·034, ADR-0009)", async () => {
+    for (const priority of ["LOW", "NORMAL", "HIGH", "URGENT"]) {
+      const key = `jwe-p-${priority}`;
+      const res = await post(
+        await encryptContent(current, { content: secret }),
+        { key, extra: { priority } },
+      );
+      expect(res.status).toBe(202);
+      expect(((await res.json()) as { priority: string }).priority).toBe(
+        priority,
+      );
+    }
+    const same = await postJob(app, {
+      key: "jwe-p-URGENT",
+      body: plainMail({ to: TO, from: FROM, ...secret, priority: "URGENT" }),
+    });
+    expect(same.status).toBe(200);
+    const changed = await postJob(app, {
+      key: "jwe-p-URGENT",
+      body: plainMail({ to: TO, from: FROM, ...secret }),
+    });
+    expect(changed.status).toBe(409);
+  });
+
+  it("JWE 복호화 평문 안의 priority는 400 UNKNOWN_FIELD이고 등록하지 않는다 (RQ-033)", async () => {
+    const res = await post(
+      await encryptContent(current, {
+        content: { ...secret, priority: "URGENT" },
+      }),
+      { key: "jwe-inner-priority" },
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ErrorsBody).errors).toEqual([
+      { pointer: "/content", code: "UNKNOWN_FIELD" },
+    ]);
+    expect(await jobCount()).toBe(0);
+  });
+
   it("같은 Key로 같은 내용을 평문 모드와 JWE 모드로 보내면 같은 요청이다(200, 같은 작업)", async () => {
     const first = await postJob(app, {
       key: "same-1",
