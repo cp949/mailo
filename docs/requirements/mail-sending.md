@@ -65,7 +65,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
-- 검증 수치(2026-11-24 8단계 관측성 `/metrics` 반영 뒤): `pnpm test` 단위 765건(42개 파일), `pnpm test:integration` 통합 662건(44개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합은 한 번의 묶음으로 실행했고 실패한 파일이 없었다. 기존 테스트의 단언은 한 곳만 바꿨다(취소 결과 `canceled`에 `callerId` 필드가 더해져 `queue/cancel.integration-spec.ts`의 기대값 두 곳이 새 필드를 포함한다, ADR-0012 구현 중 확정 1). Dockerfile·종료 순서·파일 채널 I/O·`docker-compose.yml`은 바꾸지 않았다(`.env.example`은 주석만 더했다). `scripts/container/verify-metrics.sh`를 실행했다(read_only 컨테이너에서 `/metrics` 응답·토큰 행렬·`promtool check metrics`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 실제 Prometheus 스크레이프와 `promtool check rules`는 일회성 확인이다(ADR-0012 구현 중 확정 11). `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-049~052 판정 근거).
+- 검증 수치(2026-11-24 8단계 관측성 `/metrics` 반영 뒤): `pnpm test` 단위 776건(43개 파일), `pnpm test:integration` 통합 663건(44개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합은 한 번의 묶음으로 실행했고 실패한 파일이 없었다. 기존 테스트의 단언은 한 곳만 바꿨다(취소 결과 `canceled`에 `callerId` 필드가 더해져 `queue/cancel.integration-spec.ts`의 기대값 두 곳이 새 필드를 포함한다, ADR-0012 구현 중 확정 1). Dockerfile·종료 순서·파일 채널 I/O·`docker-compose.yml`은 바꾸지 않았다(`.env.example`은 주석만 더했다). `scripts/container/verify-metrics.sh`를 실행했다(read_only 컨테이너에서 `/metrics` 응답·토큰 행렬·`promtool check metrics`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 실제 Prometheus 스크레이프와 `promtool check rules`는 일회성 확인이다(ADR-0012 구현 중 확정 11). `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-049~052 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 D `outcomeUncertain` 반영 뒤): `pnpm test` 단위 709건(38개 파일, 이 묶음은 단위 테스트를 더하지 않았다), `pnpm test:integration` 통합 590건(40개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. `Job`의 키 목록을 고정한 단언에 새 필드 `outcomeUncertain`이 없었기 때문이고(RQ-048이 정한 계약 필드) 기대 키 목록에 필드를 더한 뒤 그 파일(58건)이 통과했다. 샘플은 Gradle 단위 34건 통과(`EventFeedPollerApplyTest`에 1건 더함), `samples/spring-boot-relay/verify/run-e2e.sh` 통과 123·실패 0(S3에 새 필드 검사 3항목을 더했다, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 샘플의 main 코드는 바꾸지 않았다. 마이그레이션·Dockerfile·compose·종료 순서·파일 채널 I/O는 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(RQ-048 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI 반영 뒤): `pnpm test` 단위 709건(38개 파일), `pnpm test:integration` 통합 564건(38개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 한 번의 검증 묶음이고 같은 소스에서 다시 실행하지 않았다. Dockerfile·compose·종료 순서·파일 채널 I/O는 바꾸지 않았고 `.env.example`은 주석만 더했다(`config/compose-consistency.spec.ts`가 새 변수 이름을 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 120·실패 0(S16 신규 18항목, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 읽기 전용 루트 컨테이너(`--read-only --cap-drop ALL --security-opt no-new-privileges`) 안의 CLI 실행을 1회 확인했다(`docker run`·`docker exec`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(해당 영역 변경 없음, RQ-045~047 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 B 운영 토큰·발송 정지·감사·`/ops` 반영 뒤): `pnpm test` 단위 622건(33개 파일), `pnpm test:integration` 통합 513건(32개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. 호출처 키 `/health/ready`의 응답 동등 비교에 새 필드 `sendPaused`가 없었기 때문이고(ADR-0011 구현 중 확정 17) 기대값에 필드를 더한 뒤 그 파일(58건)이 통과했다. 이 뒤 독립 리뷰 지적 2건(운영자 작업 응답의 거부 수신자 노출, `/ops` 경로 파라미터 디코딩 오류가 인증보다 먼저 나가는 문제, ADR-0011 구현 중 확정 19·20)을 고치고 전체 검증을 다시 실행해 위 수치를 얻었다. Dockerfile·종료 순서·파일 채널 I/O는 바꾸지 않았고 `docker-compose.yml`은 주석만 더했다. `scripts/container/verify-sigterm-file.sh`를 1회 실행했다(컨테이너 안에서 `0001`~`0008`을 적용하고 기동한 뒤 SIGTERM 종료 코드 0, 재기동 뒤 1000통 중복·유실 없음, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `verify-sigkill-duplicate.sh`는 실행하지 않았다. `scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-042~044 판정 근거).
@@ -1780,7 +1780,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 **요구사항:**
 
 - 전역 gauge는 DB 상태와 DB `now()`로만 계산한다(ADR-0002 결정 10, ADR-0012 결정 5). 예외는 `mailo_caller_quota_limit`(이 인스턴스의 레지스트리 값)과 `account_id` 라벨(상수)이다.
-- 값(ADR-0012 결정 4): 큐 깊이 `due`·`scheduled`·`sending`(`due`·`scheduled`는 10000에서 멈추고 `_truncated`가 1이 된다), 등급별 가장 오래 기다린 점유 가능 작업의 나이(대기가 없으면 0), 차단기 상태(원핫)와 사유, 전체·호출처 정지, 호출처 할당 한도·사용량(설정한 호출처만), 호출처별 최신 이벤트 경과 초(이벤트가 없으면 시리즈 없음), 감사 행 수(100000에서 멈춤)·상한 도달·가장 오래된 행의 나이.
+- 값(ADR-0012 결정 4): 큐 깊이 `due`·`scheduled`·`sending`(`due`·`scheduled`는 10000에서 멈추고 `_truncated`가 1이 된다), 등급별 가장 오래 기다린 점유 가능 작업의 나이(대기가 없으면 0), 차단기 상태(원핫)와 사유, 전체·호출처 정지, 호출처 할당 한도·사용량(설정한 호출처만. 사용량 = 최근 24시간 시도 수(`LIMIT 할당`으로 한도에서 멈춘 값) + 점유 중 수라서 한도를 넘을 수 있고 비율이 1을 넘을 수 있다. `claim`의 사용량 문장과 같다), 호출처별 최신 이벤트 경과 초(이벤트가 없으면 시리즈 없음), 감사 행 수(100000에서 멈춤)·상한 도달·가장 오래된 행의 나이.
 - `mailo_queue_jobs{state="due"}`는 헬스의 `queue.dueCount`와 같은 `getQueueBacklog`에서 나온다.
 - 수집은 TTL 캐시(`MAILO_METRICS_CACHE_SECONDS`)와 단일 비행으로 한다. 인스턴스당 DB 조회는 TTL마다 최대 1회이고 풀 연결은 1개다. 실패한 그룹도 TTL 동안 재사용한다.
 - 그룹(`queue`·`breaker`·`controls`·`quota`·`feed`·`audit`)은 연결 하나로 순차 실행하고 그룹마다 `BEGIN READ ONLY`와 `SET LOCAL statement_timeout = 2000`을 건다. 쓰기·행 잠금·advisory lock이 없어 점유·완료 경로의 잠금 순서(작업 행 → 차단기 행)에 끼지 않는다. 전체 상한은 5초다.
@@ -1791,7 +1791,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 
 - [x] 작업 상태별 건수(`due`·`scheduled`·`sending`, 종결 상태 제외)와 등급별 가장 오래된 대기 나이, 10001건에서 `truncated`, 정확히 10000건은 `truncated` 아님.
 - [x] 헬스의 `queue.dueCount`·등급별 나이와 같은 값이다. 같은 DB를 쓰는 앱 둘의 전역 gauge가 같다(나이는 1초 오차).
-- [x] 차단기 세 상태와 사유(헬스 `lastReason`과 같은 어휘, closed에서는 사유 시리즈 없음), 전체·호출처 정지(레지스트리 밖 정지 포함), 할당 한도·사용량(포화 포함)·할당 없는 호출처 제외, 최신 이벤트 나이, 감사 통계(상한 100001행에서 100000과 truncated).
+- [x] 차단기 세 상태와 사유(헬스 `lastReason`과 같은 어휘, closed에서는 사유 시리즈 없음), 전체·호출처 정지(레지스트리 밖 정지 포함), 할당 한도·사용량·할당 없는 호출처 제외(사용량의 시도 쪽은 한도에서 멈추고 점유 중 수를 더하므로 사용량이 한도를 넘을 수 있다. 한도 2에서 시도 2건과 점유 중 1건이면 사용량 3, 비율 1 초과), 최신 이벤트 나이, 감사 통계(상한 100001행에서 100000과 truncated).
 - [x] 동시 스크레이프 20건이 풀 연결 1회만 쓴다. TTL 안에는 DB를 다시 읽지 않고(캐시된 값) TTL 뒤에는 다시 읽는다. 수집 뒤 풀 연결이 모두 반환된다.
 - [x] 수집 쿼리는 `BEGIN READ ONLY` 6회와 `SET LOCAL statement_timeout` 6회이고 `FOR UPDATE`·advisory lock·쓰기 문장이 없다.
 - [x] 한 그룹의 쿼리가 실패(테이블 없음, `statement_timeout`)해도 HTTP 200이고 그 그룹만 빠지며 `collect_ok`가 0이다. 연결을 얻지 못하면 모든 그룹이 0이고 전역 gauge가 빠지지만 인스턴스 값은 나온다. 실패 로그는 한 번이고 오류 메시지·테이블 이름이 없다.
@@ -1817,6 +1817,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
   - `mailo_jobs_finished_total{caller_id,account_id,status}`: 이 인스턴스가 커밋한 종결 전이(결과 기록, 만료 sweep, lease 복구, 호출처·관리 토큰 취소). 멱등 반복 취소는 세지 않는다.
   - `mailo_claim_polls_total{result}`, `mailo_claimed_jobs_total`, `mailo_lease_recovered_total`, `mailo_file_channel_files_total{caller_id,result}`, `mailo_event_cursor_gap_total{caller_id}`.
 - `queue/`는 `metrics/`를 import하지 않는다. 종결 전이를 만드는 경로는 반환 형식을 바꾸지 않고 커밋 뒤 관찰자 콜백(`sweepExpired`, `recoverExpiredLeases`, `claim`의 `onLeaseRecovered`)으로 알린다. 취소 결과는 호출처 ID를 담는다. 주입하지 않은 앱은 세지 않는다.
+- 알림 규칙이 쓰는 counter는 시작할 때 0으로 미리 낸다. 시리즈가 처음 생기는 순간의 증가는 `increase()`가 놓치기 때문이다(ADR-0012 구현 중 확정 15). 대상은 `claim_polls`(3개), `lease_recovered`, 레지스트리 호출처마다 `attempts`(5개)·`finished`(4개)·`claimed_jobs`·`cursor_gap`이다. 지표당 시리즈 상한(2000) 안에서만 미리 낸다. `unregistered`, `file_channel_files`, `attempt_errors`는 미리 내지 않는다(첫 증가를 `increase()`가 놓친다).
 - 인스턴스 gauge: Worker 상태(원핫)·진행 중 전송·마지막 점유 경과·연속 점유 실패·점유 루프 사망, 파일 폴러 상태, `collect_ok`, `snapshot_age`. `process_start_time_seconds`·`process_resident_memory_bytes`·`process_cpu_seconds_total`을 낸다.
 
 **수용 조건:**
@@ -1827,12 +1828,13 @@ ADR-0001~0010은 2026-11-23에, ADR-0011·0012는 2026-11-24에 승인됐다.
 - [x] 호출처 취소와 관리 토큰 취소가 `canceled`를 올리고 멱등 반복은 올리지 않는다. 관리 토큰 취소는 작업의 호출처로 센다.
 - [x] cursor 공백 감지 요청마다 `event_cursor_gap_total`이 오른다.
 - [x] 파일 채널 `registered`·`duplicate`·`rejected`가 오르고 파일 이름이 라벨에 없다. 폴러 gauge가 켜짐·동작·호출처 수를 낸다.
+- [x] 시작할 때 0 시리즈: 위 대상이 0으로 나오고, 레지스트리 호출처가 없으면 호출처 시리즈가 없으며, 시리즈 상한을 넘지 않고 `dropped_samples`를 올리지 않는다(호출처 400개에서 `attempts` 2000개). 미리 낸 시리즈에 증가하면 시리즈 수가 그대로다. `process_start_time_seconds`는 호출마다 같은 값이다.
 - [x] 라벨 규칙: 결과·stage·reason 매핑, 모르는 stage는 `unknown`, 레지스트리 밖 호출처는 `unregistered`, `LEASE_LOST` 제외. `dropped_samples`는 정상 경로에서 0이다.
 - [x] Worker·파일 폴러가 없는 앱은 `worker_state{state="disabled"}`가 1이고 `in_flight` 시리즈가 없다. `process_*` 3개가 나온다.
 
 **판정 근거:**
 
-- `e2e/metrics-counters.integration-spec.ts`(PostgreSQL, 실제 앱·Worker·파일 폴러·로컬 `smtp-server`), `worker/metrics.spec.ts`(단위), `queue/metrics-reads.integration-spec.ts`의 관찰자 항목(커밋 뒤 호출, 롤백 때 미호출, 관찰자 예외 무시).
+- `e2e/metrics-counters.integration-spec.ts`(PostgreSQL, 실제 앱·Worker·파일 폴러·로컬 `smtp-server`), `metrics/store.spec.ts`의 0 시리즈·`health/metrics-samples.spec.ts`(`process_*`)·`worker/metrics.spec.ts`(단위), `queue/metrics-reads.integration-spec.ts`의 관찰자 항목(커밋 뒤 호출, 롤백 때 미호출, 관찰자 예외 무시).
 - RED 확인(2026-11-24): 계측 전 `e2e/metrics-counters.integration-spec.ts`는 11건 모두 실패했다.
 - 구현: `worker/metrics.ts`, `worker/worker.ts`, `file-channel/poller.ts`, `intake/intake.service.ts`, `ops/ops.service.ts`, `queue/transitions.ts`.
 - 남은 미검증: 실제 Gmail 응답에서의 `stage`·`reason` 분포, 장시간 부하에서의 counter 정확도, 커밋과 증가 사이의 종료로 놓치는 한 건.

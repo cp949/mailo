@@ -541,7 +541,7 @@ docker compose exec -e MAILO_CLI_TOKEN_FILE=/run/secrets/mailo_cli_token mailo n
 
 ### 인증과 스크레이프 설정
 
-- 읽기 토큰(`MAILO_OPS_TOKEN`)만 200이다. 관리 토큰(`MAILO_OPS_ADMIN_TOKEN_<이름>`)은 403이고 호출처 API 키·헤더 없음·모르는 값은 401이다. `MAILO_OPS_TOKEN`을 설정하지 않으면 `/metrics`는 모든 값에 401이다.
+- 읽기 토큰(`MAILO_OPS_TOKEN`)만 200이다. 관리 토큰(`MAILO_OPS_ADMIN_TOKEN_<이름>`)은 403이고 호출처 API 키·헤더 없음·모르는 값은 401이다. `MAILO_OPS_TOKEN`을 설정하지 않으면 어떤 값도 읽기 권한이 아니다. 관리 토큰만 설정한 서버에서 관리 토큰은 403이고 그 밖의 값은 401이다. 읽기 토큰도 관리 토큰도 없는 서버는 모든 값에 401이다.
 - Prometheus 설정에는 토큰이 평문 파일로 놓인다. 변경 권한이 있는 관리 토큰을 두지 않는다. 오설정이면 타깃이 `server returned HTTP status 403 Forbidden`으로 `down`이 된다.
 - Mailo는 TLS를 종단하지 않는다. Prometheus는 같은 호스트, 내부 망, TLS 프록시 뒤 중 하나로 접근한다(위 "compose 구성"과 같은 전제). 기본 compose는 `127.0.0.1`만 연다.
 - 타깃은 인스턴스마다 둔다. 로드 밸런서 주소 하나를 타깃으로 두면 요청이 인스턴스를 번갈아 가므로 counter가 줄었다 늘며 `rate()`가 틀린다.
@@ -576,7 +576,7 @@ scrape_configs:
 | 전역 | gauge만 | `mailo_queue_`, `mailo_breaker_`, `mailo_send_paused`, `mailo_caller_`, `mailo_ops_audit_` 접두 | `max by (...)`. `sum`은 인스턴스 수만큼 곱해진다 |
 | 인스턴스 counter | counter만 | `mailo_*_total` | `sum by (...) (rate(...))`. 재시작하면 0에서 다시 시작한다 |
 | 인스턴스 gauge | gauge | `mailo_worker_`, `mailo_file_poller_`, `mailo_metrics_` 접두 | 인스턴스별로 본다 |
-| 프로세스 | counter·gauge | `process_start_time_seconds`, `process_resident_memory_bytes`, `process_cpu_seconds_total` | 인스턴스별로 본다. 시작 시각이 바뀌면 재시작이다 |
+| 프로세스 | counter·gauge | `process_start_time_seconds`, `process_resident_memory_bytes`, `process_cpu_seconds_total` | 인스턴스별로 본다. 시작 시각은 프로세스가 시작할 때 한 번 정한 값이라 바뀌면 재시작이다 |
 
 - `instance` 라벨은 앱이 붙이지 않는다. Prometheus의 타깃 라벨이 준다. 앱 로그의 `instance`와 다른 값이다.
 - 라벨은 `caller_id`, `account_id`, `reason`과 값이 닫힌 열거(`state`, `priority`, `result`, `stage`, `status`, `group`)뿐이다. `caller_id`는 호출처 레지스트리에 있는 값이거나 `unregistered`다(레지스트리에서 뺀 호출처의 작업이 큐에 남아 있을 때). `account_id`는 `default` 하나다. 수신자·본문·제목·`Idempotency-Key`·작업 ID·SMTP 응답 코드와 텍스트·토큰은 어느 라벨에도 없다.
@@ -595,7 +595,7 @@ DB 상태와 DB `now()`로 계산한다. 인스턴스마다 `MAILO_METRICS_CACHE
 | `mailo_breaker_reason_info` | `account_id`, `reason` | 상태가 `closed`가 아니고 사유가 있을 때만 1. 어휘는 헬스 `lastReason`과 같다 |
 | `mailo_send_paused_all`, `mailo_send_paused_callers` | 없음 | 전체 정지 0/1, 정지한 호출처 수(레지스트리에 없는 호출처 포함) |
 | `mailo_caller_paused` | `caller_id` | 레지스트리 호출처별 정지 0/1 |
-| `mailo_caller_quota_limit`, `mailo_caller_quota_used` | `caller_id` | `sendQuota24h`를 설정한 호출처만. 한도(이 인스턴스의 레지스트리 값)와 사용량(최근 24시간 시도 + 점유 중, 한도에서 멈춘다) |
+| `mailo_caller_quota_limit`, `mailo_caller_quota_used` | `caller_id` | `sendQuota24h`를 설정한 호출처만. 한도(이 인스턴스의 레지스트리 값)와 사용량(최근 24시간 시도 수와 점유 중 수의 합. 시도 쪽은 한도에서 멈추지만 점유 중 수를 더하므로 사용량이 한도를 넘을 수 있고 사용량/한도가 1을 넘을 수 있다) |
 | `mailo_caller_latest_event_age_seconds` | `caller_id` | 피드에 보이는 최신 이벤트의 경과 초. 이벤트가 없으면 시리즈가 없다. 소비자의 처리 지연이 아니다. 새 이벤트가 없으면 시간이 지날수록 커진다 |
 | `mailo_ops_audit_rows`, `mailo_ops_audit_rows_truncated`, `mailo_ops_audit_oldest_age_seconds` | 없음 | 감사 행 수(100000에서 멈춤), 상한 도달 0/1, 가장 오래된 행의 경과 초(없으면 0). 삭제 정책은 정하지 않았다 |
 
@@ -621,6 +621,9 @@ DB 상태와 DB `now()`로 계산한다. 인스턴스마다 `MAILO_METRICS_CACHE
 | `mailo_metrics_snapshot_age_seconds` | 없음 | 캐시된 DB 수집의 경과 초 |
 
 - counter는 커밋한 뒤에 오른다. 커밋과 증가 사이에 프로세스가 죽으면 그 한 건을 놓친다.
+- 시리즈가 처음 생기는 순간의 증가는 `increase()`·`rate()`가 놓친다(처음 보는 값이 1이면 증가량을 알 수 없다). 그래서 알림 규칙이 쓰는 counter는 시작할 때 0으로 미리 낸다.
+  - 미리 내는 것: `mailo_claim_polls_total`(3개), `mailo_lease_recovered_total`, 그리고 레지스트리 호출처마다 `mailo_attempts_total`(5개)·`mailo_jobs_finished_total`(4개)·`mailo_claimed_jobs_total`·`mailo_event_cursor_gap_total`. 호출처 400개까지 지표당 2000개 안이다. 호출처가 더 많으면 앞의 2000개만 미리 낸다.
+  - 미리 내지 못하는 것: `caller_id="unregistered"` 시리즈(레지스트리에서 뺀 호출처), `mailo_file_channel_files_total`, `mailo_attempt_errors_total`(조합이 불가능한 값이 많다). 이 시리즈의 첫 증가는 `increase()`가 놓친다. 이후 증가는 센다. 부록의 알림 규칙 중 이 시리즈에만 생기는 증가를 보는 것은 없다. `MailoFailedRatioHigh`는 `unregistered` 호출처의 첫 종결 하나를 놓칠 수 있다.
 - 종결 건수는 DB로 세지 않는다(상태별 `count(*)`를 받치는 인덱스가 없다). `mailo_jobs_finished_total`의 `increase`로 본다. 재시작과 인스턴스 교체를 `rate`·`increase`가 처리한다.
 - 평균 발송 처리 시간은 히스토그램이 필요해 정하지 않았다.
 
@@ -675,7 +678,7 @@ groups:
         expr: mailo_metrics_collect_ok == 0
         for: 5m
 
-      - alert: MailoCallerQuotaNearLimit
+      - alert: MailoCallerQuotaNearLimit   # 사용량에 점유 중 수가 더해져 비율이 1을 넘을 수 있다. 1 이상도 이 조건에 든다
         expr: |
           max by (caller_id) (mailo_caller_quota_used)
             / max by (caller_id) (mailo_caller_quota_limit) >= 0.9
@@ -689,7 +692,9 @@ groups:
         for: 1h
 ```
 
-- `MailoNoProgress`에서 `sum(rate(...)) == 0`은 시도 시리즈가 아직 없으면 빈 결과라 참이 되지 않는다. 인스턴스가 한 번도 시도하지 않은 상태에서는 발화하지 않는다(추정, 실행해 확인하지 않았다).
+- `MailoNoProgress`의 `sum(rate(mailo_attempts_total[10m])) == 0`은 호출처 시리즈를 0으로 미리 내므로 시도가 한 번도 없어도 참이다. 기동 직후 `due`가 있고 정지·차단이 없는데 15분 동안 시도가 없으면 발화한다(추정, 실행해 확인하지 않았다).
+- `MailoCallerQuotaNearLimit`의 `mailo_caller_quota_used`는 시도 수에 점유 중 수를 더하므로 `mailo_caller_quota_limit`보다 커질 수 있다. 비율이 1을 넘어도 이 규칙에 든다.
+- `MailoLeaseRecovered`·`MailoFailedRatioHigh`는 레지스트리 호출처의 0 시리즈가 있으므로 프로세스의 첫 회수·첫 실패도 `increase()`에 잡힌다. Prometheus가 그 인스턴스를 처음 스크레이프하기 전에 일어난 증가는 어느 경우에도 보이지 않는다.
 - 발송 정지(`MailoSendPausedLong`)는 의도한 조작일 수 있다. 장기 정지가 `EXPIRED`를 만드는 점을 알리는 용도다.
 - 알림 대응은 `troubleshooting.md` "지표 해석"이다.
 

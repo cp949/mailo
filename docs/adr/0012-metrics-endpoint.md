@@ -298,7 +298,7 @@
    - `metrics_collect_failed`는 그룹이 성공에서 실패로 바뀔 때만 남긴다. 복구 로그는 새 이벤트가 되므로 만들지 않았다. 필드는 `group`과 `error`(`describeError`의 이름·코드)뿐이다.
    - 캐시는 단조 시계(`performance.now()`)를 쓴다. 전역 gauge 값은 DB `now()`로만 계산하므로 인스턴스 시각이 값에 섞이지 않는다.
    - `withBoundedClient`는 `health/bounded-client.ts`로 옮기고 연결 단위 `withBoundedConnection`과 트랜잭션 단위 `runReadOnly`로 나눴다. 헬스의 동작(3초·2초, 연결 폐기)은 바뀌지 않았다. 차단기 사유 변환(`LAST_REASON`)은 `health/breaker-reason.ts`로 옮겨 헬스와 지표가 같은 어휘를 쓴다.
-6. **값 표기.** 가장 오래 기다린 나이와 감사 나이는 정수 초이고 대기·행이 없으면 0이다(헬스는 없으면 null이다. 지표는 시리즈를 비우지 않고 0으로 낸다). `mailo_metrics_snapshot_age_seconds`는 0.1초 단위, `process_start_time_seconds`는 0.001초 단위, `process_cpu_seconds_total`은 사용자+시스템 CPU(초)다. 파일 채널이 꺼져 있으면 `mailo_file_poller_enabled`·`running`·`callers`는 0이고 마지막 폴링 시리즈는 없다.
+6. **값 표기.** 가장 오래 기다린 나이와 감사 나이는 정수 초이고 대기·행이 없으면 0이다(헬스는 없으면 null이다. 지표는 시리즈를 비우지 않고 0으로 낸다). `mailo_metrics_snapshot_age_seconds`는 0.1초 단위, `process_start_time_seconds`는 0.001초 단위로 프로세스 시작 때 한 번 계산해 고정한 값이다(스크레이프마다 다시 계산하면 반올림 때문에 1ms씩 흔들려 "바뀌면 재시작"이 깨진다), `process_cpu_seconds_total`은 사용자+시스템 CPU(초)다. 파일 채널이 꺼져 있으면 `mailo_file_poller_enabled`·`running`·`callers`는 0이고 마지막 폴링 시리즈는 없다.
 7. **파일 채널 counter의 `result`.** `registered`·`duplicate`·`rejected`·`unreadable`·`delete_failed`만 센다. 같은 거부의 반복(`rejected_repeat`)과 다른 인스턴스가 먼저 지운 파일(`gone`)은 세지 않는다. 한 파일이 등록되고 원본 삭제만 실패하면 `registered`와 `delete_failed`를 모두 올린다.
 8. **`claimed_jobs`와 drain.** 점유(`claim`)가 커밋됐으면 drain 시간 초과 뒤 늦게 돌아와 버린 점유도 `mailo_claimed_jobs_total`에 센다. 그 작업은 lease 복구가 다시 다룬다. 이 경우 `attempts_total`은 오르지 않는다.
 9. **로그 이벤트 둘.** `metrics_collect_failed`(warn, `group`·`error`), `metrics_series_limit`(warn, `metric`). 호출처 라벨이 레지스트리 ID로 막혀 있고 지표 하나는 호출처당 최대 5시리즈(`attempts_total`, `file_channel_files_total`)라서 시리즈 상한(2000)은 호출처가 약 400개를 넘어야 닿는다.
@@ -324,6 +324,15 @@
 12. **ADR 문서 정정.** 부록 B의 코드 블록을 닫는 줄이 빠져 있어 추가했다. 내용은 그대로다.
 13. **단계 7과의 관계.** `account_id`는 모든 시리즈에서 `default`다. 단계 7이 계정을 늘리면 `createMetrics({ accountIds })`와 수집기의 `account` 상수를 계정 목록으로 바꾼다. 지표 이름과 라벨 이름은 바뀌지 않는다.
 14. **요구사항 번호.** 새 RQ는 RQ-049~052다. 8단계 구현 상태는 `docs/requirements/mail-sending.md`가 소유한다.
+
+15. **알림 규칙이 쓰는 counter는 시작할 때 0으로 미리 낸다(결정 4의 "counter는 처음 증가할 때 생긴다"와 다르다).** 시리즈가 처음 생기는 순간의 증가는 Prometheus `increase()`·`rate()`가 놓친다. 프로세스당 첫 lease 회수나 첫 실패 종결이 알림(`MailoLeaseRecovered`, `MailoFailedRatioHigh`)에 잡히지 않는 문제다. `metrics/catalog.ts`의 `seed: true` 지표를 `createMetrics`가 라벨 조합마다 0으로 만든다.
+    - 대상: `mailo_claim_polls_total`(3개), `mailo_lease_recovered_total`(`account_id=default` 1개), 레지스트리 호출처마다 `mailo_attempts_total`(5개)·`mailo_jobs_finished_total`(4개)·`mailo_claimed_jobs_total`(1개)·`mailo_event_cursor_gap_total`(1개). 호출처 ID는 기동 때 읽은 레지스트리 값이라 알 수 있다.
+    - 카디널리티: 지표당 시리즈 상한 2000 안이다. 호출처당 최대 5개(`attempts`)이므로 호출처 400개까지 모두 미리 낸다. 호출처가 더 많으면 앞에서부터 상한까지만 미리 내고 나머지는 처음 증가할 때 생긴다. 미리 내기는 `dropped_samples`를 올리지 않는다. 호출처 50개일 때 미리 내는 시리즈는 약 560개다(계산: 호출처당 11개 + 4개).
+    - 미리 내지 않는 것: `caller_id="unregistered"`(레지스트리에서 뺀 호출처의 작업), `mailo_file_channel_files_total`(호출처가 파일 채널을 쓰는지 leaf가 모른다), `mailo_attempt_errors_total`(`stage`·`reason`의 가능하지 않은 조합이 많다). 이 시리즈의 첫 증가는 `increase()`가 놓친다. 부록 B의 규칙은 이 시리즈에만 생기는 증가를 보지 않는다. `MailoFailedRatioHigh`가 `unregistered` 호출처의 첫 종결 하나를 놓칠 수 있다.
+    - 부수 효과: `MailoNoProgress`의 `sum(rate(mailo_attempts_total[10m])) == 0`이 시도가 한 번도 없는 인스턴스에서도 참이다(미리 낸 0 시리즈가 있다). 기동 직후 `due`가 있고 정지·차단이 없는데 15분 동안 시도가 없으면 발화한다. 의도한 동작이다.
+    - Prometheus가 인스턴스를 처음 스크레이프하기 전의 증가는 이 방법으로도 보이지 않는다.
+16. **`mailo_caller_quota_used`는 한도를 넘을 수 있다(결정 4의 "값은 한도에서 멈춘다"와 다르다).** 사용량 쿼리는 시도 쪽을 `LIMIT 할당`으로 세어 한도에서 멈추지만 점유 중(`SENDING`) 수를 더한다. 시도가 한도에 닿은 호출처에 점유 중 작업이 있으면 사용량이 한도보다 크다. 지표 의미는 바꾸지 않았다(`claim`과 같은 문장). HELP·문서·알림 설명이 "한도를 넘을 수 있고 사용량/한도가 1을 넘을 수 있다"로 바뀌었다. `MailoCallerQuotaNearLimit`(`>= 0.9`)은 1을 넘는 값도 조건에 든다. 한도 2에서 시도 2건과 점유 중 1건이면 사용량 3이다(`http/metrics-gauges.integration-spec.ts`).
+17. **`/metrics` 인증과 `MAILO_OPS_TOKEN` 없음 정정.** `docs/api/openapi.yaml`의 `/metrics` 설명이 "`MAILO_OPS_TOKEN`이 없으면 어떤 값도 401"이라고만 적었으나 코드는 구현 중 확정 4와 같다(관리 토큰만 설정된 서버에서 관리 토큰은 403). openapi.yaml과 `deployment.md`를 고쳤다.
 
 ## 검토한 대안
 

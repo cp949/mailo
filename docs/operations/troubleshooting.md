@@ -478,7 +478,7 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 읽는 규칙:
 
 - 전역 gauge(`mailo_queue_`, `mailo_breaker_`, `mailo_send_paused`, `mailo_caller_`, `mailo_ops_audit_`)는 어느 인스턴스가 내도 같은 DB 값이다. 인스턴스가 여럿이면 `max by (...)`로 읽는다. `sum`은 인스턴스 수만큼 곱해진다. 인스턴스 사이에 최대 `MAILO_METRICS_CACHE_SECONDS`(기본 5초)만큼 어긋날 수 있다.
-- counter(`*_total`)는 이 프로세스가 한 일이다. `sum by (...) (rate(...))`나 `increase`로 읽는다. 재시작하면 0에서 다시 시작한다(`process_start_time_seconds`가 바뀐다).
+- counter(`*_total`)는 이 프로세스가 한 일이다. `sum by (...) (rate(...))`나 `increase`로 읽는다. 알림이 쓰는 counter는 시작할 때 0으로 미리 나오므로 첫 증가도 센다. 미리 내지 못하는 시리즈(`unregistered`, 파일 채널, `attempt_errors`)의 첫 증가는 놓친다(`deployment.md` "인스턴스 counter와 gauge"). 재시작하면 0에서 다시 시작한다(`process_start_time_seconds`가 바뀐다).
 - 타깃은 인스턴스마다 둔다. 로드 밸런서 하나를 타깃으로 두면 counter가 줄었다 늘어 `rate`가 틀린다.
 
 증상별:
