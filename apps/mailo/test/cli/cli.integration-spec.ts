@@ -108,6 +108,7 @@ describe("운영 CLI 통합 (RQ-047, ADR-0011 결정 7)", () => {
     expect(body.ready.sendControls).toEqual({
       allPaused: false,
       pausedCallerCount: 0,
+      pausedAccountCount: 0,
     });
     expect(body.pauses).toEqual({ pauses: [] });
   });
