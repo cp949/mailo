@@ -264,7 +264,7 @@ Content-Type: application/json
 
 ## 7. Spring Boot 사용처: outbox + relay
 
-실행 가능한 구현은 [`samples/spring-boot-relay/`](../../samples/spring-boot-relay/README.md)다(Gradle, Spring Boot 3.5.16, JDK 21). 아래 규칙과의 차이는 두 가지다. 샘플은 상태에 `REJECTED`(400·401·413·415 등 재시도 불가, 파일 수집 거부)와 `QUARANTINED`(409, 같은 Key에 다른 내용)를 두어 Mailo의 최종 실패 `FAILED`와 구분한다. 401은 행 하나를 `REJECTED`로 표시한 뒤 relay를 프로세스 재시작까지 멈춘다. 이 규칙 표(6절) 중 Mailo 응답으로 실행 확인한 것은 202, 200, 400, 401, 409와 네트워크 오류(연결 거부)다. 5xx, 413, 415, 429는 샘플의 `SendDecision` 단위 테스트로 판정만 확인했고 Mailo 응답으로는 재현하지 않았다.
+실행 가능한 구현은 [`samples/spring-boot-relay/`](../../samples/spring-boot-relay/README.md)다(Gradle, Spring Boot 3.5.16, JDK 21). 아래 규칙과의 차이는 두 가지다. 샘플은 상태에 `REJECTED`(400·401·413·415 등 재시도 불가, 파일 수집 거부)와 `QUARANTINED`(409, 같은 Key에 다른 내용)를 두어 Mailo의 최종 실패 `FAILED`와 구분하고, `NEEDS_CHECK`(모르는 이벤트 종류·Job 상태를 만나 `GET /jobs`로 확인 중)를 둔다. 401은 행 하나를 `REJECTED`로 표시한 뒤 relay를 프로세스 재시작까지 멈춘다. 이 규칙 표(6절) 중 Mailo 응답으로 실행 확인한 것은 202, 200, 400, 401, 409와 네트워크 오류(연결 거부)다. 5xx, 413, 415, 429는 샘플의 `SendDecision` 단위 테스트로 판정만 확인했고 Mailo 응답으로는 재현하지 않았다.
 
 ### 구조(RQ-004, RQ-021, ADR-0001 결정 4)
 
@@ -284,7 +284,7 @@ Mailo는 사용처 DB를 알지 못하고 접속하지 않는다(RQ-003). 사용
 CREATE TABLE mail_outbox (
   id              uuid PRIMARY KEY,                  -- Idempotency-Key로 쓴다. 요청 단위로 고유하다
   request_json    text NOT NULL,                     -- 등록 시점에 확정한 요청. 재시도에서 필드를 바꾸지 않는다(바꾸면 409)
-  status          text NOT NULL DEFAULT 'PENDING',   -- PENDING, DELIVERED, SENT, FAILED, EXPIRED, DEAD (샘플은 REJECTED, QUARANTINED 추가)
+  status          text NOT NULL DEFAULT 'PENDING',   -- PENDING, DELIVERED, SENT, FAILED, EXPIRED, DEAD (샘플은 REJECTED, QUARANTINED, NEEDS_CHECK 추가)
   attempt_count   integer NOT NULL DEFAULT 0,
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -296,6 +296,8 @@ CREATE INDEX mail_outbox_due_idx ON mail_outbox (next_attempt_at) WHERE status =
 - Key는 요청 단위의 고유 값이다. outbox 행 ID가 적합하다. 사용자 ID처럼 여러 요청이 공유하는 값은 409를 만든다(ADR-0005 결정 8). 형식은 1~128자, `[A-Za-z0-9._:-]`다. UUID 문자열은 맞는다.
 - 요청 본문은 `request_json`에 확정해 두고 relay가 그대로 보낸다. 재시도 때 수신자·제목·본문·`from`·`replyTo` 중 하나라도 달라지면 409다. 평문 모드와 JWE 모드는 평문이 같으면 같은 내용이다.
 - 상태 `DELIVERED`는 Mailo가 등록(202·200)했다는 뜻이다. `SENT`는 이벤트 피드로 확인한 SMTP 수락이다.
+- Mailo의 `PENDING`·`SENDING`·`RETRY_WAIT`는 비종결이다. 등록됨(`DELIVERED`)으로 두고 종결 이벤트를 기다린다. 완료로 처리하지 않는다.
+- 모르는 `Job.status`나 이벤트 `type`을 만나면 성공으로 처리하거나 건너뛰지 않는다. 행을 "확인 필요"(샘플은 `NEEDS_CHECK`)로 표시하고 `GET /jobs?idempotencyKey=`로 확인한다. 규칙은 `docs/api/README.md`의 "호출처가 모르는 값을 만났을 때" 절이다.
 
 ### relay 규칙
 
@@ -362,9 +364,12 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 | `JOB_FAILED` | `failureReason`(`PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`)과 `lastError`를 기록하고 알린다. 새 요청으로 다시 보낼지는 사용처가 정한다(새 Key) |
 | `JOB_EXPIRED` | `failureReason: EXPIRED`. 기본 만료 TTL은 24시간이다. 차단기 장애가 길면 대량으로 올 수 있다 |
 | `INTAKE_REJECTED` | 파일 수집 거부. `reasonCode`로 원인을 고쳐 새 파일로 다시 보낸다(`troubleshooting.md`). `idempotencyKey`가 있으면 outbox 행을 찾고, `null`이면 `fileName`으로 찾는다 |
+| 위에 없는 `type` | 건너뛰지 않는다. 이벤트를 기록하고 outbox 행을 "확인 필요"로 표시한 뒤 `GET /jobs`로 상태를 확인한다. cursor는 그 이벤트를 지나가므로 이 표시가 유일한 단서다 |
 
 - 이벤트 모양 예(JOB_SENT): `eventId`, `type`, `occurredAt`, `jobId`, `idempotencyKey`, `attempts`, `recipients{to,cc,bcc}`, `rejectedRecipients[]`. `INTAKE_REJECTED`는 `rejectionId`, `idempotencyKey`(없으면 `null`), `fileName`, `fileSize`, `sha256`, `reasonCode`다.
 - 이벤트는 기록 후 30일 보존한다. 30일 넘게 폴링하지 않으면 그 사이 이벤트를 놓친다.
+- `GET /events`가 200이 아니면 같은 요청을 말없이 반복하지 않는다. 상태 코드를 기록하고 알린다. 401은 키를 고치기 전에 반복하지 않는다.
+- 응답의 모르는 필드와 헤더는 무시한다.
 - 빈 `events`가 새 이벤트가 없다는 뜻은 아니다. DB에 긴 트랜잭션이 있으면 피드가 지연된다(이벤트는 유실되지 않는다). 지연은 `/health/ready`의 `eventFeed.lagSeconds`로 본다. 새 이벤트가 없어도 값이 커지므로 단독 장애 신호가 아니다.
 - 같은 이름·같은 `sha256`의 파일을 다시 넣어도 거부 기록과 이벤트는 새로 생기지 않는다. 고친 파일은 내용이 달라지므로 새 기록이 생긴다.
 
@@ -483,5 +488,6 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 - 실제 NAS 제품, bind mount, rootless Docker·`userns-remap`, ACL을 지원하지 않는 파일시스템에서의 권한 구성.
 - 호출처가 Linux가 아닌 환경에서의 파일 쓰기.
 - 실제 Gmail·Workspace SMTP.
+- 모르는 이벤트 종류·`Job.status`를 서버가 실제로 보낼 때의 샘플 동작. 서버가 아직 보내지 않아 샘플 단위 테스트의 대역으로만 확인했다(`samples/spring-boot-relay/README.md`).
 - 요청별 만료 시간의 롤링 배포·롤백. 만료 동작은 통합 테스트(`test/e2e/job-ttl.integration-spec.ts`)로 확인했다.
 - 우선순위의 효과를 실제 부하(여러 인스턴스, 장시간 적체)에서 측정하지 않았다. 점유 순서는 통합 테스트(`test/queue/claim-priority.integration-spec.ts`, `test/worker/worker-priority.integration-spec.ts`)로 확인했다.
