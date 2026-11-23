@@ -35,7 +35,7 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 - Mailo는 TLS를 종단하지 않는다(코드에 TLS 설정이 없다). Bearer 키가 평문으로 오가지 않도록 TLS를 종단하는 프록시 뒤에 두거나 신뢰하는 내부 망에서만 노출한다.
 - `mailo` healthcheck는 이미지에 curl이 없어 `node -e fetch(...)`로 `GET http://127.0.0.1:3000/health/live`를 10초마다 호출한다(타임아웃 5초, 3회 실패 시 unhealthy, `start_period` 30초). DB 상태는 보지 않는다. 준비 확인은 "헬스" 절을 따른다.
 - 파일 채널을 켜려면 `.env`에 `MAILO_FILE_CHANNEL_ROOT=/var/mailo/files`를 주고 `docker-compose.yml`의 주석 처리된 볼륨 줄을 연다. 폴더와 권한은 호스트에서 만든다(`caller-onboarding.md`, `nfs.md`). `<root>/inbox`가 없거나 통과할 수 없으면 앱은 기동을 거부한다(mount 전의 빈 디렉터리를 읽는 상황을 막는다. 읽기 권한은 요구하지 않는다). 호출처 폴더 하나가 없는 것은 경고다.
-- NAS/NFS를 컨테이너에서 쓰는 구성 예시는 `docker-compose.nfs-example.yml`(Docker `local` 드라이버 NFS named volume)이다. 실행해 확인하지 않았다(`nfs.md` "컨테이너에서 쓰는 방법").
+- NAS/NFS를 컨테이너에서 쓰는 구성 예시는 `docker-compose.nfs-example.yml`(Docker `local` 드라이버 NFS named volume)이다. 같은 호스트 loopback NFS에서 `verify-docker-volume.sh`로 실행해 확인했다(2026-11-23). 실제 NAS 제품은 확인하지 않았다(`nfs.md` "컨테이너에서 쓰는 방법").
 - 읽기 전용 루트(`read_only`): 런타임이 쓸 수 있는 곳은 `/tmp`(tmpfs)와 파일 채널 볼륨(별도 마운트)뿐이다. 이 구성에서 컨테이너 검증 스크립트(`scripts/container/`, `scripts/volume/`)가 쓰기 오류 없이 통과했다(`/tmp`가 실제로 쓰였는지는 확인하지 않았다). 로그는 표준 출력이다. 이미지를 바꾸지 않고 쓰기가 필요한 경로가 생기면 그 경로만 `tmpfs`나 볼륨으로 연다.
 
 기동:
@@ -369,6 +369,6 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 마이그레이션의 대용량 DB 적용 시간.
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
-- `docker-compose.migrate-once.yml`, `docker-compose.nfs-example.yml`의 실제 기동(문법만 확인했다).
+- `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).
 - TLS를 켠 PostgreSQL 서버에 대한 `MAILO_DB_SSLMODE` 접속.
 - TLS 종단 프록시 구성, 다중 인스턴스 배포.
