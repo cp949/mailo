@@ -21,7 +21,7 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 - 파일 채널(`file-channel`)은 `MAILO_FILE_CHANNEL_ROOT`가 있을 때만 켜진다(기본 꺼짐). 코드는 폴더를 만들거나 chmod하지 않는다(운영 문서의 몫, ADR-0004 결정 8). 호출처 폴더는 `<root>/inbox/<caller_id>/`이고 레지스트리에서 `fileChannel: true`인 호출처만 읽는다. 파일 열기는 `O_NOFOLLOW|O_NONBLOCK` + `fstat`이고 `lstat` 뒤 `open`을 쓰지 않는다. 원본 삭제는 등록·거부 기록의 DB 커밋 뒤에만 한다. 거부는 `recordIntakeRejection`(거부 기록과 `INTAKE_REJECTED` 이벤트 한 트랜잭션)으로 쓴다. NFS는 같은 호스트 loopback에서만 검증했다(`docs/operations/nfs.md`, ADR-0004 구현 중 확정 20~27). `ESTALE`은 Node가 `code`를 `ESTALE`로 주지 않으므로 `file-channel/errno.ts`의 `isStale`(errno 116)로 판별한다.
 - 요청 수집(REST·파일)은 `envelope`의 `openRequest`를 거친다. 순서는 JWS 구조 파싱 → 서명 검증 → 스키마 검증 → 복호화 → 복호화한 제목·본문 검증 → 지문 계산이고 바꾸지 않는다(ADR-0008 결정 3). 서명 실패 시 복호화하지 않는다. 암호 형식은 직접 만들지 않고 `jose`(버전 고정)를 쓴다.
 - 호출처 JWS 비밀키와 Mailo JWE 개인키는 설정 JSON에 값을 두지 않는다. JSON은 변수 이름(`secretVar`·`privateKeyVar`)만 갖고 값은 `<변수>_FILE`(우선)이나 `<변수>`로 받는다. 모듈은 `APP_ENV`로 같은 환경을 읽는다.
-- 운영 의존성은 Mailo와 PostgreSQL뿐이다. 브로커·외부 메일 서버·새 상시 서비스를 추가하지 않는다(RQ-029). 새 npm 의존성은 필요 이유를 변경 설명에 적는다.
+- 운영 의존성은 Mailo와 PostgreSQL뿐이다. 브로커·외부 메일 서버·새 상시 서비스를 추가하지 않는다(RQ-029). 예외는 개발용 opt-in compose profile(`mailpit`)뿐이고 기본 `docker compose up`에 넣지 않는다. 새 npm 의존성은 필요 이유를 변경 설명에 적는다.
 
 ## 명령어
 
