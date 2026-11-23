@@ -142,7 +142,7 @@ describe("PostgreSQL 통합: 헬스 운영자 응답 (RQ-031)", () => {
          FROM generate_series(1, ${BACKLOG_COUNT_LIMIT + 5}) g`,
     );
 
-    const backlog = await getQueueBacklog(db.pool);
+    const backlog = await getQueueBacklog(db.pool, ["default"]);
 
     expect(backlog.dueCount).toBe(BACKLOG_COUNT_LIMIT);
     expect(backlog.truncated).toBe(true);
@@ -219,7 +219,7 @@ describe("PostgreSQL 통합: 헬스 운영자 응답 (RQ-031)", () => {
         },
       } as unknown as typeof db.pool;
 
-      const backlog = await getQueueBacklog(counting);
+      const backlog = await getQueueBacklog(counting, ["default"]);
 
       expect(queries).toBe(1);
       expect(backlog.dueCount).toBe(1);
@@ -245,7 +245,7 @@ describe("PostgreSQL 통합: 헬스 운영자 응답 (RQ-031)", () => {
            FROM generate_series(1, ${BACKLOG_COUNT_LIMIT + 5}) g`,
       );
 
-      const backlog = await getQueueBacklog(db.pool);
+      const backlog = await getQueueBacklog(db.pool, ["default"]);
 
       expect(backlog.byPriority.URGENT).toMatchObject({
         dueCount: BACKLOG_COUNT_LIMIT,

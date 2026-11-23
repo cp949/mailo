@@ -91,7 +91,7 @@ describe("PostgreSQL 통합: 지표용 읽기 함수(RQ-049, ADR-0012 결정 4·
         [sending],
       );
 
-      const depth = await getQueueDepth(db.pool);
+      const depth = await getQueueDepth(db.pool, ["default"]);
 
       expect(depth.scheduled).toEqual({ count: 1, truncated: false });
       expect(depth.sending).toBe(1);
@@ -107,7 +107,7 @@ describe("PostgreSQL 통합: 지표용 읽기 함수(RQ-049, ADR-0012 결정 4·
         [id],
       );
 
-      const depth = await getQueueDepth(db.pool);
+      const depth = await getQueueDepth(db.pool, ["default"]);
 
       expect(depth.due.count).toBe(0);
       expect(depth.scheduled.count).toBe(0);
@@ -126,7 +126,7 @@ describe("PostgreSQL 통합: 지표용 읽기 함수(RQ-049, ADR-0012 결정 4·
         "now() + interval '1 hour'",
       );
 
-      const depth = await getQueueDepth(db.pool);
+      const depth = await getQueueDepth(db.pool, ["default"]);
 
       expect(depth.due).toEqual({
         count: BACKLOG_COUNT_LIMIT,
@@ -145,7 +145,7 @@ describe("PostgreSQL 통합: 지표용 읽기 함수(RQ-049, ADR-0012 결정 4·
         "now() + interval '1 hour'",
       );
 
-      const depth = await getQueueDepth(db.pool);
+      const depth = await getQueueDepth(db.pool, ["default"]);
 
       expect(depth.scheduled).toEqual({
         count: BACKLOG_COUNT_LIMIT,
@@ -158,7 +158,7 @@ describe("PostgreSQL 통합: 지표용 읽기 함수(RQ-049, ADR-0012 결정 4·
       const client = await db.pool.connect();
       try {
         await client.query("BEGIN READ ONLY");
-        const depth = await getQueueDepth(client);
+        const depth = await getQueueDepth(client, ["default"]);
         await client.query("COMMIT");
         expect(depth.due.count).toBe(1);
       } finally {

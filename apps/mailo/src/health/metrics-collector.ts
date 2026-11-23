@@ -133,7 +133,10 @@ export class MetricsCollector {
         [
           "queue",
           async (db) => {
-            snapshot.queue = await getQueueDepth(db);
+            snapshot.queue = await getQueueDepth(
+              db,
+              this.config.smtpAccounts.map((a) => a.id),
+            );
           },
         ],
         [

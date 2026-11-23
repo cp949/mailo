@@ -124,7 +124,12 @@ export class HealthService {
           });
           const lag =
             callerId === undefined ? null : await getFeedLag(client, callerId);
-          const backlog = isOperator ? await getQueueBacklog(client) : null;
+          const backlog = isOperator
+            ? await getQueueBacklog(
+                client,
+                this.config.smtpAccounts.map((a) => a.id),
+              )
+            : null;
           const sendPaused =
             callerId === undefined
               ? null
