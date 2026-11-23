@@ -47,10 +47,11 @@
 | ---- | ---------- |
 | 202, 200 | 완료. outbox 행을 전송 완료로 표시한다 |
 | 네트워크 오류, 타임아웃, 5xx(503 포함) | 같은 Key로 재시도한다. 서버가 등록했는지 알 수 없으므로 Key가 중복을 막는다 |
-| 400, 413, 415 | 재시도하지 않는다. 요청을 고쳐야 한다. 실패로 기록하고 알린다 |
+| 400, 413, 415 | 재시도하지 않는다. 요청을 고쳐야 한다. 실패로 기록하고 알린다. 400의 `errors`에 `RECIPIENT_DOMAIN_NOT_ALLOWED`가 있으면 수신 도메인 허용 목록 위반이므로 호출처 등록을 확인한다 |
 | 401 | 재시도하지 않는다. 자격 문제이므로 알린다. 고친 뒤 재전송하는 절차는 사용처가 정한다 |
 | 409(`idempotency-conflict`) | 재시도하지 않는다. 영구 실패로 기록하고 운영 알림을 낸다. Key를 재사용하는 호출처 버그를 의심한다 |
 | 409(`job-not-cancelable`) | 취소 요청에만 나온다. 재시도하지 않는다. 응답의 `jobStatus`로 현재 상태를 확인한다 |
+| 410(`cursor-expired`) | `GET /events?onGap=error`에만 나온다. `after` 없이 다시 읽고 종결되지 않은 작업을 `GET /jobs`로 확인한다(아래 이벤트 피드) |
 | 429 | 쓰지 않는다. 등록 단계에는 쿼터가 없다 |
 
 - 재시도 간격은 exponential backoff에 jitter를 더하고 상한을 둔다. 수치는 사용처가 정한다.
@@ -156,7 +157,7 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 - `failureReason`은 `PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`, `EXPIRED`다.
 - `lastError`는 `category`(`TRANSIENT`, `PERMANENT`, `ACCOUNT`, `LEASE_EXPIRED`), `smtpCode`, `enhancedCode`, `occurredAt`이다. SMTP 응답 텍스트는 API에 노출하지 않는다.
 - `rejectedRecipients`는 `address`, `smtpCode`, `enhancedCode`다. 응답 텍스트는 없다.
-- 오류 `type`은 `urn:mailo:problem:<이름>` 10종이다. `forbidden`(403)은 읽기 토큰으로 `/ops`의 변경 endpoint를 호출한 경우다. `job-not-cancelable`(409)은 `jobStatus`(작업의 현재 상태)를 더한다. RFC 9457의 `status`(HTTP 상태 코드)와 이름이 겹치지 않게 했다. 401은 `WWW-Authenticate: Bearer`를 반환한다.
+- 오류 `type`은 `urn:mailo:problem:<이름>` 11종이다. `forbidden`(403)은 읽기 토큰으로 `/ops`의 변경 endpoint를 호출한 경우다. `cursor-expired`(410)는 `GET /events?onGap=error`에서만 나온다. `job-not-cancelable`(409)은 `jobStatus`(작업의 현재 상태)를 더한다. RFC 9457의 `status`(HTTP 상태 코드)와 이름이 겹치지 않게 했다. 401은 `WWW-Authenticate: Bearer`를 반환한다.
 - 예상하지 못한 서버 오류(DB 장애 포함)는 모두 503(`service-unavailable`)이다. 500은 쓰지 않는다. 호출처는 같은 Key로 재시도한다(ADR-0005 결정 5).
 - `priority`(선택, `LOW`·`NORMAL`·`HIGH`·`URGENT`, 대소문자 구분, 생략은 `NORMAL`)가 그 밖의 값이면 `/priority` `INVALID_FORMAT`이다. 암호화 평문 안의 `priority`는 `/content` `UNKNOWN_FIELD`다(RQ-033).
 - `ttlSeconds`(선택, 정수 60 이상 서버 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS` 이하, 생략은 서버 기본 TTL)가 정수가 아니면 `/ttlSeconds` `INVALID_FORMAT`, 범위 밖 정수면 `/ttlSeconds` `OUT_OF_RANGE`다. 만료 시각은 응답의 `expiresAt`이다. 암호화 평문 안의 `ttlSeconds`는 `/content` `UNKNOWN_FIELD`다(RQ-039).
@@ -165,13 +166,14 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 - 큐 내부의 실패 원인은 `failureReason`으로 변환한다. `PERMANENT`는 `PERMANENT_ERROR`, `ATTEMPTS_EXHAUSTED`는 `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_REPEATED`는 `ACCOUNT_ERROR_REPEATED`다. `EXPIRED`는 그대로다.
 - 404는 없는 ID, 다른 호출처의 작업, 보존 기간이 지나 삭제된 작업을 구분하지 않는다.
 - 409 응답에 먼저 등록된 작업의 `jobId`를 넣는다(같은 호출처 작업이다).
-- 검증 오류 코드는 `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`, `CONTROL_CHARACTER`, `UNKNOWN_FIELD`, `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`, `OUT_OF_RANGE`다. `FROM_NOT_ALLOWED`는 `from`이 호출처의 허용 발신 주소(기본 발신 주소 + `allowedFrom`)가 아닐 때이고 위치는 `/from`이다. `replyTo`는 제한하지 않는다.
+- 검증 오류 코드는 `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`, `CONTROL_CHARACTER`, `UNKNOWN_FIELD`, `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`, `RECIPIENT_DOMAIN_NOT_ALLOWED`, `OUT_OF_RANGE`다. `FROM_NOT_ALLOWED`는 `from`이 호출처의 허용 발신 주소(기본 발신 주소 + `allowedFrom`)가 아닐 때이고 위치는 `/from`이다. `RECIPIENT_DOMAIN_NOT_ALLOWED`는 수신자(`to`·`cc`·`bcc`)의 도메인이 호출처의 `allowedRecipientDomains`에 없을 때이고 어긴 주소마다 `/to/0` 같은 위치를 준다. 하나라도 어기면 요청 전체를 거부한다. 주소와 도메인 값은 응답에 없다. `replyTo`는 제한하지 않는다.
 
 이벤트 피드.
 
 - 응답은 `{events, nextCursor, hasMore}`다. 이벤트가 없으면 `nextCursor`는 요청의 `after`이고, `after`도 없었으면 `null`이다. `hasMore`를 추가했다.
 - 이벤트 종류는 `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `JOB_CANCELED`, `INTAKE_REJECTED`다. `JOB_CANCELED`는 `canceledBy`(`CALLER`·`OPERATOR`)를 더하고 `failureReason`·`lastError`·`rejectedRecipients`는 없다.
 - `type` 필터는 반복해서 여러 종류를 받는다. cursor는 필터와 무관하므로 필터 조합마다 따로 저장한다.
+- 공백 신호(ADR-0011 결정 9): `after`가 있고 그 cursor 뒤에서 보존 기간이 지나 삭제된 이벤트가 있으면 응답 헤더 `Mailo-Cursor-Gap: true`가 붙는다. 상태는 200이고 본문은 같다. 헤더를 받으면 응답의 이벤트를 처리하고, 종결되지 않은 outbox 행을 `GET /jobs?idempotencyKey=`로 확인한다. 쿼리 `onGap=error`를 보내면 공백일 때 410(`cursor-expired`)이다. 410을 받으면 `after` 없이 다시 읽고 같은 확인을 한다. 410을 처리하지 못하는 호출처는 `onGap`을 보내지 않는다. 헤더를 모르는 호출처는 지금처럼 공백을 알지 못한다. 한계는 `openapi.yaml`의 `GET /events` 설명에 있다.
 - `limit`은 기본 100, 최대 500이다. cursor는 최대 256자다.
 - `eventId`는 문자열이고 순서 의미가 없다. 이벤트의 `recipients`는 `to`, `cc`, `bcc`를 모두 담는다.
 - `INTAKE_REJECTED` 필드는 `rejectionId`, `idempotencyKey`(없으면 `null`), `fileName`, `fileSize`, `sha256`, `reasonCode`다. 사유 코드 11종(`MALFORMED` 등)의 이름은 이 계약이 정했다.

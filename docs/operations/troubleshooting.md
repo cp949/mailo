@@ -39,6 +39,9 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | 같은 메일이 두 번 갔다 | `LEASE_EXPIRED` 시도, `drain_timeout`, `lease_lost` |
 | 입력 폴더의 파일이 남는다 | `file_poll`의 `unreadable`·`deleteFailed`, `file_inbox_missing` |
 | 이벤트가 안 온다 | 작업 상태, 긴 트랜잭션, cursor 저장 |
+| 호출처가 오래 폴링하지 않았다, `Mailo-Cursor-Gap` 헤더나 410이 온다 | "이벤트 피드 공백" |
+| 등록이 400 `RECIPIENT_DOMAIN_NOT_ALLOWED`다, 파일이 `VALIDATION_FAILED`로 거부된다 | "수신 도메인 거부" |
+| 운영 CLI가 0이 아닌 코드로 끝난다 | "운영 CLI 종료 코드" |
 | `/health/ready`가 503 | DB 연결(`readiness_check_failed`) |
 | 기동하지 않는다 | `key-management.md`의 오류 표, `deployment.md`의 제약 표, "만료 시각"의 기동 오류 |
 
@@ -172,7 +175,7 @@ SELECT id, caller_id, file_name, size_bytes, reason_code, created_at
 - 고친 파일을 같은 이름으로 다시 넣어도 내용이 다르면 `sha256`이 달라 새 기록이 생긴다. 같은 이름·같은 내용을 다시 넣으면 새 거부 기록과 이벤트가 생기지 않고 원본만 삭제된다. 고치지 않은 같은 파일을 재투입하지 않는다.
 - `idempotencyKey`는 파싱할 수 있고 형식을 지킨 경우에만 이벤트에 들어간다. 서명이 `required`인 호출처에서 서명을 확인하지 못한 파일은 Key 없이(`null`) 나온다. `fileName`으로 찾는다.
 
-REST의 400 `validation-failed`는 `errors[]`에 `pointer`(또는 `parameter`)와 `code`를 준다. 코드: `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`(복호화 뒤 1 MiB 초과), `CONTROL_CHARACTER`(제목·주소의 CR/LF), `UNKNOWN_FIELD`(`pointer`는 빈 문자열), `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`(`pointer`는 `/from`, 요청의 `from`이 호출처의 허용 발신 주소가 아니다. `callers.json`의 `allowedFrom`을 확인한다), `OUT_OF_RANGE`(`pointer`는 `/ttlSeconds`, "만료 시각"). 복호화 관련 코드의 위치는 `/content`다. 409는 거부 기록이 아니라 응답이며 본문의 `jobId`가 먼저 등록된 작업이다.
+REST의 400 `validation-failed`는 `errors[]`에 `pointer`(또는 `parameter`)와 `code`를 준다. 코드: `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`(복호화 뒤 1 MiB 초과), `CONTROL_CHARACTER`(제목·주소의 CR/LF), `UNKNOWN_FIELD`(`pointer`는 빈 문자열), `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`(`pointer`는 `/from`, 요청의 `from`이 호출처의 허용 발신 주소가 아니다. `callers.json`의 `allowedFrom`을 확인한다), `RECIPIENT_DOMAIN_NOT_ALLOWED`(`pointer`는 `/to/0`·`/cc/1`·`/bcc/0`, 수신 도메인 허용 목록 위반. "수신 도메인 거부"), `OUT_OF_RANGE`(`pointer`는 `/ttlSeconds`, "만료 시각"). 복호화 관련 코드의 위치는 `/content`다. 409는 거부 기록이 아니라 응답이며 본문의 `jobId`가 먼저 등록된 작업이다.
 
 ## 피드 지연 해석
 
@@ -196,7 +199,53 @@ SELECT gid, prepared FROM pg_prepared_xacts;   -- 끝나지 않은 prepared tran
 
 - `idle in transaction`으로 오래 열린 쓰기 트랜잭션, 끝나지 않은 prepared transaction이 원인이 된다. 피드는 트랜잭션 ID를 받은 트랜잭션만 기다린다. 읽기 전용 트랜잭션(`pg_dump`가 쓰는 `REPEATABLE READ`·`READ ONLY` 포함)은 트랜잭션 ID가 없어 피드를 지연시키지 않았다(2026-11-23 PostgreSQL 17에서 읽기 전용 트랜잭션을 연 채 새 이벤트의 가시성을 확인했고, 쓰기 트랜잭션을 연 채일 때만 `pg_snapshot_xmin`이 그 ID에 묶였다. 실제 `pg_dump`는 실행하지 않았다). `pg_stat_activity`의 `backend_xid`가 있는 세션을 찾는다. 원인 세션을 끝내거나 작업이 끝나기를 기다린다.
 - 호출처 쪽 원인도 본다. cursor를 저장하지 않아 같은 구간을 다시 읽거나, `type` 필터를 바꾸면서 같은 cursor를 쓰면 이벤트를 놓친 것처럼 보인다(cursor는 필터마다 따로 저장한다).
-- 호출처가 30일 넘게 폴링하지 않으면 그 사이 이벤트가 삭제됐다. 이 경우는 작업 상태 조회로 보완한다(Key 보존도 종결 후 30일이다).
+- 호출처가 30일 넘게 폴링하지 않으면 그 사이 이벤트가 삭제됐다. 이 경우는 작업 상태 조회로 보완한다(Key 보존도 종결 후 30일이다). 삭제는 아래 "이벤트 피드 공백"의 신호로 알려진다.
+
+## 이벤트 피드 공백
+
+근거: RQ-045, ADR-0011 결정 9.
+
+신호: `GET /events`가 `after` 뒤에서 삭제된 이벤트를 발견하면 `event_cursor_gap`(warn, `callerId`만)이 응답마다 한 줄 남고, 응답은 헤더 `Mailo-Cursor-Gap: true`(200) 또는 `onGap=error` 요청에 410(`cursor-expired`)이다. 같은 호출처가 같은 cursor로 반복 폴링하면 줄이 반복된다. cursor 값은 로그에 없다.
+
+1. 호출처 ID로 마지막 폴링 시각을 확인한다. 30일 넘게 멈췄다면 정상적인 신호다. 호출처가 `GET /jobs?idempotencyKey=`로 종결되지 않은 outbox 행을 확인하도록 안내한다(`caller-onboarding.md` "공백 신호").
+2. 호출처가 계속 헤더를 받는다면 cursor가 삭제 지점을 아직 넘지 못한 것이다. `nextCursor`로 이어 읽으면 사라진다. 이어 읽지 않고 같은 `after`를 반복하면 계속 난다.
+3. 표지는 DB `mail_event_purges`에 있다. 호출처·종류별로 삭제된 이벤트 중 가장 큰 위치(`purged_txid`, `purged_id`)다.
+
+```sql
+SELECT caller_id, type, purged_txid, purged_id, updated_at FROM mail_event_purges ORDER BY caller_id, type;
+```
+
+- 표지는 줄어들지 않고 행 수는 호출처 수 × 이벤트 종류 수(최대 5)가 상한이다. 삭제하지 않는다. 호출처를 레지스트리에서 뺀 뒤에도 남는다.
+- 신호가 없다고 유실이 없는 것은 아니다. 공백 감지 도입(`0009`) 전 삭제분, `after` 없는 읽기, 롤링 중 구버전 인스턴스가 지운 이벤트는 표지에 없다. 헤더를 모르는 호출처는 신호를 받아도 알지 못한다.
+- 오탐: 표지를 이벤트보다 먼저 읽으면 놓치므로 이벤트를 읽은 뒤 표지를 읽는다. 읽는 두 시점 사이에 삭제가 커밋되면 방금 읽은 이벤트가 삭제 직전 상태일 때도 신호가 난다(추론, 동시 실행으로 확인하지 않았다).
+
+## 수신 도메인 거부
+
+근거: RQ-046, ADR-0011 결정 8.
+
+신호: REST는 400 `validation-failed`이고 `errors`에 `code: RECIPIENT_DOMAIN_NOT_ALLOWED`와 어긴 주소의 위치(`/to/0` 등)가 있다. 파일은 `VALIDATION_FAILED` 거부 기록이다. 로그·응답·거부 기록에 주소와 도메인 값은 없다.
+
+1. 어느 호출처인지 본다(`http_request`의 `callerId`, 거부 기록의 `caller_id`).
+2. 레지스트리 `callers.json`의 그 호출처 `allowedRecipientDomains`를 본다. 값이 없으면 이 코드가 나오지 않는다.
+3. 호출처가 보내려던 도메인이 정당하면 소문자 ASCII 도메인(하위 도메인은 따로)으로 목록에 더하고 모든 인스턴스를 다시 시작한다. 레지스트리는 기동 때 한 번 읽는다. 주소를 서버에서 확인할 수 없으므로 호출처에게 어긴 위치(`/to/1` 등)로 찾게 한다.
+4. 키 유출이나 스테이징 오설정으로 의도하지 않은 도메인이면 정상 동작이다. 요청은 등록되지 않았다.
+
+- 이미 등록된 작업은 목록을 바꿔도 그대로 나간다. 이미 등록된 Key의 재전송은 목록과 무관하게 기존 작업(200)이나 409다.
+- 수신자 하나라도 어기면 요청 전체가 거부된다. 나머지 수신자만 등록되지 않는다.
+- 기동이 거부되면(`allowedRecipientDomains` 형식 오류) 오류 메시지의 `callers[i].allowedRecipientDomains[j]`와 사유(대문자, 비ASCII, 끝 점, 선행 점, 와일드카드, 중복, 도메인 형식)를 고친다. 값은 메시지에 없다. 이전 버전으로 롤백할 때는 이 필드를 먼저 빼야 한다.
+
+## 운영 CLI 종료 코드
+
+근거: RQ-047, ADR-0011 결정 7. 사용은 `deployment.md` "운영 CLI"다.
+
+| 종료 코드 | 뜻 | 확인 |
+| --------- | -- | ---- |
+| 0 | 성공 | |
+| 1 | 사용법·설정 오류 | 명령·옵션 이름, 변경 명령의 `--yes`, `MAILO_CLI_TOKEN_FILE`(읽지 못하면 errno 코드가 나온다)·`MAILO_CLI_TOKEN`, `MAILO_CLI_URL` 형식. 서버를 부르지 않았다 |
+| 2 | HTTP 오류(또는 2xx인데 기대한 응답이 아님) | stderr의 `HTTP <상태>`. 401은 토큰 값·종류(호출처 키가 아닌지), 403은 읽기 토큰으로 변경 명령을 부른 경우, 404는 작업 ID, 409는 `job-not-cancelable`(`jobStatus`), 503은 DB·서버 상태. `queue stats`는 운영자 토큰이 아니면 `queue`가 없어 2다 |
+| 3 | 연결 실패·시간 초과(15초) | stderr의 `ECONNREFUSED` 같은 errno 코드. `MAILO_CLI_URL`과 컨테이너 포트(3000), 서버 기동 여부 |
+
+- CLI는 토큰·URL·요청 값을 오류 출력에 쓰지 않는다. 오류 본문은 서버 problem+json이다.
 
 ## 등급별 적체
 
@@ -393,5 +442,7 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 - "발송 정지"의 SQL은 스키마와 대조했고 통합 테스트(`test/queue/send-controls.integration-spec.ts`, `test/http/ops.integration-spec.ts`)가 동작을 확인한다. 점유 쿼리 비용 수치는 로컬 단일 측정이고 다중 인스턴스·운영 크기에서는 측정하지 않았다.
 - "작업 취소"의 SQL은 스키마와 대조했고 실행해 결과를 확인하지 않았다. 취소 동작 자체는 통합 테스트(`test/queue/cancel.integration-spec.ts`, `test/http/rest-cancel.integration-spec.ts`)가 확인한다.
 - 위 신호와 SQL을 운영 환경에서 실행해 결과를 확인하지 않았다. "등급별 적체"의 SQL은 로컬 PostgreSQL 17의 테스트 schema에서 실행해 문법과 결과 열을 확인했다(2026-11-23). 로그 이벤트 이름과 필드는 코드와 통합 테스트(차단기, 할당, 파일 폴러)로 확인했다. `breaker_not_closed`는 `worker/worker.integration-spec.ts`가 단언한다.
+- "이벤트 피드 공백"의 SQL은 통합 테스트(`test/events/event-purges.integration-spec.ts`, `test/http/rest-event-gap.integration-spec.ts`)가 동작을 확인한다. 30일이 실제로 지난 경우는 DB 시각을 당겨 만든 테스트 데이터로만 확인했다.
+- "수신 도메인 거부"와 "운영 CLI 종료 코드"는 통합 테스트(`test/http/rest-recipient-domains.integration-spec.ts`, `test/file-channel/recipient-domains.integration-spec.ts`, `test/cli/`)가 확인한다. 운영 환경 로그·거부 기록은 확인하지 않았다.
 - 실제 Gmail의 응답 코드·텍스트로 `lastReason` 분류를 대조하지 않았다(ADR-0007 구현 중 확정 2).
 - 긴 트랜잭션의 원인 목록(`pg_dump`, prepared transaction)은 일반 지식이며 Mailo 피드로 재현하지 않았다.

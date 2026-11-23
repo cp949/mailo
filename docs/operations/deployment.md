@@ -343,6 +343,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_FILE_MAX_BYTES` | `MAILO_MAX_REQUEST_BYTES` | 1024~64 MiB | 파일 원시 바이트 상한 |
 | `MAILO_FILE_TEMP_MAX_AGE_SECONDS` | 3600 | 1~31536000 | 점(.) 임시 파일 삭제 기준(mtime과 Mailo 시계 차이) |
 
+### 운영 CLI(Mailo 서버 설정 아님)
+
+`node dist/cli.js`만 읽는 변수다. 서버의 `MAILO_OPS_*` 변수는 읽지 않는다. 자세한 사용은 "운영 CLI"다.
+
+| 변수 | 기본값 | 설명 |
+| ---- | ------ | ---- |
+| `MAILO_CLI_TOKEN_FILE` | 없음 | 토큰 파일 경로(우선). 끝의 공백·줄바꿈은 지운다. 읽지 못하면 환경 변수로 넘어가지 않고 종료 코드 1이다 |
+| `MAILO_CLI_TOKEN` | 없음 | 토큰 값. 파일 변수가 없을 때만 쓴다. 명령줄 인자로는 받지 않는다 |
+| `MAILO_CLI_URL` | `http://127.0.0.1:<MAILO_PORT>` | 접속 주소. `http`·`https`, 사용자 정보·쿼리·해시 없음. `MAILO_PORT`는 CLI 프로세스의 환경 값이고 기본 3000이다 |
+
 ### compose 전용(Mailo 설정 아님)
 
 `POSTGRES_USER`(`mailo`), `POSTGRES_PASSWORD`(기본값 없음, 필수), `POSTGRES_DB`(`mailo`), `MAILO_STOP_GRACE_PERIOD`(`150s`, 앱도 읽는다), `MAILO_PUBLISH_HOST`(127.0.0.1), `MAILO_PUBLISH_PORT`(3000), `MAILO_DB_PUBLISH_PORT`(5432). 컨테이너 밖 Node가 읽는 `NODE_EXTRA_CA_CERTS`는 로컬 SMTP 서버 검증용 CA에 쓴다(AGENTS.md).
@@ -475,6 +485,54 @@ secrets:
 롤백: 정지를 모두 푼 뒤 앱만 이전 버전으로 되돌린다. 스키마는 되돌리지 않는다(되돌리려면 pg_dump 복원)
 ```
 
+## 운영 CLI
+
+근거: RQ-047, ADR-0011 결정 7. 같은 이미지의 `node dist/cli.js`다. 상주 프로세스가 아니고 DB에 접속하지 않는다. 운영 REST(`/health/ready`, `/ops/*`)를 Node의 `fetch`로 부르며 새 npm 의존성이 없다.
+
+```bash
+# 토큰 파일을 컨테이너에 마운트하고(읽기 전용) 컨테이너 안에서 실행한다. 컨테이너 안의 포트는 3000이다.
+docker compose exec -e MAILO_CLI_TOKEN_FILE=/run/secrets/mailo_cli_token mailo node dist/cli.js status
+```
+
+| 명령 | 권한 | 호출하는 REST |
+| ---- | ---- | ------------- |
+| `status` | 읽기 | `GET /health/ready`, `GET /ops/pauses`. 출력은 `{ready, pauses}` |
+| `queue stats` | 읽기 | `GET /health/ready`의 `queue` 값. 운영자 응답이 아니면 종료 코드 2 |
+| `jobs show <jobId>` | 읽기 | `GET /ops/jobs/{jobId}` |
+| `audit list [--limit N] [--before ID]` | 읽기 | `GET /ops/audit` |
+| `pause --all` 또는 `pause --caller <호출처 ID>` | 관리 | `PUT /ops/pauses/all`, `PUT /ops/pauses/callers/{callerId}` |
+| `resume --all` 또는 `resume --caller <호출처 ID>` | 관리 | `DELETE` 같은 경로 |
+| `jobs cancel <jobId>` | 관리 | `POST /ops/jobs/{jobId}/cancel` |
+
+- 변경 명령(`pause`, `resume`, `jobs cancel`)은 `--yes`가 없으면 서버를 부르지 않고 종료 코드 1이다. `pause`·`resume`은 범위(`--all` 또는 `--caller`)를 하나 명시해야 하고 기본 범위가 없다.
+- 토큰은 명령줄 인자로 받지 않는다(`ps`에 보인다). `--token` 같은 옵션은 거부한다. 출력·오류에 토큰을 쓰지 않는다. 토큰 파일은 Mailo 컨테이너에 읽기 전용으로 마운트하고 읽기 토큰과 관리 토큰을 파일로 나눈다. 평소에는 읽기 토큰 파일을 쓰고 변경할 때만 관리 토큰 파일을 지정한다.
+- 출력은 서버 응답 JSON(들여쓰기 2칸)이다. 성공은 stdout, 오류는 stderr다. 종료 코드: 0 성공, 1 사용법·설정 오류(토큰 없음, URL 형식 오류 포함), 2 HTTP 오류(상태와 problem 본문을 stderr에 낸다. 3xx도 따라가지 않고 2), 3 연결 실패·시간 초과(15초). 2xx이지만 JSON이 아니면 2다.
+- `http`이고 loopback이 아닌 주소에 접속하면 토큰이 평문으로 가므로 stderr에 경고한다. 원격에서 쓰려면 `https`(TLS 프록시)를 쓴다.
+- 읽기 전용 루트 파일 시스템(`read_only: true`)에서 쓰기가 없다. 2026-11-24에 이미지를 직접 빌드해 `--read-only --cap-drop ALL --security-opt no-new-privileges`와 `/tmp` tmpfs로 띄운 컨테이너 안에서 읽기 명령, `--yes` 없는 거부, 읽기 토큰의 변경 거부(403 → 종료 코드 2), 관리 토큰의 정지·재개, 감사 목록을 실행해 확인했다(`NODE_ENV=development`, 개발 DB 비밀번호 때문). `docker compose exec`는 실행하지 않았다.
+- 컨테이너 밖(호스트)에서 쓰려면 같은 소스를 빌드한 `node apps/mailo/dist/cli.js`를 쓰고 `MAILO_CLI_URL`을 맞춘다.
+
+### 수신 도메인 제한·이벤트 공백 감지 도입 배포 순서
+
+근거: RQ-045·046, ADR-0011 결정 8·9·10. 마이그레이션 `0009`(`mail_event_purges`)는 새 테이블만 만들고 기존 테이블을 잠그지 않는다. 구버전은 이 테이블을 쓰지 않으므로 마이그레이션 직후에도 영향이 없다.
+
+1. 마이그레이션 전에 `pg_dump`를 받는다("백업과 복구"). `0009`를 적용한다(기동 때 자동 또는 `mailo-migrate`).
+2. 모든 Mailo 인스턴스를 새 버전으로 바꾼다. 구버전 인스턴스가 지운 이벤트는 삭제 표지에 오르지 않는다. 롤링 중에는 그 이벤트가 공백 감지에서 빠진다.
+3. 호출처 레지스트리에 `allowedRecipientDomains`를 넣고 인스턴스를 다시 시작한다. 모든 인스턴스가 새 버전이 된 뒤에만 한다. 구버전은 새 필드를 거부해 기동하지 못한다. 순서는 "코드 먼저, 레지스트리 나중"이다. 호출처가 보내는 수신 도메인을 먼저 조사해 목록에 모두 넣는다.
+4. 호출처는 응답 헤더 `Mailo-Cursor-Gap`을 처리하도록 바꾼 뒤 필요하면 `onGap=error`를 보낸다(`caller-onboarding.md` "공백 신호").
+
+롤백(이 순서를 지킨다):
+
+1. 호출처의 취소 API와 관리 취소 사용을 먼저 멈춘다.
+2. 정지를 모두 푼다(`GET /ops/pauses`가 빈 목록인지 확인한다). 구버전은 정지를 무시하므로 정지가 남은 채 롤백하면 발송이 조용히 재개된다.
+3. 레지스트리에서 `allowedRecipientDomains`를 뺀다. 남기면 구버전이 기동하지 못한다. 이 필드를 빼면 그 호출처의 수신자 제한이 풀린다.
+4. 이전 버전으로 인스턴스를 바꾼다.
+5. 마이그레이션은 되돌리지 않는다. `mail_event_purges`는 남기고 구버전은 쓰지 않는다. 테이블 행 수는 호출처 수 × 이벤트 종류 수(최대 5)가 상한이라 정리하지 않는다.
+
+```txt
+위험도: 낮음 (새 테이블 1개만 추가, 기존 테이블 잠금 없음. 레지스트리에 필드를 남긴 채 롤백하면 구버전이 기동하지 못함)
+롤백: 위 순서로 레지스트리 필드를 빼고 앱만 이전 버전으로 되돌린다. 스키마는 되돌리지 않는다(되돌리려면 pg_dump 복원)
+```
+
 ## 로그
 
 모든 로그는 표준 출력의 한 줄 JSON이다. Worker·파일 폴러·HTTP 요청·DB·헬스·Nest 내부 로그가 같은 로거 하나(`createApp`이 만든다)를 쓴다. 이전에는 Worker·파일 폴러만 JSON이고 나머지는 Nest 텍스트 줄이었다.
@@ -488,7 +546,7 @@ secrets:
 - 앞의 네 필드는 모든 줄에 있다: `ts`(ISO 8601 UTC), `instance`(`MAILO_INSTANCE_ID`, 없으면 호스트 이름 = 컨테이너 ID), `level`(`debug`·`info`·`warn`·`error`), `event`. 나머지는 이벤트마다 다르다. 호출자 필드가 이 네 값을 덮어쓰지 않는다.
 - `event: "http_request"`: 응답이 끝날 때 한 줄. 필드는 `requestId`, `method`, `route`(라우트 패턴, 예 `/jobs/:jobId`), `status`, `callerId`(인증 전에는 `null`), `durationMs`뿐이다. 쿼리 문자열, 경로 값, `Idempotency-Key`, 헤더, 본문은 없다(RQ-027). `requestId`는 오류 응답 본문의 `instance`(`urn:uuid:…`)와 같다.
 - `event: "nest_log"`: Nest 프레임워크와 `Logger`로 쓴 문자열 로그. `message`, `context`(클래스·모듈 이름), 오류 수준이면 Nest가 넘긴 `stack`이 있다. `stack`의 첫 줄에는 예외 메시지가 들어 있을 수 있다(이전 텍스트 출력과 같은 정보다).
-- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), `ops_pause_set`·`ops_pause_cleared`(info, `actor`·`scope`(`all`·`caller`)·`callerId`(`caller`일 때만), 상태를 바꾼 관리 요청만. 멱등 재요청은 남지 않는다), `ops_job_canceled`(info, `actor`·`jobId`), Worker의 `send_paused`(warn)·`send_resumed`(info)(`scope`, `callerId`는 `caller`일 때만. 정지 상태가 바뀐 것을 관찰할 때 한 번만 남고 폴링마다 반복하지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
+- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), `ops_pause_set`·`ops_pause_cleared`(info, `actor`·`scope`(`all`·`caller`)·`callerId`(`caller`일 때만), 상태를 바꾼 관리 요청만. 멱등 재요청은 남지 않는다), `ops_job_canceled`(info, `actor`·`jobId`), `event_cursor_gap`(warn, `callerId`만. `GET /events`가 `after` 뒤의 삭제를 발견한 응답마다 한 줄이고 헤더든 410이든 같다), Worker의 `send_paused`(warn)·`send_resumed`(info)(`scope`, `callerId`는 `caller`일 때만. 정지 상태가 바뀐 것을 관찰할 때 한 번만 남고 폴링마다 반복하지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
 - 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패는 `event: "startup_failed"`(필드 `error`는 예외 이름·코드, 설정 오류는 변수 이름만 담은 `message`)로 남는다. 설정을 읽기 전의 실패는 `instance`가 호스트 이름이다(`MAILO_INSTANCE_ID`를 아직 읽지 못했다).
 - 본문·제목·수신자 주소·SMTP 인증 정보·키는 어느 필드에도 넣지 않는다. 예외는 이름과 코드(`Error:57014`)만 쓴다(RQ-027). 이 규칙은 canary 문자열 테스트로 확인한다.
 - 로그 수집기가 인스턴스를 구분하려면 `instance`를 쓴다. 로그와 DB 행의 연결: 결과를 기록한 시도의 `instance`가 `mail_attempts.instance` 컬럼에 같은 값으로 남는다(128자까지). 로그의 `jobId`(`job_completed` 등)로 시도 행을 찾고 `instance`로 기록한 인스턴스를 확인한다. lease 회수로 쓴 `LEASE_EXPIRED` 시도, 0003 적용 전 행, 롤링 배포 중 이전 버전이 쓴 행은 NULL이다(점유한 인스턴스를 DB에 쓰지 않는다: lease는 `lease_token`으로만 다룬다). REST 응답에는 노출하지 않는다. 컨테이너를 다시 만들면 호스트 이름이 바뀌므로 고정 이름이 필요하면 `MAILO_INSTANCE_ID`를 준다.
@@ -561,6 +619,8 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 컨테이너 기동, 재생성, 재시작 후 자동 복구(RQ-025·026의 미충족 조건).
 - 실제 SIGTERM을 받은 컨테이너의 종료 시간(`pause` 먼저 호출하는 새 종료 순서 포함).
 - 운영 토큰·발송 정지 도입(`0008`)의 롤링 배포·롤백 실행. 다중 인스턴스에서 정지 명령 직후 점유를 마친 작업 수(상한은 코드 읽기에 따른 추정)와 정지 해제 직후의 SMTP 한도 반응.
+- 수신 도메인 제한·이벤트 공백 감지 도입(`0009`)의 롤링 배포·롤백 실행. 구버전 인스턴스가 지운 이벤트가 공백 감지에서 빠진다는 동작은 코드 읽기 결과다. 30일 경과와 동시 삭제·조회는 DB 시각을 당긴 테스트로만 확인했고 실제 30일 운영은 하지 않았다.
+- 운영 CLI를 `docker compose exec`로 실행하지 않았다(직접 `docker run`한 읽기 전용 컨테이너에서만 확인했다). 호스트에서 `https` 프록시 뒤 주소로 접속하는 구성도 실행하지 않았다.
 - 작업 취소 도입(`0006`·`0007`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기 시간(대용량·쓰기 부하). 구버전의 동작은 코드를 읽어 적었다.
 - 요청별 만료 시간 도입의 롤링 배포·롤백 실행, 긴 `MAILO_JOB_EXPIRY_MAX_SECONDS`에서의 대기 건수와 점유 지연.
 - 마이그레이션의 대용량 DB 적용 시간. `0005`(`CREATE INDEX CONCURRENTLY`)를 쓰기 부하 중에 적용한 시간도 측정하지 않았다.

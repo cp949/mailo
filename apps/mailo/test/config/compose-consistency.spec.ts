@@ -66,6 +66,8 @@ describe("docker-compose.yml과 .env.example의 관계 (M6, RQ-025)", () => {
       "MAILO_OPS_TOKEN",
       "MAILO_OPS_ADMIN_NAMES",
       "MAILO_OPS_ADMIN_TOKEN_ONCALL",
+      "MAILO_CLI_TOKEN_FILE",
+      "MAILO_CLI_URL",
     ])
       expect(envExample).toContain(name);
   });

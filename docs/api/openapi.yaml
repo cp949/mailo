@@ -556,13 +556,26 @@ paths:
         - cursor는 불투명 문자열이다. 해석하거나 만들지 않는다. 형식은 서버가 바꿀 수 있다.
         - cursor는 `type` 필터와 무관하다. 필터를 바꾸면서 같은 cursor를 이어 쓰면 이벤트를 놓칠 수 있다. 필터 조합마다 cursor를 따로 저장한다.
         - 이벤트는 기록 후 30일 보존한다. 30일 넘게 폴링하지 않으면 그 사이 이벤트를 놓친다.
+
+        공백 신호(ADR-0011 결정 9).
+
+        - `after`가 있을 때 그 cursor 뒤에서 보존 기간이 지나 삭제된 이벤트가 있으면 응답에 헤더 `Mailo-Cursor-Gap: true`가 붙는다. 상태는 200이고 본문 형식은 바뀌지 않는다. 모르는 호출처는 헤더를 무시한다.
+        - 헤더가 있으면 응답의 이벤트는 정상 처리하고, 종결되지 않은 outbox 행은 `GET /jobs?idempotencyKey=`로 확인한다. 30일이 지나 404인 Key는 호출처가 정한다.
+        - 헤더는 삭제 지점이 cursor보다 뒤인 동안 매 응답에 붙는다. `nextCursor`로 이어 읽어 cursor가 삭제 지점을 넘으면 사라진다.
+        - 판정은 호출처와 `type`별이다. `type` 필터로 읽으면 요청한 종류의 삭제만 본다. 다른 호출처의 삭제와 cursor 앞의 삭제는 신호가 아니다.
+        - 쿼리 파라미터 `onGap=error`를 보내면 공백일 때 헤더 대신 410(`cursor-expired`)이다. 410을 처리할 수 있는 호출처만 쓴다. 410을 받으면 `after` 없이 다시 읽어 남은 이벤트부터 받고 같은 확인을 한다.
+        - 한계: 공백 감지를 도입하기 전에 삭제된 이벤트, `after` 없는 읽기(cursor가 `null`이거나 복구 읽기), 롤링 중 구버전 인스턴스가 지운 이벤트는 판정하지 못한다.
       parameters:
         - $ref: '#/components/parameters/EventsAfter'
         - $ref: '#/components/parameters/EventsType'
         - $ref: '#/components/parameters/EventsLimit'
+        - $ref: '#/components/parameters/EventsOnGap'
       responses:
         '200':
-          description: 이벤트 목록과 다음 cursor.
+          description: '이벤트 목록과 다음 cursor. `after` 뒤에서 삭제된 이벤트가 있으면 헤더 `Mailo-Cursor-Gap: true`가 붙는다.'
+          headers:
+            Mailo-Cursor-Gap:
+              $ref: '#/components/headers/CursorGap'
           content:
             application/json:
               schema:
@@ -650,6 +663,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /health/live:
@@ -850,6 +865,13 @@ components:
       schema:
         type: string
         const: no-store
+    CursorGap:
+      description: |
+        `after` 뒤에서 보존 기간이 지나 삭제된 이벤트가 있다는 신호다. 값은 항상 `true`이고 없으면 신호가 없다.
+        본문은 바뀌지 않는다. 호출처는 응답의 이벤트를 처리하고 종결되지 않은 작업을 `GET /jobs?idempotencyKey=`로 확인한다.
+      schema:
+        type: string
+        const: 'true'
     WwwAuthenticate:
       description: 항상 `Bearer`다. 자격 없음, 형식 오류, 틀린 키를 구분해 알리지 않는다.
       schema:
@@ -912,6 +934,16 @@ components:
         items:
           $ref: '#/components/schemas/EventType'
         uniqueItems: true
+    EventsOnGap:
+      name: onGap
+      in: query
+      required: false
+      description: |
+        `error`만 받는다. 보내면 `after` 뒤에서 이벤트가 삭제된 경우 헤더 대신 410(`cursor-expired`)으로 답한다.
+        다른 값이나 반복은 400이다. 410을 처리하지 못하는 호출처는 보내지 않는다. 모르는 쿼리 파라미터를 무시하는 구버전 서버에 보내도 안전하다.
+      schema:
+        type: string
+        enum: [error]
     EventsLimit:
       name: limit
       in: query
@@ -990,6 +1022,7 @@ components:
         - 암호화 모드: `content`가 필수이고 `subject`, `text`, `html`을 함께 보낼 수 없다.
         - `to`, `cc`, `bcc` 합계는 50명 이하다. 중복 주소도 각각 센다(추정).
         - `from`을 생략하면 Mailo의 기본 발신 주소(SMTP 발신 계정)를 쓴다. 쓸 수 있는 `from`은 Mailo의 기본 발신 주소와 호출처에 등록된 `allowedFrom`뿐이다(대소문자 무시). 그 밖의 주소는 400 `FROM_NOT_ALLOWED`(위치 `/from`)다. 같은 `Idempotency-Key`로 이미 등록된 요청의 재전송은 이 검사를 받지 않는다. Gmail은 인증 계정과 다른 From을 덮어쓸 수 있다.
+        - 호출처에 `allowedRecipientDomains`가 있으면 `to`·`cc`·`bcc`의 모든 주소가 그 도메인 중 하나여야 한다(`@` 뒤를 소문자로 바꿔 정확히 비교하고 하위 도메인은 따로 허용한다). 하나라도 어기면 요청 전체를 400 `RECIPIENT_DOMAIN_NOT_ALLOWED`(어긴 주소마다 위치 `/to/0` 등)로 거부하고 작업을 만들지 않는다. 목록이 없으면 제한이 없다. `replyTo`는 제한하지 않는다. 이미 등록된 Key의 재전송은 이 검사를 받지 않는다(ADR-0011 결정 8).
         - `replyTo`는 주소 형식만 검증하고 허용 범위를 두지 않는다.
         - 제목+text+html은 UTF-8로 1 MiB 이하다. 원시 요청은 2 MiB 이하다.
         - `priority`를 생략하면 `NORMAL`이다. `null`, 숫자, 빈 문자열, 정의되지 않은 값(소문자 포함)은 400 `INVALID_FORMAT`(위치 `/priority`)다. 암호화 평문 안의 `priority`는 `UNKNOWN_FIELD`(위치 `/content`)다.
@@ -1598,6 +1631,7 @@ components:
             - KID_UNKNOWN
             - CALLER_MISMATCH
             - FROM_NOT_ALLOWED
+            - RECIPIENT_DOMAIN_NOT_ALLOWED
             - OUT_OF_RANGE
           description: |
             값 이름은 추정이다.
@@ -1609,6 +1643,7 @@ components:
             - `KID_UNKNOWN`: JWE `kid`에 맞는 Mailo 개인키가 없거나 `kid`가 없다. Mailo에 JWE 개인키를 설정하지 않은 배치도 같다.
             - `CALLER_MISMATCH`: 복호화에 성공한 JWE의 `caller`가 인증된 호출처와 다르다.
             - `FROM_NOT_ALLOWED`: 요청의 `from`이 호출처의 허용 발신 주소(Mailo 기본 발신 주소 + 호출처 `allowedFrom`)가 아니다. 위치는 `/from`이다. 이미 등록된 Key의 재전송에는 나오지 않는다.
+            - `RECIPIENT_DOMAIN_NOT_ALLOWED`: 수신자(`to`·`cc`·`bcc`)의 도메인이 호출처의 `allowedRecipientDomains`에 없다(ADR-0011 결정 8). 어긴 주소마다 한 항목이고 위치는 `/to/0`, `/cc/1`, `/bcc/0` 형식이다. 하나라도 어기면 요청 전체를 거부한다. 도메인은 `@` 뒤를 소문자로 바꿔 정확히 비교한다(하위 도메인은 따로 허용해야 한다). `replyTo`는 제한하지 않는다. 응답에 주소와 도메인 값을 넣지 않는다. 이미 등록된 Key의 재전송에는 나오지 않는다.
             - `OUT_OF_RANGE`: 정수지만 허용 범위 밖이다. 현재는 `ttlSeconds`(60 이상 서버 상한 이하)에만 쓴다. 응답에 요청 값과 상한 값을 넣지 않는다.
     Problem:
       type: object
@@ -1635,6 +1670,7 @@ components:
             - urn:mailo:problem:not-found
             - urn:mailo:problem:idempotency-conflict
             - urn:mailo:problem:job-not-cancelable
+            - urn:mailo:problem:cursor-expired
             - urn:mailo:problem:payload-too-large
             - urn:mailo:problem:unsupported-media-type
             - urn:mailo:problem:service-unavailable
@@ -1650,6 +1686,7 @@ components:
             | `not-found` | 404 |
             | `idempotency-conflict` | 409 |
             | `job-not-cancelable` | 409, `SENDING`이거나 종결된 작업의 취소 |
+            | `cursor-expired` | 410, `GET /events?onGap=error`에서 `after` 뒤의 이벤트가 삭제됨 |
             | `payload-too-large` | 413 |
             | `unsupported-media-type` | 415 |
             | `service-unavailable` | 503 |
@@ -2096,6 +2133,23 @@ components:
                 detail: 발송 중이거나 이미 종결된 작업은 취소할 수 없다.
                 instance: urn:uuid:4d3c2b1a-0f9e-4d8c-b7a6-5e4f3a2b1c0d
                 jobStatus: SENDING
+    CursorExpired:
+      description: |
+        `onGap=error`를 보냈고 `after` 뒤에서 보존 기간이 지나 삭제된 이벤트가 있다. 본문은 고정 문구이고 cursor를 담지 않는다.
+        `after` 없이 다시 읽어 남은 이벤트부터 받고, 종결되지 않은 작업은 `GET /jobs?idempotencyKey=`로 확인한다.
+        같은 `after`로 `onGap` 없이 다시 읽어도 된다(헤더로 알린다).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            cursorExpired:
+              value:
+                type: urn:mailo:problem:cursor-expired
+                title: Cursor expired
+                status: 410
+                detail: cursor 뒤에서 보존 기간이 지나 삭제된 이벤트가 있다. after 없이 다시 읽고 종결되지 않은 작업은 GET /jobs로 확인한다.
+                instance: urn:uuid:0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e
     PayloadTooLarge:
       description: 원시 요청이 2 MiB(추정 기본값)를 넘었다. relay는 재시도하지 않는다.
       content:

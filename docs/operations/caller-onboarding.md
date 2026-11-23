@@ -50,7 +50,8 @@
         ]
       },
       "sendQuota24h": 500,
-      "allowedFrom": ["billing@example.com"]
+      "allowedFrom": ["billing@example.com"],
+      "allowedRecipientDomains": ["example.com", "mail.example.com"]
     },
     {
       "id": "reports",
@@ -71,6 +72,7 @@
 | `signature.keys` | `required`이면 1~2개, `none`이면 둘 수 없음 | 각 항목 `kid`(`[A-Za-z0-9][A-Za-z0-9._:-]{0,63}`)와 `secretVar`(`MAILO_JWS_SECRET_`로 시작하는 대문자·숫자·`_`). 값은 변수로 받는다 |
 | `sendQuota24h` | 아니오 | 1~10000000의 정수, 생략하면 무제한. 0은 허용하지 않는다(중지는 호출처를 빼서 표현) |
 | `allowedFrom` | 아니오 | 요청의 `from`으로 쓸 수 있는 발신 주소(addr-spec) 배열, 최대 20개, 생략하면 빈 목록. 형식이 틀리면 기동하지 않는다 |
+| `allowedRecipientDomains` | 아니오 | 호출처가 `to`·`cc`·`bcc`로 보낼 수 있는 수신 도메인 배열, 1~50개, 생략하면 제한 없음. 소문자 ASCII 도메인만 받는다(아래). 빈 배열·`null`은 기동하지 않는다 |
 | `jwe` | 아니오 | 코드가 읽기만 하고 쓰지 않는다. JWE는 호출처 항목이 아니라 Mailo 키 목록(`key-management.md`)으로 정한다 |
 
 - 서명 키(`signature.keys`)의 값은 호출처 사이·`kid` 사이·DB 본문 키·지문 키와 달라야 한다. 같은 바이트이면 기동하지 않는다(표기가 base64와 hex로 달라도 같다). `NODE_ENV`가 `development`·`test`가 아니면 같은 바이트가 반복된 키와 공개 샘플 키도 거부한다(ADR-0008 구현 중 확정 13). 오류에는 위치만 나오고 값은 나오지 않는다.
@@ -79,6 +81,13 @@
   - 배포 순서: 이미 `defaultFrom` 외의 `from`을 보내는 호출처가 있으면 Mailo를 올리기 전에 그 주소를 `allowedFrom`에 넣는다. 이미 큐에 등록된 작업은 검사하지 않고 그대로 나간다. 이미 등록된 `Idempotency-Key`의 재전송은 허용 여부와 무관하게 기존 작업을 돌려받는다.
   - `replyTo`는 제한하지 않는다. 위험은 회신을 다른 주소로 유도하는 피싱이다. SPF·DMARC는 `From`만 정렬 대상이라 `Reply-To`가 발신 사칭을 늘리지는 않는다.
   - Gmail 인증 모드: `allowedFrom` 주소를 Gmail "다른 주소에서 메일 보내기"(send-as) 별칭으로 등록해야 From이 유지된다. 등록하지 않으면 Gmail이 From을 계정 주소로 바꾼다. 이 동작은 확인하지 않았다(미검증). IP 허용 relay(인증 없음)에서는 relay 정책이 허용하는 주소여야 한다(미검증).
+- 수신 도메인(`allowedRecipientDomains`, RQ-046, ADR-0011 결정 8): API 키가 유출되거나 스테이징이 잘못 설정돼도 임의 수신자로 대량 발송되지 않게 하는 호출처별 제한이다. 수신자 주소의 `@` 뒤를 소문자로 바꿔 목록과 **정확히** 비교한다.
+  - 하위 도메인은 따로 적는다(`example.com`은 `mail.example.com`을 허용하지 않는다). 와일드카드는 없다. 국제화 도메인은 A-label(`xn--...`)로 적는다.
+  - 기동을 거부하는 값: 대문자, 비ASCII(U-label), 끝 점(`example.com.`), `*`, 선행 점(`.example.com`), 목록 안의 중복, 도메인 형식 오류(라벨 1개, 숫자뿐인 마지막 라벨 등), 빈 배열, `null`, 51개 이상. 오류 메시지에는 항목 위치(`callers[i].allowedRecipientDomains[j]`)와 사유만 나오고 값은 나오지 않는다. 호출처를 막으려면 이 필드가 아니라 정지(`deployment.md` "발송 정지와 운영 REST")나 키 폐기를 쓴다.
+  - 하나라도 어기면 요청 전체를 거부한다. REST는 400(`errors`에 어긴 주소마다 `pointer: /to/0`·`/cc/1`·`/bcc/0`, `code: RECIPIENT_DOMAIN_NOT_ALLOWED`), 파일은 `VALIDATION_FAILED` 거부다. 응답·로그·거부 기록에 주소와 도메인 값은 없다. 일부 수신자만 빼고 등록하지 않는다. SMTP 서버가 수신자를 거부하는 부분 거부(ADR-0007 결정 7)와 다른 단계다.
+  - `replyTo`는 수신자가 아니라 제한하지 않는다. 이미 등록된 `Idempotency-Key`의 재전송은 목록과 무관하게 기존 작업(200)이나 409를 돌려받는다. 목록을 바꾸기 전에 큐에 등록된 작업은 그대로 나간다.
+  - 한계: 허용 도메인 안의 대량 발송은 막지 못한다. 도메인의 MX 같은 실제 수신 가능 여부는 보지 않는다.
+  - 배포 순서: 모든 인스턴스가 새 버전이 된 뒤에 레지스트리에 넣고 재시작한다. 이전 버전은 이 필드를 몰라 기동하지 못한다(`deployment.md` "수신 도메인 제한·이벤트 공백 감지 도입 배포 순서"). 이미 이 호출처가 보내는 수신 도메인을 먼저 조사해 목록에 모두 넣는다. 빠진 도메인으로 가는 요청은 400이다.
 - 발송 할당: 24시간 rolling이고 단위는 메시지 시도 수다(수신자 수로 가중하지 않는다). 초과하면 그 호출처의 작업은 점유되지 않고 대기하며 시도 횟수는 늘지 않는다. 대기 중 만료 시각에 이르면 `EXPIRED`다. 등록 응답에는 영향이 없다(429 없음). 로그 이벤트는 `caller_quota_exceeded`·`caller_quota_recovered`다(`troubleshooting.md`). 값을 바꾸면 재시작이 필요하다.
 
 ## 3. API 키 발급·교체·폐기
@@ -370,11 +379,24 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 | 위에 없는 `type` | 건너뛰지 않는다. 이벤트를 기록하고 outbox 행을 "확인 필요"로 표시한 뒤 `GET /jobs`로 상태를 확인한다. cursor는 그 이벤트를 지나가므로 이 표시가 유일한 단서다 |
 
 - 이벤트 모양 예(JOB_SENT): `eventId`, `type`, `occurredAt`, `jobId`, `idempotencyKey`, `attempts`, `recipients{to,cc,bcc}`, `rejectedRecipients[]`. `INTAKE_REJECTED`는 `rejectionId`, `idempotencyKey`(없으면 `null`), `fileName`, `fileSize`, `sha256`, `reasonCode`다.
-- 이벤트는 기록 후 30일 보존한다. 30일 넘게 폴링하지 않으면 그 사이 이벤트를 놓친다.
+- 이벤트는 기록 후 30일 보존한다. 30일 넘게 폴링하지 않으면 그 사이 이벤트를 놓친다. 응답 헤더 `Mailo-Cursor-Gap: true`가 이 유실을 알린다(아래 "공백 신호").
 - `GET /events`가 200이 아니면 같은 요청을 말없이 반복하지 않는다. 상태 코드를 기록하고 알린다. 401은 키를 고치기 전에 반복하지 않는다.
 - 응답의 모르는 필드와 헤더는 무시한다.
 - 빈 `events`가 새 이벤트가 없다는 뜻은 아니다. DB에 긴 트랜잭션이 있으면 피드가 지연된다(이벤트는 유실되지 않는다). 지연은 `/health/ready`의 `eventFeed.lagSeconds`로 본다. 새 이벤트가 없어도 값이 커지므로 단독 장애 신호가 아니다.
 - 같은 이름·같은 `sha256`의 파일을 다시 넣어도 거부 기록과 이벤트는 새로 생기지 않는다. 고친 파일은 내용이 달라지므로 새 기록이 생긴다.
+
+### 공백 신호 `Mailo-Cursor-Gap`
+
+근거: RQ-045, ADR-0011 결정 9. 보존 삭제(30일)가 저장해 둔 `after` 뒤의 이벤트를 지웠으면 응답이 헤더 `Mailo-Cursor-Gap: true`를 가진다. 상태는 200이고 본문은 같다.
+
+1. 응답의 이벤트는 평소처럼 처리하고 `nextCursor`를 저장한다.
+2. 헤더가 있으면 종결되지 않은 outbox 행(`DELIVERED` 등)마다 `GET /jobs?idempotencyKey=`로 상태를 확인한다. 30일이 지나 404인 Key는 사용처가 정한다(새 Key로 다시 보낼지는 중복 발송 위험과 함께 판단한다).
+3. `nextCursor`로 이어 읽어 cursor가 삭제 지점을 넘으면 헤더가 사라진다. 헤더가 붙는 응답마다 같은 outbox 행을 다시 확인하지 않도록 확인한 행을 표시한다.
+
+- `onGap=error`를 보내면 헤더 대신 410(`cursor-expired`)이다. 410을 처리하지 못하는 사용처는 보내지 않는다. 410을 받으면 `after` 없이 다시 읽어 남은 이벤트부터 받고 2를 한다. 같은 `after`로 `onGap` 없이 다시 읽어도 된다. 410을 모르는 클라이언트가 200이 아닌 응답을 같은 요청으로 반복하면 피드가 멈추므로 기본값은 410이 아니다(ADR-0011 결정 9).
+- 판정은 `type`별이다. `type` 필터로 읽는 사용처는 요청한 종류의 삭제만 신호로 받는다.
+- 복구 읽기를 `after` 없이 하면 그 사이 삭제가 신호 없이 진행될 수 있다. 같은 `after`로 이어 읽으면 신호가 난다. 복구 뒤에 `GET /jobs`로 한 번 더 확인한다.
+- 신호가 없는 경우: 공백 감지 도입 전에 삭제된 이벤트, cursor가 `null`인 호출처, 롤링 중 구버전 인스턴스가 지운 이벤트. 헤더를 모르는 사용처는 지금처럼 알지 못한다.
 
 ### Key 조회 404 처리
 

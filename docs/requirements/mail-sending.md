@@ -64,6 +64,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 6단계 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI 반영 뒤): `pnpm test` 단위 705건(37개 파일), `pnpm test:integration` 통합 564건(38개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 한 번의 검증 묶음이고 같은 소스에서 다시 실행하지 않았다. Dockerfile·compose·종료 순서·파일 채널 I/O는 바꾸지 않았고 `.env.example`은 주석만 더했다(`config/compose-consistency.spec.ts`가 새 변수 이름을 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 117·실패 0(S16 신규 15항목, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 읽기 전용 루트 컨테이너(`--read-only --cap-drop ALL --security-opt no-new-privileges`) 안의 CLI 실행을 1회 확인했다(`docker run`·`docker exec`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(해당 영역 변경 없음, RQ-045~047 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 B 운영 토큰·발송 정지·감사·`/ops` 반영 뒤): `pnpm test` 단위 622건(33개 파일), `pnpm test:integration` 통합 513건(32개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. 호출처 키 `/health/ready`의 응답 동등 비교에 새 필드 `sendPaused`가 없었기 때문이고(ADR-0011 구현 중 확정 17) 기대값에 필드를 더한 뒤 그 파일(58건)이 통과했다. 이 뒤 독립 리뷰 지적 2건(운영자 작업 응답의 거부 수신자 노출, `/ops` 경로 파라미터 디코딩 오류가 인증보다 먼저 나가는 문제, ADR-0011 구현 중 확정 19·20)을 고치고 전체 검증을 다시 실행해 위 수치를 얻었다. Dockerfile·종료 순서·파일 채널 I/O는 바꾸지 않았고 `docker-compose.yml`은 주석만 더했다. `scripts/container/verify-sigterm-file.sh`를 1회 실행했다(컨테이너 안에서 `0001`~`0008`을 적용하고 기동한 뒤 SIGTERM 종료 코드 0, 재기동 뒤 1000통 중복·유실 없음, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `verify-sigkill-duplicate.sh`는 실행하지 않았다. `scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-042~044 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 A 작업 취소 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 405건(27개 파일, 실제 PostgreSQL 17), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 이 묶음은 단위 테스트를 더하지 않았다(취소는 PostgreSQL 통합 테스트가 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 102·실패 0(S15·S15b 신규, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). Dockerfile·compose·파일 채널 I/O를 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(RQ-040·041 판정 근거).
 - 검증 수치(2026-11-23 5단계 요청별 만료 시간 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 363건(25개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. Dockerfile·compose·파일 채널 I/O·봉투 형식·샘플을 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e를 실행하지 않았다(RQ-039 판정 근거).
@@ -87,7 +88,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 | 3단계 | NAS/NFS 통합 테스트, 사용처 연동 문서와 운영 문서 |
 | 4단계 | 발송 우선순위(RQ-033~038, ADR-0009) |
 | 5단계 | 요청별 만료 시간(RQ-039, ADR-0010) |
-| 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041)와 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044)를 구현했다 |
+| 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041), 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044), 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI(RQ-045~047)를 구현했다. `outcomeUncertain`과 호출처 단위 일괄 취소는 구현 전이다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -1355,7 +1356,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 
 ## 14. 운영 제어와 호출처 보호: 작업 취소
 
-결정은 [ADR-0011](../adr/0011-operations-control-and-caller-protection.md) 결정 4·10이다. RQ-040·041은 호출처 API 키로 하는 취소만 다룬다. RQ-042~044가 운영 토큰·`/ops`, 발송 정지, 감사와 관리 취소를 다룬다. 호출처 단위 일괄 취소, 수신 도메인 허용 목록, 이벤트 피드 공백 신호, CLI는 구현 전이고 구현할 때 이 절 뒤에 RQ를 추가한다.
+결정은 [ADR-0011](../adr/0011-operations-control-and-caller-protection.md) 결정 4·10이다. RQ-040·041은 호출처 API 키로 하는 취소만 다룬다. RQ-042~044가 운영 토큰·`/ops`, 발송 정지, 감사와 관리 취소를 다룬다. RQ-045~047이 이벤트 피드 공백 신호(결정 9), 수신 도메인 허용 목록(결정 8), 운영 CLI(결정 7)를 다룬다. 호출처 단위 일괄 취소와 `outcomeUncertain`(결정 5)은 구현 전이고 구현할 때 이 절 뒤에 RQ를 추가한다.
 
 ### RQ-040 호출처 작업 취소
 
@@ -1552,6 +1553,114 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - `db/ops-controls.integration-spec.ts`: 감사 `CHECK` 조합 허용 3종·위반 9종, 외래 키 없음, 컬럼 목록.
 - 구현: `queue/cancel.ts`의 `cancelJobAsOperator`, `ops/`(`audit.ts`, `ops.service.ts`, `ops.controller.ts`), `intake/presenters.ts`의 `presentOperatorJob`, 마이그레이션 `0008`.
 - 남은 미검증: 감사 행 수 증가(운영 기간), 동시 정지·재개의 경합(`INSERT ... ON CONFLICT`의 동작은 한 연결에서만 확인했다).
+
+### RQ-045 이벤트 피드 공백 감지
+
+- [ ] **진행 상태:** 진행 중 (6단계 묶음 C)
+
+**요구사항:**
+
+- 이벤트는 보존 삭제(`deleteExpiredRecords`)가 작업·거부 기록을 지울 때 외래 키 `ON DELETE CASCADE`로 함께 지워진다. 이 삭제를 호출처가 알 수 있어야 한다(ADR-0011 결정 9). cursor 형식과 반환 조건은 바꾸지 않는다(RQ-017).
+- 삭제 표지 테이블 `mail_event_purges(caller_id, type, purged_txid xid8, purged_id bigint, updated_at)`를 둔다(마이그레이션 `0009`). 키는 `(caller_id, type)`이고 `type`에는 `CHECK`가 없다. 삭제된 이벤트 중 `(txid, id)` 순서가 가장 큰 위치를 호출처·종류별로 담는다. `JOB_CANCELED`와 `INTAKE_REJECTED`를 포함한 모든 종류가 대상이다.
+- `deleteExpiredRecords`는 지울 행을 `FOR UPDATE SKIP LOCKED`로 고른 뒤, 같은 트랜잭션에서 삭제 전에 그 행의 이벤트의 호출처·종류별 최대 위치를 표지에 올리고 지운다. 표지는 줄어들지 않는다. 표지 갱신과 삭제는 함께 커밋하거나 함께 롤백한다.
+- 표지 테이블의 행 수는 (삭제 이벤트가 있었던 호출처 수) × (이벤트 종류 수, 최대 5)가 상한이다. 위치를 갱신할 뿐 행을 늘리지 않으므로 정리 정책을 두지 않는다. 보존 삭제는 호출처당 갱신 1회 비용이다.
+- `GET /events`는 `after`가 있을 때만 판정한다. 요청한 종류(필터가 없으면 모든 종류)의 표지 중 하나라도 `after` cursor보다 크면 공백이다. 표지가 cursor와 같거나 작으면 호출처가 이미 지나온 이벤트라 공백이 아니다. 다른 호출처의 표지는 보지 않는다. 이벤트를 읽은 뒤에 표지를 읽는다.
+- 공백이면 상태 200과 응답 헤더 `Mailo-Cursor-Gap: true`를 낸다. 본문 형식은 바뀌지 않는다. 헤더는 표지가 cursor보다 큰 동안 매 응답에 붙고 `nextCursor`로 이어 읽어 cursor가 표지를 넘으면 사라진다.
+- 쿼리 `onGap=error`를 보내면 공백일 때 헤더 대신 410(`cursor-expired`)이다. 본문은 고정 문구이고 cursor를 담지 않는다. `onGap`은 `error`만 받고 다른 값·반복은 400(`parameter: onGap`)이다. `after`가 없으면 판정하지 않아 `onGap=error`여도 200이다.
+- 공백으로 판정한 응답마다 `event_cursor_gap`(warn)을 `callerId`만 담아 한 줄 남긴다. 헤더든 410이든 같다.
+- 한계: 공백 감지 도입 전에 삭제된 이벤트, `after` 없는 읽기(cursor가 `null`인 호출처, 복구 읽기), 롤링 중 구버전 인스턴스가 지운 이벤트는 판정하지 못한다. 헤더를 모르는 호출처는 알지 못한다.
+
+**수용 조건:**
+
+- [x] 마이그레이션 `0009`가 `0001`~`0008` 위에서 적용되고 재실행해도 다시 적용되지 않으며 기존 작업 행을 바꾸지 않는다. `(caller_id, type)`이 기본키다.
+- [x] `deleteExpiredRecords`가 삭제한 이벤트의 호출처·종류별 최대 `(txid, id)`를 표지에 올린다. 작업 삭제와 거부 기록 삭제(`INTAKE_REJECTED`) 모두, `JOB_CANCELED` 포함. 보존 기간 안의 작업과 삭제 대상이 없는 호출처는 표지가 없다.
+- [x] 표지는 줄어들지 않는다. 나중에 더 앞 위치가 삭제돼도 값이 유지된다. 반복 삭제에도 행 수가 호출처×종류 수를 넘지 않는다. 배치 크기보다 많이 지워도 표지가 전체의 최대 위치까지 오른다.
+- [x] 표지 갱신이 실패하면 삭제도 롤백하고 삭제가 실패하면 표지 갱신도 롤백한다.
+- [x] 판정 경계: cursor가 표지와 같으면 공백이 아니고, 앞이면 공백이며, 뒤이면 공백이 아니다. 표지가 없으면 공백이 아니다. 다른 호출처의 삭제는 공백이 아니다. `type` 필터는 요청한 종류의 표지만 본다(필터 없음은 모든 종류). `JOB_CANCELED`·`INTAKE_REJECTED` 삭제도 각 종류의 공백이다.
+- [x] REST: 공백이면 200과 `Mailo-Cursor-Gap: true`이고 본문 키는 `events`·`nextCursor`·`hasMore`뿐이다. 공백이 아니면 헤더가 없다. `after` 없는 읽기는 판정하지 않는다. `onGap=error`는 공백일 때 410 `cursor-expired`이고 공백이 아니면 200이다. `onGap`의 다른 값과 반복은 400이다. `nextCursor`로 이어 읽어 표지를 넘으면 헤더가 사라진다.
+- [x] `event_cursor_gap`(warn)이 공백 응답마다 `callerId`만 담아 남고, 공백이 아닌 응답에는 남지 않는다. 응답·로그에 cursor 값과 수신자 canary가 없다.
+- [ ] 롤링 배포(구·신 혼용)와 롤백을 실행해 구버전이 지운 이벤트가 공백 감지에서 빠지는 동작과 문서 절차를 확인한다.
+- [ ] 보존 삭제와 `GET /events`가 동시에 실행될 때(두 조회 사이에 삭제가 커밋되는 경우) 신호가 누락되지 않음을 확인한다. 이벤트를 읽은 뒤 표지를 읽는 순서로 구현했고 이 순서는 오탐 쪽으로만 틀린다는 추론은 동시 실행으로 확인하지 않았다.
+
+**판정 근거:**
+
+- `db/event-purges.integration-spec.ts`(PostgreSQL): `0009` 적용(0001~0008 위)·재실행·기본키·전체 폴더 적용.
+- `events/event-purges.integration-spec.ts`(PostgreSQL): 표지 기록(호출처·종류별 최대, `JOB_CANCELED`·`INTAKE_REJECTED`, 줄어들지 않음, 행 수 상한, 배치 크기 2로 반복 삭제), 원자성 2방향(표지 테이블·작업 테이블에 실패 트리거), 판정 경계(같음·앞·뒤, 표지 없음, 호출처 격리, `type` 필터, cursor가 표지를 넘음).
+- `http/rest-event-gap.integration-spec.ts`(PostgreSQL, 실제 앱): 헤더·본문, 410, `onGap` 입력 검증, `after` 없음, `type` 필터별 판정, 호출처 격리, 이어 읽기, 로그 필드 집합, 값 비노출.
+- RED 확인(2026-11-24): 구현 전 `events/event-purges.integration-spec.ts`는 `hasEventGap` export가 없어 모듈 로드가 실패했고, `http/rest-event-gap.integration-spec.ts`는 10건 중 8건이 실패했다.
+- 쿼리 비용(로컬 PostgreSQL 17, 임시 schema, 작업 20만·이벤트 20만건, 호출처 20개, `EXPLAIN (ANALYZE, BUFFERS)` 1회 측정): 1000건 배치에서 표지 갱신(`mail_events_job_idx` 비트맵 스캔 + 정렬 + `ON CONFLICT`)은 실행 2.2ms, 20행 갱신이었다. 같은 배치의 작업 삭제(cascade 트리거 포함)는 21.6ms였다. 판정 쿼리는 기본키 비트맵 스캔이고 실행 0.021ms다. 운영 크기·동시 부하는 측정하지 않았다.
+- 구현: `events/purge-marks.ts`(`recordPurgedJobEvents`·`recordPurgedRejectionEvents`·`hasEventGap`), `queue/maintenance.ts`의 `deleteExpiredRecords`, `intake/intake.service.ts`·`intake.controller.ts`·`query-params.ts`, `http/problem.ts`, 마이그레이션 `0009`.
+- 샘플 e2e(`samples/spring-boot-relay/verify/run-e2e.sh`의 S16, 실제 Mailo 서버가 보존 삭제 뒤 헤더·410을 내고 샘플이 등록됨 행을 확인 필요로 둠)는 스크립트 검증이라 `[x]` 근거에 쓰지 않았다. 결과는 검증 수치 줄에 적는다.
+- 남은 미검증: 롤링 배포·롤백 실행, 보존 삭제와 조회의 동시 실행, 실제 30일 경과(DB 시각을 당겨 만든 데이터만 확인), 운영 크기에서 삭제 배치 비용.
+
+### RQ-046 호출처별 수신 도메인 허용 목록
+
+- [x] **진행 상태:** 검증 완료 (6단계 묶음 C)
+
+**요구사항:**
+
+- 호출처 레지스트리의 선택 필드 `allowedRecipientDomains`는 소문자 ASCII 도메인 문자열 배열이다(1~50개). 생략하면 수신자를 제한하지 않는다(ADR-0011 결정 8). 마이그레이션은 없다.
+- 기동 때 검사한다. 접수 검증과 같은 도메인 규칙(`validation`의 `checkDomain`: ASCII 영숫자·`-` 라벨, 라벨 수 2 이상, 마지막 라벨이 숫자뿐이 아님, 라벨 63자 이하)에 더해 다음을 거부한다: 대문자, 비ASCII(U-label), 끝 점, `*`, 선행 `.`, 목록 안의 중복, 빈 배열, `null`, 배열이 아닌 값, 문자열이 아닌 원소, 51개 이상. 오류 메시지는 항목 위치(`callers[i].allowedRecipientDomains[j]`)와 고정 사유만 담고 값은 담지 않는다(RQ-027). 선행 `.`와 `*`를 거부해 하위 도메인 문법을 나중에 넣을 자리를 남긴다.
+- 판정은 `to`·`cc`·`bcc`의 모든 주소에서 `@` 뒤를 소문자로 바꿔 목록과 정확히 비교한다. 하위 도메인은 따로 적는다. 와일드카드는 없다. `replyTo`는 수신자가 아니라 제한하지 않는다. 지문 범위에 넣지 않는다(요청 내용이 아니라 호출처 정책이다).
+- 하나라도 어기면 요청 전체를 거부한다(부분 등록 없음). REST는 400 `validation-failed`이고 `errors`에 어긴 주소마다 위치(`/to/0`, `/cc/1`, `/bcc/0`)와 `code: RECIPIENT_DOMAIN_NOT_ALLOWED`를 넣는다. 발신 주소 위반(`FROM_NOT_ALLOWED`)과 함께 있으면 모두 담는다. 파일 채널은 `VALIDATION_FAILED` 수집 거부이고 새 거부 사유 코드는 없다. 주소와 도메인 값은 응답·로그·거부 기록·이벤트에 넣지 않는다(RQ-027). `ValidationErrorCode`와 openapi 검증 오류 코드 enum에 `RECIPIENT_DOMAIN_NOT_ALLOWED`를 더한다.
+- 검사 위치와 순서는 `allowedFrom`과 같다. REST와 파일 채널이 `validation`의 `checkRequestPolicy` 하나로 판정한다. 새 작업이 될 때만 거부하고 이미 등록된 Key의 재전송은 기존 작업(200)이나 409를 그대로 돌려준다(`denyNew`). 평문·암호화 모드가 같다(수신자는 평문 필드, RQ-022).
+- ADR-0007 결정 7의 부분 거부(SMTP 서버가 일부 수신자를 거부하는 경우)는 발송 단계의 정책이고 이 검사와 단계가 다르다. 이 검사에서 거부된 수신자는 `rejectedRecipients`에 나오지 않는다.
+- 레지스트리는 기동 때 한 번 읽으므로 변경은 재시작 뒤 반영된다(RQ-032와 같다).
+
+**수용 조건:**
+
+- [x] 생략하면 제한이 없다(`null`). 소문자 ASCII(A-label 포함) 1~50개는 그대로 읽는다.
+- [x] 대문자·U-label·끝 점·`*`·선행 `.`·중복·빈 배열·`null`·배열이 아님·문자열이 아닌 원소·51개·도메인 형식 오류(라벨 1개, 숫자뿐인 마지막 라벨, 공백, 주소 형태)를 기동 거부한다. 사유가 항목마다 구분되고 오류 메시지에 위치만 있고 값이 없다.
+- [x] `checkDomain`이 `checkAddress`와 같은 규칙을 쓴다(통과·거부 표). 63자 초과 라벨과 주소 상한 초과 도메인은 거부한다.
+- [x] 판정: 대소문자 무시 정확 일치, 하위·상위·접미사만 같은 도메인 거부, A-label 일치, `to`·`cc`·`bcc` 모두 검사, 어긴 주소의 위치만 반환, 결과에 값 없음, `null`이면 제한 없음.
+- [x] REST: 허용 도메인은 202이고 어기면 400 + 위치 목록 + 코드다. 수신자 하나만 어겨도 요청 전체를 거부하고 작업이 생기지 않는다. 제한이 없는 호출처는 영향이 없다. `replyTo`는 제한하지 않는다. 발신 주소 위반과 함께 있으면 둘 다 담는다.
+- [x] 이미 등록된 Key의 같은 내용 재전송은 정책이 바뀐 뒤에도 200이고 다른 내용은 409이며 새 Key는 400이다.
+- [x] 파일 채널: 허용 도메인은 등록하고 위반은 `VALIDATION_FAILED`로 거부하며 원본을 지운다. JWE 암호화 본문도 같다. 이미 등록된 Key의 재수집은 `duplicate`다. 제한이 없는 호출처는 영향이 없다.
+- [x] 응답·로그·거부 기록·이벤트·DB에 수신자 주소와 도메인 canary가 없다(REST·파일 모두).
+
+**판정 근거:**
+
+- `validation/recipient-policy.spec.ts`(단위): `checkDomain`, `findDisallowedRecipients`.
+- `callers/allowed-recipient-domains.spec.ts`(단위): 기동 검사 허용·거부 표와 메시지 값 비노출.
+- `http/rest-recipient-domains.integration-spec.ts`(PostgreSQL, 실제 앱): REST 거부·허용·재전송·canary.
+- `file-channel/recipient-domains.integration-spec.ts`(PostgreSQL, 임시 폴더): 파일 채널 거부·허용·JWE·재수집·canary.
+- RED 확인(2026-11-24): 구현 전 단위 두 파일에서 20건 중 5건이 실패했고 `checkDomain`·`findDisallowedRecipients` export가 없어 한 파일은 로드가 실패했다.
+- 구현: `validation/recipient-policy.ts`·`mail-request.ts`(`checkDomain`)·`error-item.ts`, `callers/registry.ts`, `intake/intake.service.ts`, `file-channel/ingest.ts`.
+- 남은 미검증: 롤링 중 구버전 인스턴스의 새 필드 거부(코드 읽기 결과, 실행하지 않음), 실제 호출처의 수신 도메인 목록 조사. 한계는 허용 도메인 안의 대량 발송과 MX 확인이 없다는 점이다.
+
+### RQ-047 운영 CLI
+
+- [x] **진행 상태:** 검증 완료 (6단계 묶음 C)
+
+**요구사항:**
+
+- 같은 이미지에서 `node dist/cli.js`로 실행한다. 상주 프로세스가 아니고 DB에 접속하지 않는다. 운영 REST(`/health/ready`, `/ops/*`)를 Node의 `fetch`로 부른다. 새 npm 의존성은 없다(ADR-0011 결정 7).
+- 읽기 명령: `status`(`/health/ready`와 `/ops/pauses`를 `{ready, pauses}`로 묶음), `queue stats`(`/health/ready`의 `queue`), `jobs show <jobId>`, `audit list [--limit N] [--before ID]`.
+- 변경 명령: `pause`, `resume`(`--all` 또는 `--caller <호출처 ID>` 중 하나를 명시), `jobs cancel <jobId>`. `--yes`가 없으면 서버를 부르지 않고 종료 코드 1이다. 기본 범위가 없다.
+- 접속: `MAILO_CLI_URL`(기본 `http://127.0.0.1:<MAILO_PORT>`, `MAILO_PORT` 기본 3000). 토큰은 `MAILO_CLI_TOKEN_FILE`(우선, 읽지 못하면 환경 변수로 넘어가지 않음) 또는 `MAILO_CLI_TOKEN`이다. 서버의 `MAILO_OPS_*` 변수는 읽지 않는다. 토큰은 명령줄 인자로 받지 않고(`--token` 등은 거부) 출력·오류에 쓰지 않는다(RQ-027).
+- 출력은 서버 응답 JSON이다(성공 stdout, 오류 stderr). 종료 코드는 성공 0, 사용법·설정 오류 1, HTTP 오류 2(상태와 problem 본문을 stderr에), 연결 실패·시간 초과 3이다. 3xx는 따라가지 않고 2다. 2xx인데 JSON이 아니거나 `queue stats`에 `queue`가 없으면 2다.
+- `http`이고 loopback이 아닌 주소에는 평문 전송 경고를 stderr에 낸다. 쓰기가 없어 `read_only` 컨테이너에서 동작해야 한다.
+
+**수용 조건:**
+
+- [x] 인자 해석: 명령별 인자·옵션 검사, UUID·호출처 ID·`--limit`(1~200)·`--before` 형식 검사, 알 수 없는 명령·옵션·여분의 인자는 종료 코드 1이다. `--help`는 0이다.
+- [x] 변경 명령은 `--yes`가 없으면 호출하지 않는다. `pause`·`resume`은 범위를 하나만 명시해야 한다. 읽기 명령에 `--yes`를 붙이면 거부한다.
+- [x] 호출처 ID 형식 판정이 서버의 `isCallerId`와 같다.
+- [x] 토큰 인자(`--token`, `--token=`, `--token-file`, `--password`)를 거부하고 환경 변수 안내만 한다. 오류 메시지에 입력 값을 되풀이하지 않는다.
+- [x] 접속 주소: 기본값과 `MAILO_PORT`, `MAILO_CLI_URL` 우선·끝 슬래시·경로 접두사, 잘못된 URL(스킴·사용자 정보·형식)은 호출 없이 1이다. 토큰 파일 우선·끝 줄바꿈 제거, 파일 읽기 실패는 환경 변수로 넘어가지 않고 errno 코드만 낸다. 토큰 없음·공백·제어 문자는 1이다. `MAILO_OPS_*`는 읽지 않는다.
+- [x] REST 호출: 명령별 메서드·경로, Bearer 헤더, `status` 묶음 출력, `queue stats`의 `queue` 값, `audit list` 쿼리가 맞다.
+- [x] 종료 코드: HTTP 오류(401·403·404·409·503·3xx)는 2, 비 JSON 2xx는 2, 연결 실패·시간 초과는 3이고 토큰·URL이 오류에 없다.
+- [x] 실제 서버·PostgreSQL 대상: 읽기 명령 출력, `--yes` 없는 변경은 서버 상태 불변, 관리 토큰의 정지·재개와 감사의 `actor`, 읽기 토큰의 변경은 2(403), 작업 조회·취소·멱등 재취소, 없는 작업 2(404), 서버 없음 3(`ECONNREFUSED`), 호출처 키는 `queue stats`가 2다.
+- [x] 토큰이 CLI 출력·서버 로그·감사 행 어디에도 없다(canary).
+
+**판정 근거:**
+
+- `cli/args.spec.ts`, `cli/run.spec.ts`(단위, 가짜 `fetch`): 인자 해석, 접속·토큰 해석, 명령별 REST 호출, 종료 코드, 토큰 비노출.
+- `cli/cli.integration-spec.ts`(PostgreSQL, 실제 앱과 실제 `fetch`·토큰 파일): 위 실제 서버 조건.
+- RED 확인(2026-11-24): 구현 전 `cli/args.spec.ts`·`cli/run.spec.ts`가 `src/cli/index.js`를 찾지 못해 두 파일 모두 로드에 실패했다.
+- 컨테이너 확인(2026-11-24, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다): 저장소 `Dockerfile`로 빌드한 이미지를 `--read-only --cap-drop ALL --security-opt no-new-privileges`와 `/tmp` tmpfs로 띄우고(`NODE_ENV=development`, 개발 DB 비밀번호 때문) 컨테이너 안에서 `node dist/cli.js`의 `status`, `queue stats`, `audit list`, `--yes` 없는 `pause`(종료 1), 읽기 토큰의 `pause --yes`(HTTP 403, 종료 2), 관리 토큰의 `pause`·`resume`(감사 2건)을 토큰 파일 마운트로 실행했다. 컨테이너 로그에 토큰이 없었다.
+- 구현: `cli/args.ts`·`run.ts`·`index.ts`, 진입점 `cli.ts`. `Dockerfile`은 바꾸지 않았다(`dist/`에 `cli.js`가 포함된다).
+- 남은 미검증: `docker compose exec`로의 실행, `https` 프록시 뒤 주소, 호출처 단위 일괄 취소 명령(범위 밖), 실제 Windows·macOS 셸에서의 인자 처리.
 
 ## 확정한 항목
 

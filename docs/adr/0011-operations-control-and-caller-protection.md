@@ -6,7 +6,7 @@
 
 2026-11-23에 제안했고 2026-11-24에 사용자가 승인했다. 열린 질문이던 7건은 이 문서가 적은 권고대로 승인했다. 승인된 값은 "미결정·확인하지 않은 것"의 "승인된 결정" 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 6"이다.
 
-구현 상태(2026-11-24): 구현 묶음 A(작업 취소, 결정 4의 호출처 API와 결정 10의 `0006`·`0007`)와 묶음 B(결정 1 토큰 분리, 결정 2·3 발송 정지, 결정 4의 관리 취소 API, 결정 6 감사, 결정 7의 `/ops` REST, 결정 10의 `0008`)를 구현하고 자동 테스트로 검증했다. 요구사항은 RQ-040(호출처 작업 취소), RQ-041(취소 배포 호환성), RQ-042(운영 토큰과 `/ops` 인증), RQ-043(발송 정지), RQ-044(감사와 관리 취소)다. 구현 순서 1의 문서·샘플 반영(1.1~1.7)을 마쳤고 1.8(저장소 밖 호출처 확인)은 남았다. 구현 순서 2~4는 끝났다. 결정 5(`outcomeUncertain`), 결정 8(`allowedRecipientDomains`), 결정 9(피드 공백 신호), 결정 7의 CLI, 호출처 단위 일괄 취소, `0009`와 구현 순서 5~8은 시작하지 않았다. 구현 중 확정한 세부는 "구현 중 확정" 절이다. `docs/api/openapi.yaml`의 `ReadyResponse`는 `sendPaused`·`sendControls`를 더하고 `Problem`은 `forbidden`을 더했다(`additionalProperties: false`의 계약 변경).
+구현 상태(2026-11-24): 구현 묶음 A(작업 취소, 결정 4의 호출처 API와 결정 10의 `0006`·`0007`), 묶음 B(결정 1 토큰 분리, 결정 2·3 발송 정지, 결정 4의 관리 취소 API, 결정 6 감사, 결정 7의 `/ops` REST, 결정 10의 `0008`), 묶음 C(결정 9 피드 공백 신호와 `0009`, 결정 8 `allowedRecipientDomains`, 결정 7의 CLI 읽기·변경 명령)를 구현하고 자동 테스트로 검증했다. 요구사항은 RQ-040(호출처 작업 취소), RQ-041(취소 배포 호환성), RQ-042(운영 토큰과 `/ops` 인증), RQ-043(발송 정지), RQ-044(감사와 관리 취소), RQ-045(이벤트 피드 공백 감지), RQ-046(수신 도메인 허용 목록), RQ-047(운영 CLI)이다. 구현 순서 1의 문서·샘플 반영(1.1~1.7)을 마쳤고 1.8(저장소 밖 호출처 확인)은 남았다. 구현 순서 2~4와 6~9는 끝났다. 이 ADR은 아직 "구현 완료"가 아니다. 결정 5(`outcomeUncertain`, 구현 순서 5)와 호출처 단위 일괄 취소(결정 4가 범위 밖으로 둔 조건부 항목)를 시작하지 않았다. 구현 순서 1.8과 롤링 배포·롤백 실행도 남았다. 구현 중 확정한 세부는 "구현 중 확정" 절이다. `docs/api/openapi.yaml`의 `ReadyResponse`는 `sendPaused`·`sendControls`를 더하고 `Problem`은 `forbidden`을 더했다(`additionalProperties: false`의 계약 변경).
 
 검증 범위는 코드 읽기와 PostgreSQL 17.11(로컬 compose)의 임시 schema 확인이다(2026-11-23).
 
@@ -355,7 +355,7 @@
 
 ## 구현 중 확정 (2026-11-24)
 
-결정 문구는 바꾸지 않는다. 1~8은 구현 묶음 A(작업 취소), 9~20은 구현 묶음 B(토큰 분리·발송 정지·감사·`/ops`)에서 정한 세부다.
+결정 문구는 바꾸지 않는다. 1~8은 구현 묶음 A(작업 취소), 9~20은 구현 묶음 B(토큰 분리·발송 정지·감사·`/ops`), 21~29는 구현 묶음 C(피드 공백 신호·수신 도메인 허용 목록·CLI)에서 정한 세부다.
 
 1. **409 응답의 현재 상태 필드 이름(결정 4, `src/http/problem.ts`).** 결정 4는 "응답에 현재 `status`만 넣는다"고 적었다. RFC 9457의 `status`는 HTTP 상태 코드(409)이고 같은 이름으로 작업 상태를 넣으면 덮어쓴다. 작업의 현재 상태는 `jobStatus` 필드로 낸다. `type`은 `urn:mailo:problem:job-not-cancelable`이다. 오류 본문에 요청 값을 넣지 않는 규칙은 같다.
 2. **이벤트의 취소 주체 저장(결정 4, `queue/cancel.ts`).** `mail_events`에 새 컬럼을 두지 않는다. 이벤트의 `failure_reason`에 작업과 같은 값(`CANCELED_BY_CALLER`·`CANCELED_BY_OPERATOR`)을 쓰고, 응답의 `canceledBy`는 이 값에서 만든다(`intake/presenters.ts`의 `canceledByOf`). 모르는 값은 `null`이다. 이 저장 값이 구버전 인스턴스에서는 실패형 이벤트의 `failureReason`으로 그대로 나간다(결정 4의 구버전 동작과 같다).
@@ -377,6 +377,16 @@
 18. **점유 쿼리 비용 측정(결정 2의 "비용").** 결정 2는 정지 조회 비용을 측정하지 않았다고 적었다. 로컬 PostgreSQL 17의 임시 schema에서 대기 10만 건으로 `EXPLAIN (ANALYZE, BUFFERS)`를 한 번씩 실행했다. 정지 조회는 `Seq Scan` 1행, 실행 0.009ms다. 정지가 없으면 점유 쿼리 계획이 바뀌지 않는다(인덱스 스캔, 실행 0.03ms). 정지 호출처 4개를 `caller_id <> ALL`로 빼도 같은 계획이다(실행 0.07ms). 정지한 호출처가 대기 작업 전부를 가지면 `mail_jobs` 전체를 읽는다(순서 인덱스를 못 쓰고 `Seq Scan`과 `Sort`, 실행 7.4ms와 13.8ms 두 사례). ADR-0007 구현 중 확정 10의 할당 초과와 같은 동작이다. 다중 인스턴스와 운영 크기는 측정하지 않았다.
 19. **운영자 작업 응답의 거부 수신자(결정 7).** `GET /ops/jobs/{jobId}`와 관리 취소 응답은 `rejectedRecipients`를 내지 않는다. 이 필드의 `address`는 거부된 수신자 평문이라 "수신자 없음"(결정 7)과 맞지 않는다. 호출처 자신의 `Job` 응답은 기존대로 준다. 건수 같은 비식별 값은 만들지 않았다.
 20. **`/ops` 인증 순서(결정 7, `callers/ops-auth-middleware.ts`).** Express는 라우트의 경로 파라미터를 가드 전에 디코딩하므로 `/ops/jobs/%` 같은 경로는 가드 전에 400이 될 수 있다. `app.use("/ops", ...)` 미들웨어가 라우트 매칭 전에 인증해 자격 없음·호출처 키·모르는 값은 401, 읽기 토큰의 변경 메서드(`GET`·`HEAD` 외)는 403으로 먼저 거절한다. 컨트롤러 가드가 같은 판정을 한 번 더 한다. 인증 없는 호출에는 없는 `/ops` 경로도 404가 아니라 401이다. 업무 endpoint의 `/jobs/%`는 인증 없이 400이다(기존 동작, 이번에 바꾸지 않았다).
+
+21. **삭제 표지 기록 SQL(결정 9, `events/purge-marks.ts`, `queue/maintenance.ts`).** `deleteExpiredRecords`는 지울 행의 ID를 `SELECT ... LIMIT FOR UPDATE SKIP LOCKED`로 읽은 뒤(작업, 거부 기록 각각) 같은 트랜잭션에서 `recordPurgedJobEvents`·`recordPurgedRejectionEvents`가 `INSERT ... SELECT DISTINCT ON (caller_id, type) ... ORDER BY caller_id, type, txid DESC, id DESC ... ON CONFLICT (caller_id, type) DO UPDATE ... WHERE (기존 txid, id) < (새 txid, id)`로 표지를 올리고, `DELETE ... WHERE id = ANY($1)`로 지운다. 결정 9는 "지울 행 ID를 고르고 이벤트를 조인해 표지를 올린 뒤 `DELETE`"라고 적었다. 구현은 한 문장의 데이터 변경 CTE가 아니라 문장 셋(ID 선택, 표지, 삭제)이다. 행은 `FOR UPDATE`로 잠긴 채이고 종결된 작업에는 새 이벤트가 생기지 않아 읽은 값과 삭제 값이 같다. 어느 문장이 실패해도 같은 트랜잭션이라 함께 롤백한다(`test/events/event-purges.integration-spec.ts`가 표지 테이블·작업 테이블에 실패 트리거를 걸어 확인한다).
+22. **표지 테이블 정리(결정 9, 마이그레이션 `0009`).** 표지 행 수의 상한은 삭제가 있었던 (호출처 수) × (이벤트 종류 수, 최대 5)이고 갱신은 행을 늘리지 않는다. 그래서 정리 정책을 두지 않는다. 레지스트리에서 뺀 호출처의 행도 남는다. 반복 삭제에도 행 수가 이 상한을 넘지 않음을 테스트가 확인한다. 호출처 ID가 계속 새로 생기는 운영(예: 호출처 ID에 날짜를 넣는 경우)에서는 행이 늘 수 있다. 호출처 ID는 레지스트리 항목이라 이 경우를 가정하지 않았다.
+23. **쿼리 비용 측정(결정 9의 "측정하지 않았다").** 로컬 PostgreSQL 17의 임시 schema(작업 20만·이벤트 20만건, 호출처 20개)에서 `EXPLAIN (ANALYZE, BUFFERS)`를 1회 실행했다. 1000건 배치의 표지 갱신은 `mail_events_job_idx` 비트맵 스캔과 정렬, `ON CONFLICT` 20행으로 실행 2.2ms, 같은 배치의 작업 삭제(`mail_attempts`·`mail_events` cascade 트리거 포함)는 21.6ms였다. 판정 쿼리는 기본키 비트맵 스캔이고 실행 0.021ms였다. 운영 크기, 동시 부하, 다중 인스턴스는 측정하지 않았다.
+24. **`onGap`과 410 본문(결정 9, `intake/query-params.ts`, `http/problem.ts`).** `onGap`은 값 `error`만 받는다. 다른 값(빈 값 포함)과 같은 이름의 반복은 400(`parameter: onGap`, `INVALID_FORMAT`)이다. 결정은 "`onGap=error`를 보내면"만 정했고 다른 값의 처리를 정하지 않았다. 기본 동작은 파라미터를 생략하는 것이다. 410의 `detail`은 고정 문구("cursor 뒤에서 보존 기간이 지나 삭제된 이벤트가 있다. after 없이 다시 읽고 종결되지 않은 작업은 GET /jobs로 확인한다.")이고 요청 값을 담지 않는다. 오류 `type`은 11종이 된다.
+25. **판정 시점과 대상 cursor(결정 9, `intake/intake.service.ts`).** 판정은 요청의 `after`(응답의 `nextCursor`가 아니다)와 요청의 `type` 필터를 쓴다. 첫 페이지의 이벤트를 읽은 직후, `hasMore` 확인용 한 건 더 읽기 전에 표지를 읽는다. `after`가 `InvalidCursorError`이면 이벤트 조회 단계에서 이미 400이다. 공백이면 `onGap=error`일 때 410, 아니면 헤더를 붙인다. 로그 `event_cursor_gap`은 두 경우 모두 한 줄 남는다(`callerId`만).
+26. **`allowedRecipientDomains` 세부(결정 8, `callers/registry.ts`, `validation/mail-request.ts`).** `null`은 거부한다. 결정은 "생략하면 제한이 없다"라고만 적었고, `null`을 제한 없음으로 읽으면 제한을 의도한 필드가 값 오류로 풀릴 수 있어 생략(`undefined`)만 제한 없음이다. 형식 규칙은 `checkAddress`가 `checkDomain`을 부르는 구조로 하나만 둔다. 도메인 길이 상한은 주소 상한(254)에서 로컬 파트 1자와 `@`를 뺀 252자다. 거부 사유는 `비ASCII`, `대문자`, `끝 점`, `선행 점`, `와일드카드`, `도메인 형식`, `중복`, 문자열 아님이고 값은 메시지에 없다. 판정은 `@` 뒤를 `lastIndexOf("@")` 기준으로 잘라 소문자로 바꾼다(접수 검증이 `@` 하나만 허용한다).
+27. **정책 판정 위치(결정 8, `validation/recipient-policy.ts`).** REST와 파일 채널이 `checkRequestPolicy`(발신 주소 `FROM_NOT_ALLOWED` + 수신 도메인 `RECIPIENT_DOMAIN_NOT_ALLOWED`) 하나로 위반 목록을 만든다. 목록이 비어 있지 않으면 `denyNew`다. REST는 `register`가 `denied`를 돌려줄 때 같은 목록을 400 `errors`로 낸다. 발신 주소와 수신 도메인 위반이 함께 있으면 모두 담는다(결정은 둘을 따로 적었다). 이미 등록된 Key는 `denyNew`에서 기존 작업(200)이나 409를 돌려주므로 위반 목록을 쓰지 않는다. 부분 거부(ADR-0007 결정 7)와는 단계가 달라 상호작용이 없다. 이 검사는 등록 전이고 SMTP 서버의 수신자 거부는 발송 뒤다.
+28. **CLI 형식(결정 7, `src/cli/`, 진입점 `src/cli.ts`).** 명령은 `status`, `queue stats`, `jobs show <jobId>`, `audit list [--limit N] [--before ID]`(읽기)와 `pause`·`resume`(`--all` 또는 `--caller <호출처 ID>`, 기본 범위 없음), `jobs cancel <jobId>`(변경, `--yes` 필수)다. 결정이 "추정"이라고 적은 종료 코드를 확정했다: 성공 0, 사용법·설정 오류 1(토큰 없음·URL 오류 포함), HTTP 오류 2(2xx인데 JSON이 아니거나 `queue stats`에 `queue`가 없는 경우, 3xx 포함), 연결 실패·시간 초과(15초) 3. 출력은 서버 응답 JSON을 들여쓰기 2칸으로 낸다(`status`는 `{ready, pauses}`로 묶는다. 결정은 "서버 응답 JSON 그대로"라고 적었고 두 응답을 한 출력으로 합치는 방법은 정하지 않았다). `MAILO_CLI_TOKEN_FILE`을 읽지 못하면 `MAILO_CLI_TOKEN`으로 넘어가지 않는다. `MAILO_PORT`는 기본 URL을 정하려고 CLI가 읽는 유일한 서버 변수이고 `MAILO_OPS_*`는 읽지 않는다. `redirect: "manual"`로 다른 곳으로 따라가지 않는다. `http`이고 loopback이 아닌 주소에는 평문 경고를 낸다. 호출처 ID 형식은 Nest 모듈을 불러오지 않으려고 복사했고 서버의 `isCallerId`와 같은 판정을 테스트가 고정한다.
+29. **검증.** PostgreSQL 통합: `test/db/event-purges.integration-spec.ts`, `test/events/event-purges.integration-spec.ts`, `test/http/rest-event-gap.integration-spec.ts`, `test/http/rest-recipient-domains.integration-spec.ts`, `test/file-channel/recipient-domains.integration-spec.ts`, `test/cli/cli.integration-spec.ts`. 단위: `test/validation/recipient-policy.spec.ts`, `test/callers/allowed-recipient-domains.spec.ts`, `test/cli/args.spec.ts`, `test/cli/run.spec.ts`. 컨테이너: 저장소 `Dockerfile`로 빌드한 이미지를 읽기 전용 루트로 띄워 컨테이너 안에서 CLI를 1회 실행했다(스크립트 검증, 자동 테스트 아님). 샘플: `samples/spring-boot-relay/verify/run-e2e.sh`에 S16(실제 서버의 헤더·410·`type` 필터·샘플의 확인 필요 처리)을 추가했다(스크립트 검증, 자동 테스트 아님).
 
 ## 검토한 대안
 
@@ -449,11 +459,11 @@
 ### 확인하지 않은 것
 
 - 코드로 확인하지 않은 것(결정 근거의 추정): 정지 응답 직후 점유 중인 작업의 최대 건수(인스턴스 수 × `MAILO_WORKER_CONCURRENCY`)는 코드 읽기에서 나온 상한이고 실행해 확인하지 않았다.
-- 이벤트 피드 공백 감지: 표지 갱신 SQL은 임시 schema에서 확인했다. 30일 경과, 동시 삭제·조회, 복구 중 재발은 실행하지 않았다(DB 시각을 당겨 확인하는 테스트는 구현 때 한다). 한계는 결정 9에 적었다.
+- 이벤트 피드 공백 감지: 표지 갱신·판정·헤더·410은 통합 테스트로 확인했다(구현 중 확정 21~25). DB 시각을 당겨 만든 데이터로 30일 경과를 흉내 냈고 실제 30일은 지나지 않았다. 보존 삭제와 조회가 동시에 실행될 때와 복구 중 재발(복구 읽기 중 추가 삭제)은 실행하지 않았다. 한계는 결정 9에 적었다.
 - `VALIDATE CONSTRAINT`가 동시 쓰기를 막지 않는지는 잠금 수준만 확인했다. 잠금 큐에서 앱 쿼리가 줄을 서는 동작은 PostgreSQL 규칙에서 추론했고 실행하지 않았다.
 - 롤링 배포(구·신 혼용)와 롤백을 실행하지 않았다. 구버전의 `CANCELED`·`JOB_CANCELED` 처리는 코드 읽기 결과다.
 - 이 저장소 밖의 호출처가 모르는 상태·이벤트·필드와 410을 어떻게 처리하는지 확인하지 않았다. Java 샘플의 `EventFeedPoller`·`RelayWorker`·`MailoClient`·`schema.sql`만 읽었다.
-- CLI의 토큰 전달 방식(`MAILO_CLI_TOKEN_FILE`·`MAILO_CLI_TOKEN`)과 컨테이너 안 실행(`docker compose exec`)을 실행해 확인하지 않았다. 읽기 전용 루트 파일 시스템(AGENTS.md)에서 `node dist/cli.js`는 쓰기가 없다고 추정한다.
-- 정지 판정(`claim`마다 쿼리 1회), `ALTER TABLE`의 `ACCESS EXCLUSIVE` 대기, 삭제 표지 갱신(1000건 배치)의 비용을 측정하지 않았다.
+- CLI: 토큰 파일 전달(`MAILO_CLI_TOKEN_FILE`)은 읽기 전용 루트 컨테이너 안에서 `docker exec`로 실행해 확인했다(구현 중 확정 29). `docker compose exec`, `https` 프록시 뒤 주소, 환경 변수 `MAILO_CLI_TOKEN`의 컨테이너 안 실행은 확인하지 않았다.
+- 정지 판정(`claim`마다 쿼리 1회)은 구현 중 확정 18에서 측정했다. `ALTER TABLE`의 `ACCESS EXCLUSIVE` 대기와 운영 크기·다중 인스턴스의 삭제 표지 갱신(1000건 배치) 비용은 측정하지 않았다(1회 로컬 측정은 구현 중 확정 23).
 - `/metrics`(단계 8)의 권한은 읽기 토큰으로 정했으나 endpoint와 지표는 이 ADR의 범위가 아니다.
 - 단계 7(다중 SMTP 계정)에서 `account` 범위 정지의 REST와 점유 판정을 정한다. 이 ADR은 스키마 키만 정했다.
