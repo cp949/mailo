@@ -40,7 +40,7 @@ export class ProblemExceptionFilter implements ExceptionFilter {
     if (exception instanceof ProblemException) return exception;
     // Express가 경로 파라미터의 퍼센트 인코딩을 풀지 못해 던진 오류(예: `/jobs/%`).
     // Nest 어댑터가 URIError를 BadRequestException("Failed to decode param ...")으로 바꿔 전달한다.
-    // 경로 파라미터는 `GET /jobs/{jobId}`의 jobId뿐이라 이 라우트만 validation-failed로 보고 나머지는 404다.
+    // 경로 파라미터는 `/jobs/{jobId}`와 `/jobs/{jobId}/cancel`의 jobId뿐이라 `/jobs/` 아래만 validation-failed로 보고 나머지는 404다.
     if (isParamDecodeError(exception)) {
       return req.url?.startsWith("/jobs/")
         ? problems.validationFailed([

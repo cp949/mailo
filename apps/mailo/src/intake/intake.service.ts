@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import type pg from "pg";
 import { CALLER_REGISTRY, type CallerRegistry } from "../callers/index.js";
 import { APP_CONFIG, type AppConfig } from "../config/index.js";
@@ -17,6 +17,7 @@ import {
 } from "../events/index.js";
 import { problems } from "../http/index.js";
 import {
+  cancelJob,
   findJobById,
   findJobByKey,
   findJobIdByKey,
@@ -27,6 +28,11 @@ import {
 import { toRegisterInput, type OpenRequestSuccess } from "../envelope/index.js";
 import { isSenderAllowed } from "../validation/index.js";
 import { presentEvent } from "./presenters.js";
+
+const logger = new Logger("intake");
+
+/** 호출처가 취소할 작업을 고르는 방법. 작업 ID 또는 Idempotency-Key(파일 채널 호출처, ADR-0011 결정 4). */
+export type CancelRequest = { jobId: string } | { idempotencyKey: string };
 
 export type CreateJobResult = { status: 202 | 200; job: JobView };
 
@@ -86,6 +92,35 @@ export class IntakeService {
     // 방금 등록·확인한 행이 사라졌다면 보존 삭제와의 경합이다. 같은 Key로 재시도하면 새 요청으로 처리된다.
     if (job === null) throw new Error("등록한 작업을 읽지 못했다");
     return { status: result.kind === "created" ? 202 : 200, job };
+  }
+
+  /**
+   * 호출처 자신의 대기 작업을 취소한다(RQ-040, ADR-0011 결정 4).
+   * - 취소했거나 이미 `CANCELED`이면 현재 `Job`을 돌려준다(200). 이미 취소된 작업은 이벤트와 로그를 새로 쓰지 않는다.
+   * - `SENDING`과 `SENT`·`FAILED`·`EXPIRED`는 409 `job-not-cancelable`이다.
+   * - 다른 호출처의 작업과 없는 작업은 구분하지 않고 404다.
+   * 로그에는 작업 ID와 호출처 ID만 남긴다. Key는 요청 값이라 남기지 않는다(RQ-027).
+   */
+  async cancel(callerId: string, request: CancelRequest): Promise<JobView> {
+    const result = await cancelJob(
+      this.pool,
+      { callerId, ...request },
+      "CALLER",
+    );
+    if (result.kind === "not_found") throw problems.notFound();
+    if (result.kind === "not_cancelable")
+      throw problems.jobNotCancelable(result.status);
+    if (result.kind === "canceled")
+      logger.log({
+        event: "job_canceled",
+        jobId: result.jobId,
+        callerId,
+        canceledBy: "CALLER",
+      });
+    const job = await findJobById(this.pool, callerId, result.jobId);
+    // 취소 직후 보존 삭제와 겹친 경우다. 호출처에는 없는 작업과 같다.
+    if (job === null) throw problems.notFound();
+    return job;
   }
 
   /** 다른 호출처의 작업과 없는 작업은 구분하지 않고 404다. */

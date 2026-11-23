@@ -9,6 +9,7 @@ export const EVENT_TYPES: readonly EventType[] = [
   "JOB_SENT",
   "JOB_FAILED",
   "JOB_EXPIRED",
+  "JOB_CANCELED",
   "INTAKE_REJECTED",
 ];
 export const DEFAULT_EVENTS_LIMIT = 100;

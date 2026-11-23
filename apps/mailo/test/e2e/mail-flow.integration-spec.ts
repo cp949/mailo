@@ -274,6 +274,54 @@ describe("e2e: POST /jobs -> PostgreSQL -> Worker -> SMTP -> 조회·이벤트",
     expect(feed.map((e) => e.type)).toEqual(["JOB_SENT"]);
   });
 
+  it("취소한 PENDING 작업은 Worker가 켜져도 발송하지 않고 CANCELED·JOB_CANCELED로 남는다 (RQ-040, ADR-0011 결정 4)", async () => {
+    // Worker 없이 등록·취소한 뒤 Worker가 있는 앱을 띄운다. 취소가 점유보다 먼저인 경우다.
+    app = await startRestApp({ pool, env: smtpEnv() });
+    const { json } = await submit("e2e-cancel-pending");
+    const canceled = await fetch(`${app.baseUrl}/jobs/${json.jobId}/cancel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ALPHA_KEY}` },
+    });
+    expect(canceled.status).toBe(200);
+    await app.close();
+    app = undefined;
+
+    await startApp();
+    await sleep(500);
+
+    const job = await getJob(json.jobId);
+    expect(job).toMatchObject({ status: "CANCELED", attempts: 0 });
+    expect(fake.messages).toHaveLength(0);
+    expect(fake.counts.datas).toBe(0);
+    expect((await events()).map((e) => e.type)).toEqual(["JOB_CANCELED"]);
+  });
+
+  it("RETRY_WAIT 작업을 취소하면 재시도 시각이 돼도 다시 보내지 않는다 (RQ-040)", async () => {
+    await startApp();
+    fake.behavior.data = () => ({
+      code: 451,
+      text: "4.3.0 Temporary failure.",
+    });
+
+    const { json } = await submit("e2e-cancel-retry");
+    await waitStatus(json.jobId, "RETRY_WAIT");
+    const datasBefore = fake.counts.datas;
+    const canceled = await fetch(
+      `${app!.baseUrl}/jobs/cancel?idempotencyKey=e2e-cancel-retry`,
+      { method: "POST", headers: { Authorization: `Bearer ${ALPHA_KEY}` } },
+    );
+    expect(canceled.status).toBe(200);
+    await pastDue(pool, json.jobId);
+    await sleep(500);
+
+    expect(await jobRow(json.jobId)).toEqual({
+      status: "CANCELED",
+      attempts: 1,
+    });
+    expect(fake.counts.datas).toBe(datasBefore);
+    expect((await events()).map((e) => e.type)).toEqual(["JOB_CANCELED"]);
+  });
+
   it("영구 오류(550)는 재시도 없이 FAILED가 되고 JOB_FAILED 이벤트가 남는다 (RQ-009·016)", async () => {
     await startApp();
     fake.behavior.data = () => ({

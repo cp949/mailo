@@ -11,6 +11,7 @@ export type ProblemType =
   | "unauthorized"
   | "not-found"
   | "idempotency-conflict"
+  | "job-not-cancelable"
   | "payload-too-large"
   | "unsupported-media-type"
   | "service-unavailable";
@@ -43,6 +44,11 @@ const CATALOG: Record<
     status: 409,
     title: "Idempotency-Key conflict",
     detail: "같은 Idempotency-Key로 다른 내용의 요청이 이미 등록되어 있다.",
+  },
+  "job-not-cancelable": {
+    status: 409,
+    title: "Job not cancelable",
+    detail: "발송 중이거나 이미 종결된 작업은 취소할 수 없다.",
   },
   "payload-too-large": {
     status: 413,
@@ -111,6 +117,9 @@ export const problems = {
       "idempotency-conflict",
       jobId !== null ? { extra: { jobId } } : {},
     ),
+  /** `jobStatus`는 작업의 현재 상태다. RFC 9457의 `status`(HTTP 상태 코드)와 구분한다. */
+  jobNotCancelable: (jobStatus: string) =>
+    new ProblemException("job-not-cancelable", { extra: { jobStatus } }),
   payloadTooLarge: () =>
     new ProblemException("payload-too-large", {
       headers: { Connection: "close" },

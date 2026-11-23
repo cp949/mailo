@@ -99,6 +99,41 @@ export class IntakeController {
     sendJson(res, 200, presentJob(job));
   }
 
+  /**
+   * `POST /jobs/cancel?idempotencyKey=`. 파일 채널 호출처처럼 작업 ID를 모르는 호출처가 Key로 취소한다(ADR-0011 결정 4).
+   * 요청 본문은 읽지 않는다. 경로가 `POST /jobs/{jobId}/cancel`과 겹치지 않는다(세그먼트 수가 다르다).
+   */
+  @Post("jobs/cancel")
+  async cancelByKey(
+    @Req() req: HttpRequest,
+    @Res() res: HttpResponse,
+  ): Promise<void> {
+    const key = parseIdempotencyKey(
+      req.query["idempotencyKey"],
+      "idempotencyKey",
+    );
+    if (!key.ok) throw problems.validationFailed(key.errors);
+    const job = await this.intake.cancel(req.callerId as string, {
+      idempotencyKey: key.value,
+    });
+    sendJson(res, 200, presentJob(job));
+  }
+
+  /** `POST /jobs/{jobId}/cancel`. `PENDING`·`RETRY_WAIT`만 취소한다. 이미 취소됐으면 같은 응답이다(멱등). */
+  @Post("jobs/:jobId/cancel")
+  async cancelById(
+    @Param("jobId") rawJobId: string,
+    @Req() req: HttpRequest,
+    @Res() res: HttpResponse,
+  ): Promise<void> {
+    const jobId = parseJobId(rawJobId);
+    if (!jobId.ok) throw problems.validationFailed(jobId.errors);
+    const job = await this.intake.cancel(req.callerId as string, {
+      jobId: jobId.value,
+    });
+    sendJson(res, 200, presentJob(job));
+  }
+
   @Get("events")
   async events(
     @Req() req: HttpRequest,

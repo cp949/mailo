@@ -77,6 +77,8 @@ describe("REST 통합: 등록·조회·이벤트·헬스 (RQ-001, 011, 015, 017,
       expect(Object.keys(job).sort()).toEqual(
         [
           "attempts",
+          "canceledAt",
+          "canceledBy",
           "createdAt",
           "expiresAt",
           "failedAt",

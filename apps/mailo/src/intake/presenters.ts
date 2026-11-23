@@ -17,6 +17,18 @@ function failureReasonOf(stored: string | null): string | null {
   return stored === null ? null : (FAILURE_REASON[stored] ?? stored);
 }
 
+/**
+ * 취소 사유 저장 값(`CANCELED_BY_CALLER`·`CANCELED_BY_OPERATOR`)을 응답의 `canceledBy`로 바꾼다(RQ-040).
+ * 운영자 이름은 저장하지 않으므로 응답에도 없다. 모르는 값은 null이다.
+ */
+export function canceledByOf(
+  stored: string | null,
+): "CALLER" | "OPERATOR" | null {
+  if (stored === "CANCELED_BY_CALLER") return "CALLER";
+  if (stored === "CANCELED_BY_OPERATOR") return "OPERATOR";
+  return null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -78,6 +90,13 @@ export function presentJob(job: JobView) {
       job.status === "FAILED" || job.status === "EXPIRED"
         ? failureReasonOf(job.failureReason)
         : null,
+    // 취소는 실패가 아니라서 `failedAt`·`failureReason`은 null이다(RQ-040).
+    canceledAt:
+      job.status === "CANCELED" && job.finishedAt
+        ? job.finishedAt.toISOString()
+        : null,
+    canceledBy:
+      job.status === "CANCELED" ? canceledByOf(job.failureReason) : null,
     lastError: presentLastError(job.lastError),
     rejectedRecipients:
       job.status === "SENT"
@@ -140,6 +159,9 @@ export function presentEvent(
       ...common,
       rejectedRecipients: presentRejectedRecipients(event.rejectedRecipients),
     };
+  }
+  if (event.type === "JOB_CANCELED") {
+    return { ...common, canceledBy: canceledByOf(event.failureReason) };
   }
   return {
     ...common,
