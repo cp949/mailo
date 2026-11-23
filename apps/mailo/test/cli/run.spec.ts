@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "@jest/globals";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { CLI_EXIT, runCli, type CliDeps } from "../../src/cli/index.js";
+import {
+  CLI_EXIT,
+  runCli,
+  sanitizeForTerminal,
+  type CliDeps,
+} from "../../src/cli/index.js";
 
 // RQ-047, ADR-0011 결정 7: CLI 실행. 접속 주소·토큰 변수, 종료 코드, 토큰 비노출. 서버는 가짜 fetch로 대체한다.
 
@@ -307,6 +312,28 @@ describe("종료 코드 (결정 7: 성공 0, 사용법 1, HTTP 2, 연결 3)", ()
     });
     await runCli(["status"], a.deps);
     expect(a.err.join("")).toContain("ECONNREFUSED");
+  });
+
+  it("서버 유래 문자열의 제어 문자(C0 일부, DEL, C1)는 출력 전에 치환한다. 줄바꿈과 탭은 남긴다", async () => {
+    const hostile = "a\u001b[31mred\u009b2Jb\u007fc\rd\u0000e";
+    const failing = harness(() =>
+      json({ type: "urn:mailo:problem:x", detail: hostile }, 409),
+    );
+    expect(await runCli(["jobs", "show", JOB], failing.deps)).toBe(
+      CLI_EXIT.HTTP,
+    );
+    const ok = harness(() => json({ note: hostile }));
+    expect(await runCli(["audit", "list"], ok.deps)).toBe(CLI_EXIT.OK);
+
+    for (const text of [failing.err.join(""), ok.out.join("")]) {
+      // eslint-disable-next-line no-control-regex
+      expect(text).not.toMatch(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/);
+      expect(text).toContain("red");
+    }
+    expect(ok.out.join("")).toContain("\n");
+    expect(sanitizeForTerminal("x\ty\nz\u001b\u009b")).toBe(
+      "x\ty\nz\uFFFD\uFFFD",
+    );
   });
 
   it("어떤 경로에서도 stdout·stderr에 토큰이 나오지 않는다(RQ-027)", async () => {

@@ -19,11 +19,24 @@ export interface CliDeps {
   readTextFile(path: string): Promise<string>;
   stdout(text: string): void;
   stderr(text: string): void;
+  /** 헤더와 본문을 합친 응답 대기 상한(ms). 생략하면 15초다. 시험이 줄여 쓴다. */
+  timeoutMs?: number;
 }
 
 /** 응답 대기 상한(ms). 서버의 요청 시간제한(30초)보다 짧다. */
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_ERROR_BODY_CHARS = 2000;
+// 터미널 제어에 쓰일 수 있는 문자: C0(탭·줄바꿈 제외), DEL, C1(U+009B CSI 포함).
+// eslint-disable-next-line no-control-regex
+const TERMINAL_CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+
+/**
+ * 서버에서 온 문자열을 터미널에 쓰기 전에 제어 문자를 U+FFFD로 바꾼다. 탭과 줄바꿈은 남긴다.
+ * 서버 응답이 이스케이프 시퀀스로 터미널을 조작하지 못하게 하려는 것이다. `runCli`의 모든 출력이 이 함수를 거친다.
+ */
+export function sanitizeForTerminal(text: string): string {
+  return text.replace(TERMINAL_CONTROL, "\uFFFD");
+}
 // Authorization 헤더에 그대로 넣으므로 공백·제어 문자를 허용하지 않는다.
 const TOKEN_CHARS = /^[\x21-\x7E]+$/;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -139,7 +152,10 @@ async function call(
   method: "GET" | "PUT" | "DELETE" | "POST",
   pathAndQuery: string,
 ): Promise<unknown> {
+  // 헤더 대기와 본문 읽기가 같은 시간 제한을 쓴다. 서버가 헤더만 보내고 본문을 멈춰도 종료 코드 3이다.
+  const signal = AbortSignal.timeout(deps.timeoutMs ?? REQUEST_TIMEOUT_MS);
   let response: Response;
+  let text: string;
   try {
     response = await deps.fetch(`${connection.baseUrl}${pathAndQuery}`, {
       method,
@@ -149,11 +165,14 @@ async function call(
       },
       // 다른 곳으로 옮겨 가는 응답을 따라가지 않는다. 3xx는 HTTP 오류로 다룬다.
       redirect: "manual",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal,
     });
+    text = await response.text();
   } catch (error) {
     const cause = (error as { cause?: { code?: unknown } }).cause;
-    const name = error instanceof Error ? error.name : "UNKNOWN";
+    // DOMException(TimeoutError)은 Error의 하위 클래스가 아닐 수 있어 `name`만 읽는다.
+    const rawName = (error as { name?: unknown } | null)?.name;
+    const name = typeof rawName === "string" ? rawName : "UNKNOWN";
     throw new ConnectFailure(
       typeof cause?.code === "string"
         ? cause.code
@@ -162,7 +181,6 @@ async function call(
           : name,
     );
   }
-  const text = await response.text();
   if (response.status < 200 || response.status >= 300)
     throw new HttpFailure(response.status, text);
   try {
@@ -242,8 +260,14 @@ function describeHttpFailure(failure: HttpFailure): string {
  */
 export async function runCli(
   argv: readonly string[],
-  deps: CliDeps,
+  rawDeps: CliDeps,
 ): Promise<number> {
+  // 모든 출력은 한 곳에서 제어 문자를 치환한다.
+  const deps: CliDeps = {
+    ...rawDeps,
+    stdout: (text) => rawDeps.stdout(sanitizeForTerminal(text)),
+    stderr: (text) => rawDeps.stderr(sanitizeForTerminal(text)),
+  };
   const parsed = parseCliArgs(argv);
   if (parsed.kind === "help") {
     deps.stdout(USAGE_TEXT);
