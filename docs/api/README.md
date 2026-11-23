@@ -13,7 +13,7 @@
 - 파일 채널만 쓰는 호출처도 조회와 이벤트 피드를 쓰려면 키가 필요하다(ADR-0006 결정 5).
 - 헬스 endpoint(`/health/live`, `/health/ready`)는 인증 없이 호출할 수 있다.
   - `/health/live`는 `Authorization` 헤더를 읽지 않는다. 헤더가 틀려도 200이다.
-  - `/health/ready`는 헤더가 없으면 공개 필드만 반환한다. 유효한 Bearer가 있으면 필드를 더하고, 틀린 헤더는 401이다. 필드 범위는 openapi.yaml의 `/health/ready` 설명을 따른다.
+  - `/health/ready`는 헤더가 없으면 공개 필드만 반환한다. 유효한 Bearer가 있으면 필드를 더하고, 틀린 헤더는 401이다. 운영자 토큰(`MAILO_OPS_TOKEN`)은 호출처 전체의 큐 적체와 Worker·파일 폴러 상태(`queue`, `worker`, `filePoller`)를 더한다. 호출처 API 키로는 반환하지 않는다. 필드 범위는 openapi.yaml의 `/health/ready` 설명을 따른다.
 
 ## 오류 형식
 

@@ -25,6 +25,13 @@ export class DbModule {
             const pool = createPool(config.database.url.reveal(), {
               max: config.database.poolMax,
               connectionTimeoutMillis: config.database.connectTimeoutMs,
+              statementTimeoutMillis: config.database.timeouts.statementMs,
+              lockTimeoutMillis: config.database.timeouts.lockMs,
+              idleInTransactionSessionTimeoutMillis:
+                config.database.timeouts.idleInTransactionMs,
+              queryTimeoutMillis: config.database.timeouts.queryMs,
+              // 조용히 끊긴 연결은 query_timeout이 상한을 정한다. keepalive는 유휴 연결의 단절을 커널이 알게 하는 보조 수단이다.
+              keepAlive: { initialDelayMillis: 10_000 },
             });
             // 유휴 연결 오류를 처리하지 않으면 프로세스가 종료된다. 메시지에는 접속 정보가 섞일 수 있어 이름과 코드만 남긴다.
             pool.on("error", (error: Error & { code?: string }) => {

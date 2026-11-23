@@ -14,6 +14,8 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 - DB는 PostgreSQL 13 이상(ADR-0006). ORM을 쓰지 않고 `pg`와 순수 SQL을 쓴다.
 - Worker가 SMTP에 닿기 전에 낸 Mailo 내부 오류(복호화 실패, 잘못된 작업 데이터)는 `AttemptOutcome`에 `internal: true`를 붙인다. 큐는 이 결과로 차단기를 닫거나 열지 않는다(half_open 대표 작업이 내부 오류로 끝나도 closed로 돌아가면 안 된다).
 - 큐 SQL 규칙: 시각은 DB `now()`만 쓴다(ADR-0002 결정 10). 잠금 순서는 작업 행 → `mail_circuit_breaker` 행으로 고정한다(claim·완료 경로 교착 방지). 차단기 저장소는 DB 소유라 `queue/circuit-breaker.ts`에 있고, 사유 분류는 `smtp`가 정해 `AttemptOutcome`으로 넘긴다.
+- DB 시간제한: 앱 풀은 `statement_timeout`·`lock_timeout`·`idle_in_transaction_session_timeout`·`query_timeout`·keepAlive를 건다(`MAILO_DB_*_TIMEOUT_MS`). 마이그레이션 CLI는 `statement_timeout` 없이 `lock_timeout`만 건다. 트랜잭션은 `withTransaction`으로 열어 timeout 때 연결이 폐기되게 한다. 결과 기록은 lease 마감(단조 시계)까지 재시도하고 `MAILO_DB_POOL_MAX ≥ MAILO_WORKER_CONCURRENCY + 4`를 기동 때 검사한다.
+- `/health/ready`의 200/503에 발송 정지를 반영하지 않는다. 운영자 토큰(`MAILO_OPS_TOKEN`)에만 `queue`·`worker`·`filePoller` 수치를 준다. 점유 루프가 죽으면 정상 종료 경로를 거쳐 종료 코드 70(`fatal-exit.ts`)이다.
 - 스키마 변경은 `apps/mailo/migrations/NNNN_이름.sql`에 새 파일로 추가한다. 적용된 파일을 수정하지 않는다.
 - 파일 채널(`file-channel`)은 `MAILO_FILE_CHANNEL_ROOT`가 있을 때만 켜진다(기본 꺼짐). 코드는 폴더를 만들거나 chmod하지 않는다(운영 문서의 몫, ADR-0004 결정 8). 호출처 폴더는 `<root>/inbox/<caller_id>/`이고 레지스트리에서 `fileChannel: true`인 호출처만 읽는다. 파일 열기는 `O_NOFOLLOW|O_NONBLOCK` + `fstat`이고 `lstat` 뒤 `open`을 쓰지 않는다. 원본 삭제는 등록·거부 기록의 DB 커밋 뒤에만 한다. 거부는 `recordIntakeRejection`(거부 기록과 `INTAKE_REJECTED` 이벤트 한 트랜잭션)으로 쓴다. NFS는 같은 호스트 loopback에서만 검증했다(`docs/operations/nfs.md`, ADR-0004 구현 중 확정 20~27). `ESTALE`은 Node가 `code`를 `ESTALE`로 주지 않으므로 `file-channel/errno.ts`의 `isStale`(errno 116)로 판별한다.
 - 요청 수집(REST·파일)은 `envelope`의 `openRequest`를 거친다. 순서는 JWS 구조 파싱 → 서명 검증 → 스키마 검증 → 복호화 → 복호화한 제목·본문 검증 → 지문 계산이고 바꾸지 않는다(ADR-0008 결정 3). 서명 실패 시 복호화하지 않는다. 암호 형식은 직접 만들지 않고 `jose`(버전 고정)를 쓴다.
@@ -22,19 +24,19 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 
 ## 명령어
 
-| 목적          | 명령                                                                                                                                                                             |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 설치          | `pnpm install`                                                                                                                                                                   |
-| 빌드          | `pnpm build`                                                                                                                                                                     |
-| 타입 검사     | `pnpm typecheck`                                                                                                                                                                 |
-| 린트          | `pnpm lint`                                                                                                                                                                      |
-| 포맷          | `pnpm format` / `pnpm format:check`                                                                                                                                              |
-| 단위 테스트   | `pnpm test` (`test/**/*.spec.ts`)                                                                                                                                                |
-| 통합 테스트   | `docker compose up -d postgres` 뒤 `pnpm test:integration` (`test/**/*.integration-spec.ts`, e2e는 `test/e2e/`)                                                                  |
-| NFS 테스트    | `apps/mailo/scripts/nfs/run.sh`(환경 준비·실행·정리, 비밀번호 없는 sudo 필요). 환경이 있으면 `pnpm test:nfs` (`test/nfs/*.nfs-spec.ts`, `pnpm test:integration`에 포함되지 않음) |
-| 마이그레이션  | `pnpm --filter @cp949/mailo migrate` (`MAILO_DATABASE_URL` 필요)                                                                                                                 |
-| 컨테이너 실행 | `.env.example`을 `.env`로 복사하고 키를 바꾼 뒤(공개 샘플 키는 production에서 기동 거부, 로컬 시험은 `NODE_ENV=development`) `docker compose up -d --build`                      |
-| CI            | `.github/workflows/ci.yml`. 잡 구성·로컬 재현은 `docs/operations/ci.md`. 워크플로를 바꾸면 이 문서와 함께 갱신한다. 액션은 SHA로 고정한다                                        |
+| 목적          | 명령                                                                                                                                                                                                                                         |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 설치          | `pnpm install`                                                                                                                                                                                                                               |
+| 빌드          | `pnpm build`                                                                                                                                                                                                                                 |
+| 타입 검사     | `pnpm typecheck`                                                                                                                                                                                                                             |
+| 린트          | `pnpm lint`                                                                                                                                                                                                                                  |
+| 포맷          | `pnpm format` / `pnpm format:check`                                                                                                                                                                                                          |
+| 단위 테스트   | `pnpm test` (`test/**/*.spec.ts`)                                                                                                                                                                                                            |
+| 통합 테스트   | `docker compose up -d postgres` 뒤 `pnpm test:integration` (`test/**/*.integration-spec.ts`, e2e는 `test/e2e/`)                                                                                                                              |
+| NFS 테스트    | `apps/mailo/scripts/nfs/run.sh`(환경 준비·실행·정리, 비밀번호 없는 sudo 필요). 환경이 있으면 `pnpm test:nfs` (`test/nfs/*.nfs-spec.ts`, `pnpm test:integration`에 포함되지 않음)                                                             |
+| 마이그레이션  | `pnpm --filter @cp949/mailo migrate` (`MAILO_DATABASE_URL` 필요)                                                                                                                                                                             |
+| 컨테이너 실행 | `.env.example`을 `.env`로 복사하고 키를 바꾼 뒤(공개 샘플 키·DB 비밀번호는 `NODE_ENV`가 development·test가 아니면 기동 거부, 로컬 시험은 `NODE_ENV=development`. compose는 `POSTGRES_PASSWORD`가 없으면 중단) `docker compose up -d --build` |
+| CI            | `.github/workflows/ci.yml`. 잡 구성·로컬 재현은 `docs/operations/ci.md`. 워크플로를 바꾸면 이 문서와 함께 갱신한다. 액션은 SHA로 고정한다                                                                                                    |
 
 - 통합 테스트는 실제 PostgreSQL을 쓴다. 접속 URL은 `MAILO_TEST_DATABASE_URL`이고 기본값은 compose 개발 값이다. 서버가 없으면 skip하지 않고 실패한다.
 - 테스트 파일마다 `test/support/database.ts`의 전용 schema를 쓴다.
@@ -59,7 +61,7 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 
 ## 컨테이너
 
-- `docker-compose.yml`의 `stop_grace_period`는 lease(`MAILO_LEASE_SECONDS`) 이상이어야 한다(ADR-0002 결정 12). lease 값을 바꾸면 함께 바꾼다.
+- `docker-compose.yml`의 `stop_grace_period`는 `${MAILO_STOP_GRACE_PERIOD:-150s}`이고 lease(`MAILO_LEASE_SECONDS`) 이상이어야 한다(ADR-0002 결정 12). lease 값을 바꾸면 이 변수도 바꾼다. 앱이 같은 변수를 읽어 어긋나면 기동을 거부한다(변수가 있을 때만).
 - 컨테이너는 non-root(`node`)로 실행한다.
 - compose는 DB 접속을 `MAILO_DB_*` 분리 변수로 준다(앱이 URL 인코딩해 조립). `MAILO_DATABASE_URL`과 `MAILO_DB_HOST`를 함께 주면 기동을 거부한다. 컨테이너 종료·중복 발송 검증은 `scripts/container/`(Docker 필요, 자동 테스트 아님)다.
 - 종료 순서는 Worker `pause()`(새 점유 중지, 진행 중 전송 계속) → HTTP 서버 닫기·파일 폴러 정지(진행 중 파일 완료) → Worker drain(`lease - 10초` 상한, `pause()` 시점부터 센다) → DB 풀 닫기다. `stop_grace_period`는 drain 상한 + 10초 이상이어야 한다. HTTP 요청·헤더 수신 시간제한은 30초이고 종료 때 이 시간이 지나면 남은 연결을 끊는다. drain 상한이 지나도 lease는 풀지 않는다(다음 claim이 만료로 회수).

@@ -37,6 +37,9 @@ export interface WorkerOptions {
   callerQuotas?: ReadonlyMap<string, number>;
 }
 
+/** 호출처 할당의 rolling 창(초, RQ-032). */
+const QUOTA_WINDOW_SECONDS = 86_400;
+
 export class WorkerOptionsError extends Error {
   constructor(readonly field: string) {
     super(`invalid worker option (field=${field})`);
@@ -87,6 +90,14 @@ export function validateWorkerOptions(options: WorkerOptions): void {
   for (const quota of options.callerQuotas?.values() ?? []) {
     if (!Number.isInteger(quota) || quota < 1)
       throw new WorkerOptionsError("callerQuotas");
+  }
+  // 호출처 할당은 최근 24시간의 시도 기록(`mail_attempts`)을 센다. 기록이 24시간 전에 지워지면 할당이 느슨해진다(RQ-032).
+  if (
+    options.callerQuotas &&
+    options.callerQuotas.size > 0 &&
+    options.retention.recordSeconds < QUOTA_WINDOW_SECONDS
+  ) {
+    throw new WorkerOptionsError("callerQuotas.retention");
   }
   // ADR-0005 결정 7: 본문 유예 <= 작업 행 보존. 순서가 어긋나면 본문보다 행이 먼저 사라진다.
   if (options.retention.bodyGraceSeconds > options.retention.recordSeconds) {

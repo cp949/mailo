@@ -7,7 +7,7 @@
 | 잡 | 실행 내용 | 트리거 | 필수 여부 | 로컬 재현 |
 | -- | --------- | ------ | --------- | --------- |
 | `static` | `pnpm install --frozen-lockfile`, `format:check`, `typecheck`, `lint`, `build`, `test` | push(main), pull_request, 수동 | 필수 체크 후보 | `pnpm format:check && pnpm typecheck && pnpm lint && pnpm build && pnpm test` |
-| `integration` | PostgreSQL 17 서비스 컨테이너(compose와 같은 `postgres:17-alpine`, healthcheck 대기) + `pnpm test:integration` | 위와 같음 | 필수 체크 후보 | `docker compose up -d postgres` 뒤 `pnpm test:integration` |
+| `integration` | PostgreSQL 17 서비스 컨테이너(compose와 같은 `postgres:17-alpine`, healthcheck 대기) + `pnpm test:integration` | 위와 같음 | 필수 체크 후보 | `.env.example`을 `.env`로 복사한 뒤(compose는 `POSTGRES_PASSWORD`가 없으면 중단한다) `docker compose up -d postgres`, `pnpm test:integration` |
 | `container` | `scripts/container/`(SIGKILL 중복 발송, SIGTERM 종료)와 `scripts/volume/` 7개 실행(acl·group) | 위와 같음 | 첫 GitHub 실행 성공을 본 뒤 결정 | 아래 "컨테이너 잡" |
 | `nfs` | `apps/mailo/scripts/nfs/run.sh`(sudo로 NFS 서버·mount 구성 뒤 `pnpm test:nfs`) | 수동(`run_nfs=true`)과 주 1회 schedule만 | **선택. 필수 체크로 지정하지 않는다** | `apps/mailo/scripts/nfs/run.sh`(비밀번호 없는 sudo 필요) |
 
@@ -18,6 +18,7 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 - Node 24.20.0(`Dockerfile`과 같은 값). `.nvmrc`는 없고 `engines`는 범위(`>=24.18`)라서 워크플로 `env.NODE_VERSION`에 고정했다. 올릴 때 `Dockerfile`·워크플로를 함께 바꾼다.
 - pnpm 버전은 `package.json`의 `packageManager`를 따른다(`corepack enable`). `setup-node`의 `cache: pnpm`이 pnpm store만 캐시한다.
 - 액션은 커밋 SHA로 고정했고 주석에 태그를 적었다: `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0, `actions/upload-artifact` v7.0.2(2026-11-23 GitHub releases API로 확인).
+- `docker-compose.yml`은 `POSTGRES_PASSWORD`에 기본값이 없다(비어 있으면 compose가 중단한다). 워크플로는 바꾸지 않았다. `integration`·`nfs` 잡은 compose가 아니라 서비스 컨테이너(고정 가짜 비밀번호)를 쓰고, `container` 잡은 `scripts/container/common.sh`가 `POSTGRES_PASSWORD`를 환경으로 준다. 새 잡에서 compose를 쓰면 이 변수를 준다.
 - `permissions: contents: read`. 시크릿은 쓰지 않는다. DB 비밀번호 등은 테스트용 가짜 값이다.
 - `concurrency`로 같은 ref의 이전 실행을 취소한다. main에 연달아 push하면 앞선 main 실행이 취소된다.
 

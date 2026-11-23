@@ -335,6 +335,98 @@ describe("PostgreSQL 통합: 전역 차단기(ADR-0007 결정 4·5, RQ-009)", ()
     ]);
   });
 
+  /** 차단기를 3회 연 작업이 같은 응답(550 5.7.1)을 또 받을 상태를 만든다. 작업은 점유된 SENDING이다. */
+  async function repeatedState(): Promise<ClaimedJob> {
+    await createJob(db.pool);
+    const job = (await claimOne())!;
+    await db.pool.query(
+      "UPDATE mail_jobs SET account_trips = 3, last_account_response = '550 5.7.1', attempts = 1 WHERE id = $1",
+      [job.id],
+    );
+    return job;
+  }
+
+  it("반복 판정이 대표 작업의 실패에서 나면 차단기를 다시 열지 않고 closed로 닫는다(대기는 2배가 되지 않는다)", async () => {
+    const job = await repeatedState();
+    await db.pool.query(
+      `UPDATE mail_circuit_breaker SET state = 'half_open', probe_job_id = $1,
+         probe_until = now() + interval '1 minute', wait_seconds = 60, last_reason = 'OTHER',
+         consecutive_failures = 3`,
+      [job.id],
+    );
+
+    const result = await failAccount(job, "OTHER", {
+      afterMailFrom: true,
+      response: [550, "5.7.1"],
+    });
+
+    expect(result).toMatchObject({ applied: true, status: "FAILED" });
+    const state = await breaker();
+    expect(state.state).toBe("closed");
+    expect(state.waitSeconds).toBe(0);
+    expect(state.probeJobId).toBeNull();
+    expect(state.openUntil).toBeNull();
+    const { rows } = await db.pool.query(
+      "SELECT status, attempts, failure_reason FROM mail_jobs WHERE id = $1",
+      [job.id],
+    );
+    // 차단기가 half_open일 때의 시도는 횟수에 넣지 않는다(ADR-0007 결정 2).
+    expect(rows[0]).toEqual({
+      status: "FAILED",
+      attempts: 1,
+      failure_reason: "ACCOUNT_REPEATED",
+    });
+  });
+
+  it("차단기가 closed일 때 반복 판정이 나면 차단기 연속 실패 수를 늘리지 않고 시도 횟수에 넣어 FAILED로 끝난다", async () => {
+    const job = await repeatedState();
+    await db.pool.query(
+      "UPDATE mail_circuit_breaker SET consecutive_failures = 1",
+    );
+
+    const result = await failAccount(job, "OTHER", {
+      afterMailFrom: true,
+      response: [550, "5.7.1"],
+    });
+
+    expect(result).toMatchObject({ applied: true, status: "FAILED" });
+    const state = await breaker();
+    expect(state.state).toBe("closed");
+    expect(state.consecutiveFailures).toBe(1);
+    const { rows } = await db.pool.query(
+      "SELECT status, attempts, failure_reason FROM mail_jobs WHERE id = $1",
+      [job.id],
+    );
+    expect(rows[0]).toEqual({
+      status: "FAILED",
+      attempts: 2,
+      failure_reason: "ACCOUNT_REPEATED",
+    });
+    const attempt = await db.pool.query(
+      "SELECT counted FROM mail_attempts WHERE job_id = $1",
+      [job.id],
+    );
+    expect(attempt.rows).toEqual([{ counted: true }]);
+  });
+
+  it("차단기가 open일 때 늦게 도착한 반복 판정 결과도 차단기를 건드리지 않고 FAILED가 된다", async () => {
+    const job = await repeatedState();
+    await db.pool.query(
+      `UPDATE mail_circuit_breaker SET state = 'open', open_until = now() + interval '10 minutes',
+         wait_seconds = 60, last_reason = 'AUTH'`,
+    );
+
+    const result = await failAccount(job, "OTHER", {
+      afterMailFrom: true,
+      response: [550, "5.7.1"],
+    });
+
+    expect(result).toMatchObject({ applied: true, status: "FAILED" });
+    const state = await breaker();
+    expect(state.state).toBe("open");
+    expect(state.waitSeconds).toBe(60);
+  });
+
   it("다른 응답이 오면 account_trips 예외를 적용하지 않고 계속 대기한다", async () => {
     const id = await createJob(db.pool);
     for (let i = 0; i < 6; i += 1) {

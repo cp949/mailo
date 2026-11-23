@@ -8,7 +8,8 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mailo}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailo-dev-password}
+      # 기본값이 없다. .env(.env.example 복사)나 환경에서 반드시 준다. 공개 기본 비밀번호를 두면 DB 포트가 열린 채로 알려진 비밀번호가 남는다.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD를 .env나 환경에 설정한다(.env.example 참고)}
       POSTGRES_DB: ${POSTGRES_DB:-mailo}
     ports:
       - "127.0.0.1:${MAILO_DB_PUBLISH_PORT:-5432}:5432"
@@ -42,9 +43,11 @@ services:
       MAILO_DB_HOST: postgres
       MAILO_DB_PORT: "5432"
       MAILO_DB_USER: ${POSTGRES_USER:-mailo}
-      MAILO_DB_PASSWORD: ${POSTGRES_PASSWORD:-mailo-dev-password}
+      MAILO_DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD를 .env나 환경에 설정한다(.env.example 참고)}
       MAILO_DB_NAME: ${POSTGRES_DB:-mailo}
       MAILO_CALLERS_FILE: /run/mailo/callers.json
+      # 아래 stop_grace_period와 같은 값을 앱에 알려 기동 때 drain 상한 + 10초 이상인지 검사하게 한다(RQ-025).
+      MAILO_STOP_GRACE_PERIOD: ${MAILO_STOP_GRACE_PERIOD:-150s}
     volumes:
       # 호출처 레지스트리(API 키 해시). 파일이 없으면 먼저 callers.example.json을 복사해 만든다.
       - ./callers.json:/run/mailo/callers.json:ro
@@ -61,8 +64,8 @@ services:
     command:
       ["sh", "-c", "node dist/db/migrate-cli.js && exec node dist/main.js"]
     # ADR-0002 결정 12: lease 이상이어야 한다. 기본 lease 120초(MAILO_LEASE_SECONDS) + 여유 30초.
-    # lease 값을 바꾸면 이 값도 함께 바꾼다.
-    stop_grace_period: 150s
+    # lease 값을 바꾸면 MAILO_STOP_GRACE_PERIOD도 함께 바꾼다. 앱이 같은 값을 읽어 부족하면 기동을 거부한다.
+    stop_grace_period: ${MAILO_STOP_GRACE_PERIOD:-150s}
     # 이미지에 curl이 없어 node로 /health/live(인증 없음, DB와 무관)를 확인한다. 기동 시 마이그레이션 시간을 start_period로 둔다.
     healthcheck:
       test:

@@ -1,5 +1,10 @@
 export { QueueModule } from "./queue.module.js";
 export { register } from "./register.js";
+export {
+  BACKLOG_COUNT_LIMIT,
+  getQueueBacklog,
+  type QueueBacklog,
+} from "./backlog.js";
 export { claim, type ClaimOptions, type QuotaBlock } from "./claim.js";
 export {
   completeAttempt,

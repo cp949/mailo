@@ -201,3 +201,33 @@ describe("본문 평문 형식과 crypto 어댑터", () => {
     });
   });
 });
+
+describe("호출처 할당과 보존 기간 (RQ-032)", () => {
+  it("호출처 할당이 있는데 작업 기록 보존이 24시간보다 짧으면 거부한다", () => {
+    const o = defaultWorkerOptions(120);
+    expect(() =>
+      validateWorkerOptions({
+        ...o,
+        callerQuotas: new Map([["alpha", 10]]),
+        retention: { bodyGraceSeconds: 3600, recordSeconds: 86_399 },
+      }),
+    ).toThrow(WorkerOptionsError);
+  });
+
+  it("보존이 24시간 이상이면 통과하고, 할당이 없으면 보존이 짧아도 통과한다", () => {
+    const o = defaultWorkerOptions(120);
+    expect(() =>
+      validateWorkerOptions({
+        ...o,
+        callerQuotas: new Map([["alpha", 10]]),
+        retention: { bodyGraceSeconds: 3600, recordSeconds: 86_400 },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateWorkerOptions({
+        ...o,
+        retention: { bodyGraceSeconds: 3600, recordSeconds: 7200 },
+      }),
+    ).not.toThrow();
+  });
+});

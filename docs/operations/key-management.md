@@ -24,7 +24,7 @@ Mailo가 쓰는 키의 발급, 교체, 이전 키 보관, 기동 시 검증 오�
 
 - DB 본문 키와 지문 키는 서로 다른 값이어야 한다. 모든 버전 쌍에서 같은 바이트가 있으면 기동하지 않는다.
 - 키 형식(DB·지문·JWS): 32바이트를 base64(표준 또는 URL-safe, 패딩 유무 무관) 또는 64자 hex로 쓴다.
-- `NODE_ENV=production`이면 저장소에 공개된 샘플 키와 같은 바이트의 DB 본문 키·지문 키를 거부한다. 거부 대상: `.env.example`·`docker-compose.volume-example.yml`의 `MAILO_DB_ENCRYPTION_KEY_V1`(`fake-db-key-for-dev-only-0000000`의 base64)과 `MAILO_FINGERPRINT_KEY_V1`(`fake-fingerprint-key-dev-only-00`의 base64), 그리고 32바이트가 모두 같은 값인 키(테스트 픽스처가 `Buffer.alloc(32, n)`으로 만드는 형태). base64·hex 어느 표기로 줘도 같은 바이트로 비교한다. 이전 버전 변수(`_V1` 등)도 검사한다. 오류에는 변수 이름과 사유만 나오고 키 값은 나오지 않는다. `development`·`test`는 허용한다.
+- `NODE_ENV`가 `development`·`test`로 명시되지 않으면(`production`이거나 값이 없거나 알 수 없는 값) 저장소에 공개된 샘플 키와 같은 바이트의 DB 본문 키·지문 키를 거부한다. 같은 조건에서 공개 샘플 DB 비밀번호(`mailo-dev-password`)도 거부한다. 거부 대상: `.env.example`·`docker-compose.volume-example.yml`의 `MAILO_DB_ENCRYPTION_KEY_V1`(`fake-db-key-for-dev-only-0000000`의 base64)과 `MAILO_FINGERPRINT_KEY_V1`(`fake-fingerprint-key-dev-only-00`의 base64), 그리고 32바이트가 모두 같은 값인 키(테스트 픽스처가 `Buffer.alloc(32, n)`으로 만드는 형태). base64·hex 어느 표기로 줘도 같은 바이트로 비교한다. 이전 버전 변수(`_V1` 등)도 검사한다. 오류에는 변수 이름과 사유만 나오고 키 값은 나오지 않는다. `development`·`test`는 허용한다.
 - 이 키들은 시크릿 파일 마운트(`<변수>_FILE`)로 주는 것을 권장한다(`deployment.md` "시크릿 주입").
 - 모든 키 값은 로그·오류·이벤트에 나오지 않는다(RQ-027). 키를 코드·이미지·`.env.example`에 넣지 않는다.
 
@@ -205,7 +205,8 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 | `<변수>은 32바이트 키(base64 또는 64자 hex)여야 한다` | 키 길이·형식이 틀리다 | `openssl rand -base64 32`로 다시 만든다. base64 한 줄인지 본다(앞뒤 공백과 끝 개행은 무시된다) |
 | `<변수>_FILE이 가리키는 파일을 읽지 못했다(ENOENT)` | 경로가 없거나(`ENOENT`) 권한이 없다(`EACCES`) | 마운트 경로와 UID 1000의 읽기 권한을 확인한다 |
 | `<변수>_FILE이 가리키는 파일이 비어 있다` | 빈 파일 | 키를 채운다 |
-| `<변수>은 저장소에 공개된 샘플 키이거나 같은 바이트가 반복된 키라 production에서 쓸 수 없다(...)` | `NODE_ENV=production`인데 `.env.example`의 샘플 키나 반복 바이트 키를 썼다 | `openssl rand -base64 32`로 새로 만든다. 로컬 시험이면 `NODE_ENV=development`로 둔다 |
+| `<변수>은 저장소에 공개된 샘플 키이거나 같은 바이트가 반복된 키라 production에서 쓸 수 없다(...)` | `NODE_ENV`가 `development`·`test`가 아닌데(없는 경우 포함) `.env.example`의 샘플 키나 반복 바이트 키를 썼다 | `openssl rand -base64 32`로 새로 만든다. 로컬 시험이면 `NODE_ENV=development`로 둔다 |
+| `DB 비밀번호가 저장소에 공개된 샘플 값이라 production(...)에서 쓸 수 없다(...)` | 같은 조건에서 DB 비밀번호가 `mailo-dev-password`다 | `.env`의 `POSTGRES_PASSWORD`와 접속 설정(`MAILO_DB_PASSWORD` 또는 `MAILO_DATABASE_URL`)을 새 값으로 바꾼다. 이미 만든 DB는 `ALTER USER`로 비밀번호도 바꾼다 |
 | `<변수>의 버전 번호에 앞자리 0을 쓸 수 없다(..._V1처럼 쓴다)` | `..._V01`처럼 앞자리 0이 있는 변수 이름이다(`_V1`과 다른 변수) | 변수 이름을 `_V1`로 고친다 |
 | `DB 본문 암호화 키링와 지문 키링가 같은 키를 쓴다. 두 키는 서로 달라야 한다` | 두 키링이 같은 바이트를 가진다 | 한쪽을 새로 발급한다 |
 | `MAILO_JWS_IAT_MAX_AGE_SECONDS는 MAILO_RECORD_RETENTION_SECONDS에서 MAILO_JWS_IAT_SKEW_SECONDS를 뺀 값 이하여야 한다` | 허용 기간 + 오차가 Key 보존 기간을 넘는다 | 허용 기간을 줄이거나 보존 기간을 늘린다 |

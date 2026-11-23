@@ -16,7 +16,12 @@ import {
 import { EnvReader } from "./env-reader.js";
 import { assertDisjointKeyRings, loadKeyRing } from "./key-loader.js";
 import { Secret } from "./secret.js";
-import type { WorkerAccountReason, WorkerOptions } from "./worker-options.js";
+import {
+  SHUTDOWN_MARGIN_MS,
+  workerDrainTimeoutMs,
+  type WorkerAccountReason,
+  type WorkerOptions,
+} from "./worker-options.js";
 
 export interface SmtpConfig {
   host: string;
@@ -48,6 +53,26 @@ export interface FileChannelConfig {
   batchPerCaller: number;
 }
 
+export interface DatabaseTimeouts {
+  /** 서버가 쿼리 하나에 허용하는 시간(`statement_timeout`). */
+  statementMs: number;
+  /** 잠금 대기 상한(`lock_timeout`). */
+  lockMs: number;
+  /** 트랜잭션을 연 채 쿼리 없이 머무는 시간 상한(`idle_in_transaction_session_timeout`). */
+  idleInTransactionMs: number;
+  /** 클라이언트 쪽 응답 대기 상한(pg `query_timeout`). 서버 쪽 `statementMs`보다 길다. */
+  queryMs: number;
+}
+
+/**
+ * `poolMax`에서 `concurrency`를 뺀 최소 여유. 결과 기록은 전송 한 건마다 커넥션 1개가 필요하고,
+ * 그 밖에 점유 루프 1개, 주기 작업 1개, HTTP 요청·헬스·파일 폴러 몫이 필요하다(추정).
+ */
+export const POOL_RESERVE_CONNECTIONS = 4;
+
+/** 공개 저장소에 있는 샘플 DB 비밀번호(docker-compose.yml 이전 기본값, .env.example). production에서 거부한다. */
+const PUBLIC_SAMPLE_DB_PASSWORDS: readonly string[] = ["mailo-dev-password"];
+
 /** 앱이 부팅 때 읽는 설정. */
 export interface AppConfig {
   env: "development" | "test" | "production";
@@ -57,6 +82,11 @@ export interface AppConfig {
     url: Secret<string>;
     poolMax: number;
     connectTimeoutMs: number;
+    /**
+     * DB 시간제한(ms). 연결 단절이나 잠금 대기로 쿼리가 끝나지 않을 때 점유·종료가 멈추는 것을 막는다.
+     * 모두 추정 기본값이다. 마이그레이션 CLI는 이 값을 쓰지 않는다(DDL이 오래 걸릴 수 있다).
+     */
+    timeouts: DatabaseTimeouts;
   };
   http: {
     /** 원시 요청 본문 상한 바이트(RQ-030, 기본 2 MiB). */
@@ -69,6 +99,11 @@ export interface AppConfig {
     jobExpirySeconds: number;
   };
   worker: WorkerOptions;
+  /**
+   * 컨테이너 `stop_grace_period`(compose `MAILO_STOP_GRACE_PERIOD`). 변수가 없으면 null이고 앱은 관계를 검사하지 않는다.
+   * 앱이 오케스트레이터 설정을 알 수 없는 환경이 있기 때문이다.
+   */
+  stopGracePeriodMs: number | null;
   smtp: SmtpConfig;
   keys: {
     /** DB 본문 암호화 키링(ADR-0008 결정 6). */
@@ -76,6 +111,11 @@ export interface AppConfig {
     /** Idempotency-Key 지문 키링(ADR-0005 결정 3). DB 본문 키와 분리한다. */
     fingerprint: Secret<KeyRingInput>;
   };
+  /**
+   * 운영자 토큰(선택). 있으면 `/health/ready`가 이 토큰을 Bearer로 받은 호출에 호출처 전체 큐 수치와 Worker 상태를 준다.
+   * 호출처 API 키로는 전역 수치를 볼 수 없다(다른 호출처의 발송량이 드러난다). 업무 endpoint에는 쓸 수 없다.
+   */
+  ops: { token: Secret<string> | null };
   /** 호출처 레지스트리 JSON 파일 경로(RQ-028). 내용은 callers 모듈이 읽는다. */
   callersFile: string;
   fileChannel: FileChannelConfig;
@@ -182,7 +222,24 @@ function loadDatabaseUrl(reader: EnvReader): string | undefined {
     );
     return undefined;
   }
+  // 비밀번호 값은 오류에 싣지 않는다. 공개 샘플과 같으면 변수 이름과 사유만 적는다.
+  if (reader.strictEnv()) {
+    const password = databasePassword(url);
+    if (password !== undefined && PUBLIC_SAMPLE_DB_PASSWORDS.includes(password))
+      reader.issue(
+        "DB 비밀번호가 저장소에 공개된 샘플 값이라 production(NODE_ENV가 development·test가 아닌 경우)에서 쓸 수 없다(POSTGRES_PASSWORD와 MAILO_DB_PASSWORD 또는 MAILO_DATABASE_URL을 새 값으로 바꾼다)",
+      );
+  }
   return url;
+}
+
+function databasePassword(url: string): string | undefined {
+  try {
+    const raw = new URL(url).password;
+    return raw === "" ? undefined : decodeURIComponent(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 /** DB 접속 URL만 읽는다. 마이그레이션 CLI가 SMTP·키 설정 없이 쓴다. */
@@ -376,6 +433,95 @@ function loadWorkerOptions(
   };
 }
 
+const DURATION_PART = /(\d+)(ms|h|m|s)/y;
+const DURATION_UNIT_MS = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 } as const;
+
+/** compose 기간 표기(`150s`, `2m30s`, `1h`)를 ms로 바꾼다. 형식이 틀리거나 0이면 undefined다. */
+export function parseComposeDurationMs(text: string): number | undefined {
+  const trimmed = text.trim();
+  if (trimmed === "") return undefined;
+  let total = 0;
+  let index = 0;
+  DURATION_PART.lastIndex = 0;
+  while (index < trimmed.length) {
+    DURATION_PART.lastIndex = index;
+    const match = DURATION_PART.exec(trimmed);
+    if (!match) return undefined;
+    total += Number(match[1]) * DURATION_UNIT_MS[match[2] as "ms"];
+    index = DURATION_PART.lastIndex;
+  }
+  return total > 0 ? total : undefined;
+}
+
+/**
+ * `MAILO_STOP_GRACE_PERIOD`가 있으면 drain 상한 + 10초 이상인지 확인한다(ADR-0002 결정 12, RQ-025).
+ * 어기면 종료 때 drain이 끝나기 전에 SIGKILL이 와서 진행 중 전송이 lease 회수로 재발송된다.
+ */
+function loadStopGracePeriod(
+  reader: EnvReader,
+  leaseSeconds: number,
+): number | null {
+  const raw = reader.raw("MAILO_STOP_GRACE_PERIOD");
+  if (raw === undefined) return null;
+  const ms = parseComposeDurationMs(raw);
+  if (ms === undefined) {
+    reader.issue(
+      "MAILO_STOP_GRACE_PERIOD는 150s, 2m30s처럼 시·분·초(h, m, s, ms) 기간이어야 한다",
+    );
+    return null;
+  }
+  const needed = workerDrainTimeoutMs(leaseSeconds) + SHUTDOWN_MARGIN_MS;
+  if (ms < needed) {
+    reader.issue(
+      `MAILO_STOP_GRACE_PERIOD는 MAILO_LEASE_SECONDS에서 10초를 뺀 drain 상한에 10초를 더한 값(${needed / 1000}초) 이상이어야 한다`,
+    );
+  }
+  return ms;
+}
+
+/** 운영자 토큰은 사람이 고른 짧은 문자열을 막기 위해 최소 길이를 둔다. `openssl rand -base64 32`(44자)를 권한다. */
+const OPS_TOKEN_MIN_CHARS = 32;
+
+/** `MAILO_OPS_TOKEN_FILE`(우선) 또는 `MAILO_OPS_TOKEN`. 없으면 undefined이고 운영자 응답은 꺼진다. */
+function loadOpsToken(reader: EnvReader): string | undefined {
+  const token = reader.secret("MAILO_OPS_TOKEN")?.trim();
+  if (token === undefined) return undefined;
+  if (token.length < OPS_TOKEN_MIN_CHARS || /\s/.test(token)) {
+    reader.issue(
+      `MAILO_OPS_TOKEN은 공백 없는 ${OPS_TOKEN_MIN_CHARS}자 이상이어야 한다(openssl rand -base64 32)`,
+    );
+    return undefined;
+  }
+  return token;
+}
+
+/**
+ * DB 시간제한(H1). 서버 쪽 `statement_timeout`이 먼저 쿼리를 취소해 연결이 살아남게 하고,
+ * 서버 응답이 오지 않는 단절은 클라이언트 `query_timeout`이 끊는다. 그래서 `queryMs`가 더 길어야 한다.
+ * 기본값은 모두 추정이다. 가장 오래 걸리는 정상 쿼리는 500건 배치 sweep·삭제이고 수 초 이하로 가정했다.
+ */
+function loadDatabaseTimeouts(reader: EnvReader): DatabaseTimeouts {
+  const range = { min: 1000, max: 3_600_000 };
+  const statementMs = reader.int(
+    "MAILO_DB_STATEMENT_TIMEOUT_MS",
+    30_000,
+    range,
+  );
+  const lockMs = reader.int("MAILO_DB_LOCK_TIMEOUT_MS", 10_000, range);
+  const idleInTransactionMs = reader.int(
+    "MAILO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS",
+    60_000,
+    range,
+  );
+  const queryMs = reader.int("MAILO_DB_QUERY_TIMEOUT_MS", 35_000, range);
+  if (queryMs <= statementMs) {
+    reader.issue(
+      "MAILO_DB_QUERY_TIMEOUT_MS는 MAILO_DB_STATEMENT_TIMEOUT_MS보다 커야 한다",
+    );
+  }
+  return { statementMs, lockMs, idleInTransactionMs, queryMs };
+}
+
 /**
  * 봉투 설정(ADR-0008 결정 4). JWS 허용 기간은 "Key 보존 기간 − 허용 오차" 이하여야 한다.
  * 허용 기간 안에 처음 수집된 파일의 재전송은 허용 기간 + 오차가 지나면 `iat` 검사에 걸리고, 그 전에 Key 행이 지워지면
@@ -490,11 +636,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     worker.retention.recordRetentionSeconds,
   );
 
+  const dbTimeouts = loadDatabaseTimeouts(reader);
+  const poolMax = reader.int("MAILO_DB_POOL_MAX", 10, { min: 1, max: 200 });
+  // 전송이 끝난 작업의 결과 기록은 커넥션 1개가 필요하다. 풀이 모자라면 기록이 대기하다 lease가 만료되어 중복 발송이 된다.
+  if (poolMax < worker.concurrency + POOL_RESERVE_CONNECTIONS) {
+    reader.issue(
+      `MAILO_DB_POOL_MAX는 MAILO_WORKER_CONCURRENCY + ${POOL_RESERVE_CONNECTIONS} 이상이어야 한다`,
+    );
+  }
+
+  const opsToken = loadOpsToken(reader);
+  const stopGracePeriodMs = loadStopGracePeriod(reader, worker.lease.seconds);
+
   const callersFile = reader.requiredString("MAILO_CALLERS_FILE");
   const nodeEnv = reader.oneOf(
     "NODE_ENV",
     ["development", "test", "production"] as const,
-    "development",
+    // 값이 없으면 production이다(fail closed). 로컬 시험은 NODE_ENV=development를 명시한다.
+    "production",
   );
 
   const config = {
@@ -502,21 +661,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: reader.int("MAILO_PORT", 3000, { min: 1, max: 65535 }),
     database: {
       url: new Secret(databaseUrl ?? ""),
-      poolMax: reader.int("MAILO_DB_POOL_MAX", 10, { min: 1, max: 200 }),
+      poolMax,
       connectTimeoutMs: reader.int("MAILO_DB_CONNECT_TIMEOUT_MS", 5000, {
         min: 100,
         max: 60_000,
       }),
+      timeouts: dbTimeouts,
     },
     http: { maxRequestBytes },
     limits: { ...DEFAULT_MAIL_REQUEST_LIMITS, maxContentBytes, maxRecipients },
     queue: { jobExpirySeconds },
     worker,
+    stopGracePeriodMs,
     smtp: smtp as SmtpConfig,
     keys: {
       dbEncryption: new Secret(dbEncryption as KeyRingInput),
       fingerprint: new Secret(fingerprint as KeyRingInput),
     },
+    ops: { token: opsToken === undefined ? null : new Secret(opsToken) },
     callersFile: callersFile ?? "",
     fileChannel,
     envelope,

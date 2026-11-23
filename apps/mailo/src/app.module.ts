@@ -67,6 +67,11 @@ export interface AppModuleOptions {
    * - `sender`: 발송기 직접 주입(테스트).
    */
   worker?: { trustedCa?: string; sender?: MailSender };
+  /**
+   * Worker 점유 루프가 예외로 끝났을 때 부른다(`WorkerDeps.onFatal`). main.ts가 정상 종료 경로를 거쳐 프로세스를 끝낸다.
+   * `worker`로 만든 실제 Worker에만 적용된다.
+   */
+  onWorkerFatal?: (reason: "poll_loop_crashed") => void;
   /** HTTP 서버 시간제한. 생략하면 `DEFAULT_HTTP_TIMEOUTS`(30초)다. */
   http?: HttpServerTimeouts;
 }
@@ -117,6 +122,7 @@ export class AppModule {
                 trustedCa: options.worker.trustedCa,
               }),
               ...(options.worker.sender && { sender: options.worker.sender }),
+              ...(options.onWorkerFatal && { onFatal: options.onWorkerFatal }),
             });
           },
         },

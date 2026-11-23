@@ -59,3 +59,11 @@ export interface WorkerOptions {
   concurrency: number;
   retention: WorkerRetentionOptions;
 }
+
+/** 종료 신호 뒤 진행 중 전송을 기다리는 상한(ms). lease보다 10초 짧고 최소 1초다(ADR-0002 결정 12). */
+export function workerDrainTimeoutMs(leaseSeconds: number): number {
+  return Math.max(1_000, (leaseSeconds - 10) * 1000);
+}
+
+/** drain 상한 뒤 풀 닫기·폴러 정지에 필요한 여유(ms). `stop_grace_period`는 drain 상한에 이 값을 더한 값 이상이어야 한다. */
+export const SHUTDOWN_MARGIN_MS = 10_000;

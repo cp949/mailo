@@ -61,7 +61,8 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
-- 검증 수치(2026-11-23 최종 마무리 실행 결과): `pnpm test` 단위 407건(23개 파일), `pnpm test:integration` 통합 222건(15개 파일, 파일 채널 `file-channel/poller.integration-spec.ts`, `e2e/file-flow.integration-spec.ts`, 호출처 할당 테스트 포함), `pnpm test:nfs`는 NFS 환경이 정리돼 이번에 실행하지 않았다(직전 3단계 마무리 실행 31건, NFSv4.1·4.2 기본값 각각, 실패 0건). 볼륨 스크립트(`scripts/volume/`, a~g)는 CI 워크플로 작성 뒤 2026-11-23에 7개 실행(acl·group 포함)을 모두 다시 실행해 기대와 다름 0건이었다. 컨테이너 스크립트 `scripts/container/`(SIGKILL 중복 발송, SIGTERM 파일 처리)도 같은 날 종료 순서(pause 선행)·compose 기본값 변경 뒤 각 1회 실행해 기대와 일치했다. 단위·통합 실패는 0건이다.
+- 검증 수치(2026-11-23 코드 리뷰 1묶음 반영 뒤): `pnpm test` 단위 449건(25개 파일), `pnpm test:integration` 통합 242건(18개 파일), 실패 0건. 이 묶음 뒤 `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`를 각 1회 실행해 기대와 일치했다(`POSTGRES_PASSWORD` 필수화·`MAILO_STOP_GRACE_PERIOD` 반영 compose). `pnpm test:nfs`·`scripts/volume/`은 이 묶음에서 실행하지 않았다.
+- 직전 수치(2026-11-23 최종 마무리 실행 결과): `pnpm test` 단위 407건(23개 파일), `pnpm test:integration` 통합 222건(15개 파일, 파일 채널 `file-channel/poller.integration-spec.ts`, `e2e/file-flow.integration-spec.ts`, 호출처 할당 테스트 포함), `pnpm test:nfs`는 NFS 환경이 정리돼 이번에 실행하지 않았다(직전 3단계 마무리 실행 31건, NFSv4.1·4.2 기본값 각각, 실패 0건). 볼륨 스크립트(`scripts/volume/`, a~g)는 CI 워크플로 작성 뒤 2026-11-23에 7개 실행(acl·group 포함)을 모두 다시 실행해 기대와 다름 0건이었다. 컨테이너 스크립트 `scripts/container/`(SIGKILL 중복 발송, SIGTERM 파일 처리)도 같은 날 종료 순서(pause 선행)·compose 기본값 변경 뒤 각 1회 실행해 기대와 일치했다. 단위·통합 실패는 0건이다.
 - 수치 이력: 1단계 마무리 뒤 단위 274건·통합 116건(종단 `e2e/mail-flow.integration-spec.ts` 7건 포함), 파일 채널 폴러 구현 뒤 단위 370건·통합 199건. 1단계 마무리 때 쓰지 않던 `smtp/backoff.ts`와 그 테스트를 지워 단위가 이전 보고(287건)보다 13건 줄었다.
 - 모든 SMTP 검증은 로컬 `smtp-server` 대상이다. 실제 Gmail·Workspace SMTP와 실제 NAS 제품은 확인하지 않았다. NFS는 같은 호스트 loopback에서 `pnpm test:nfs`로 확인했다(ADR-0004 구현 중 확정 20~27, `docs/operations/nfs.md`). 이 테스트와 `scripts/volume/` 스크립트는 `pnpm test`·`pnpm test:integration`에 포함되지 않는다. GitHub Actions 워크플로(`.github/workflows/ci.yml`, `docs/operations/ci.md`)에 연결하는 코드를 작성했으나 GitHub에서 실행해 본 적이 없다.
 - 2026-11-23 3단계 마무리에서 RQ-003·004·013·016·021·022·024·028·032와 문서 정합을 갱신했다(운영 문서 `docs/operations/`).
@@ -163,7 +164,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - `file-channel/poller.integration-spec.ts`(실제 PostgreSQL + 임시 디렉터리): 정상 JSON(서명 none)·JWS·JWE 수집과 삭제, 점 임시 파일·비json(`.txt`, `.json.tmp`, `.JSON`) 무시, 일부만 쓴 임시 이름 파일은 rename 전에 수집하지 않음, 등록되지 않은 폴더와 `fileChannel: false` 호출처 폴더 무시, FIFO(`mkfifo`)가 폴러를 멈추지 않음, 심볼릭 링크·하드링크는 읽지 않고 거부하며 대상 파일은 그대로, 크기 상한 정확히 일치는 수집·1바이트 초과는 `SIZE_EXCEEDED`, rename 뒤 덧쓴 파일의 크기 초과, 사유별 거부 기록과 이벤트(형식 오류·Key 누락·Key 형식·`attachments`·입력 검증·CR/LF·서명 없음·서명 불일치·`iat`), 같은 Key의 다른 내용은 `FINGERPRINT_MISMATCH`, 등록 직후 삭제 전 종료(`beforeDelete` 훅이 던짐)와 재수집의 중복 걸러내기, 거부 기록 커밋 직후 종료와 재수집의 멱등, 같은 이름·같은 내용 재투입은 기록 1건, 두 폴러 동시 수집(30건, 건마다 1건 등록), 삭제 직전 파일 교체 시 새 파일을 지우지 않음.
 - 같은 파일의 canary 테스트: 형식 오류·검증 실패·서명 불일치·크기 초과·심볼릭 링크·JWE 변조·JWE `caller` 불일치 파일의 본문 canary가 로그, 거부 기록, 이벤트, 작업 행, 이벤트 피드에 없다.
 - `file-channel/poller.integration-spec.ts`(코드 리뷰 반영, ADR-0004 구현 중 확정 29·30): 읽을 수 없는 호출처 폴더 3곳 뒤의 호출처 수집, 읽을 수 없는 파일이 배치 상한을 채워도 뒤 정상 파일 수집, 상한보다 많은 임시 점 파일 정리, `link` 게시 파일이 `unlink` 전에 폴링되면 거부됨(재현).
-- `file-channel/read-file.spec.ts`: open 플래그·`fstat` 판정·상한 + 1바이트 읽기와 sha256 정책.
+- `file-channel/read-file.spec.ts`: open 플래그·`fstat` 판정·상한 + 1바이트 읽기와 sha256 정책, 연 뒤 지워진 파일(`nlink` 0)은 하드링크가 아니라 `gone`(ADR-0004 구현 중 확정 31, 두 폴러 동시 수집 테스트가 CI에서 간헐 실패하던 결함).
 - `e2e/file-flow.integration-spec.ts`: 파일 → 폴러 → Worker → 로컬 smtp-server → `GET /jobs?idempotencyKey=`·`GET /events`(`JOB_SENT`), 거부 파일의 `INTAKE_REJECTED`와 Key 조회 404, REST와 파일의 같은 Key는 한 작업, 앱 종료 때 폴러 정지, root가 없으면 기동 실패.
 - 구현 세부와 추정과 다른 점: ADR-0004 "구현 중 확정".
 - Docker named volume(2026-11-23, `scripts/volume/verify-e2e.sh`, `verify-atomic-rename.sh`): Mailo(UID 1000)·호출처 B(10002)·C(10003)가 볼륨 하나를 공유한 상태에서 파일 → 폴링 → 발송 → 삭제 e2e를 default ACL·공용 그룹 두 방식으로 각 15개 확인해 모두 통과했다. 같은 요청은 1회만 발송, 점(.) 임시 이름 파일은 rename 전 수집되지 않고 rename 뒤 수집된다. rename 원자성은 4 MiB × 100건에서 부분 파일 0건이다. 호출처가 mode 0600으로 만든 파일은 Mailo가 읽지 못해 남고 `unreadable`로 기록되며 chmod 0660 뒤 수집된다(ADR-0004 구현 중 확정 16).
@@ -354,7 +355,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
   - 순간 한도(`421`·`450`)는 open 5분에서 30분까지다.
   - 그 밖의 계정 오류(연결·TLS·인증)는 1분에서 30분까지다.
   - `half_open`에서는 대표 작업 한 건만 점유한다. 대표 작업이 계정 상태 오류 없이 끝나면 `closed`로 돌아간다. 메시지 오류로 끝나도 계정은 정상으로 본다.
-- `MAIL FROM` 이후 단계의 계정 상태 오류는 작업별 `account_trips`로 센다. 같은 작업이 차단기를 3회 연 뒤에도 같은 응답을 받으면 그 작업을 `PERMANENT`로 보고 `FAILED`로 전이한다.
+- `MAIL FROM` 이후 단계의 계정 상태 오류는 작업별 `account_trips`로 센다. 같은 작업이 차단기를 3회 연 뒤에도 같은 응답을 받으면 그 작업을 `FAILED`로 전이한다. 구현은 실패 사유 `ACCOUNT_REPEATED`(REST `failureReason`은 `ACCOUNT_ERROR_REPEATED`)로 기록하고 시도 분류는 `ACCOUNT` 그대로다(`PERMANENT` 분류가 아니다). 이 판정이면 차단기를 다시 열지 않는다. 대표 작업이면 `closed`로 닫고 아니면 차단기를 바꾸지 않는다(ADR-0007 구현 중 확정 9).
   - 한도 사유(일일·순간 한도)는 `account_trips`와 이 판정에서 뺀다. 한도는 계정 전체의 상태이므로 이 사유의 작업은 만료 시각까지 `RETRY_WAIT`로 남고, 재개 시각이 만료 시각을 넘으면 `EXPIRED`다(ADR-0007 구현 중 확정 8).
 - 전원이 거부되면 하나라도 `4xx`일 때 `TRANSIENT`, 모두 `5xx`일 때 `PERMANENT`다. 거부 응답에 계정 상태 오류(예: 일일 한도)가 섞이면 계정 상태 오류가 우선한다(구현 중 확정). 일부만 수락되면 `SENT`로 처리하고 `4xx`로 거부된 수신자는 재시도하지 않는다.
 - `550 5.7.1`은 응답 텍스트로 가른다. 스팸·정책 거부는 메시지 오류 `PERMANENT`, relay 자격·구성은 계정 상태 오류이고 구분할 수 없으면 계정 상태 오류다. `450 4.2.1` 중 수신자 쪽 속도 제한은 `TRANSIENT`다. `421`의 `4.7.x`는 순간 한도, 그 밖의 `421`은 일반 계정 상태 오류다(추정). 세부는 ADR-0007 "구현 중 확정" 2다.
@@ -819,7 +820,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - [ ] 개발·운영 설정으로 각각 컨테이너가 기동된다. (운영 구성(`NODE_ENV=production`, compose healthcheck `healthy`)은 `scripts/container/`로 기동을 확인했다. `NODE_ENV=development` 컨테이너는 기동하지 않았다.)
 - [ ] 이미지에 SMTP 인증 정보가 포함되지 않는다. (`Dockerfile`에 인증 정보를 넣는 단계가 없다. 이미지를 빌드해 검사하지 않았다.)
 - [x] 컨테이너 종료 신호를 받으면 새 작업 점유를 멈추고 진행 중인 전송을 기다린다. (Worker와 앱 종료 훅을 테스트로 확인했다. 컨테이너 SIGTERM은 2026-11-23 `scripts/container/verify-sigterm-file.sh`로 파일 채널 활성 상태에서 확인했다. 아래 판정 근거.)
-- [ ] `stop_grace_period`가 lease 시간 이상으로 설정돼 있다. (compose 150초, lease 기본 120초. 두 값의 관계를 검사하는 자동 검증은 없다. 컨테이너 검증은 lease 45초로 실행했고 기본 120초로 종료 시간을 재지는 않았다.)
+- [x] `stop_grace_period`가 lease 시간 이상으로 설정돼 있다. (compose 기본 150초(`MAILO_STOP_GRACE_PERIOD`), lease 기본 120초. 앱이 `MAILO_STOP_GRACE_PERIOD`가 설정된 경우 drain 상한 + 10초 이상인지 기동 때 검사하고(`config/load-config.spec.ts`), `config/compose-consistency.spec.ts`가 compose 기본값과 `.env.example` lease의 관계를 단언한다. 한계: 변수를 주지 않는 환경(오케스트레이터가 다른 값을 쓰는 경우)은 검사할 수 없다. compose 파일은 `docker compose config` 대신 텍스트 패턴으로 검사한다. 컨테이너 검증은 lease 45초로 실행했고 기본 120초로 종료 시간을 재지는 않았다.)
 
 **판정 근거:**
 
@@ -828,7 +829,9 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - 컨테이너 SIGTERM(2026-11-23, `scripts/container/verify-sigterm-file.sh`, 파일 1000개, 폴링 500ms, lease 45초): 폴러가 처리하는 도중(남은 파일 997개일 때) `docker compose stop mailo`를 보냈다. 종료 코드 0, 소요 0.4초, OOMKilled false였다. 로그 순서는 `file_poll`(registered 19) → `file_channel_stopped` → `worker_stopping inFlight 0` → `worker_stopped drained true`였다. 종료 뒤 DB 작업 19건 = 처리한 파일 19건(1000 − 남은 981. 같은 날 종료 순서 변경 뒤 재실행에서는 22건 = 22건, 종료 코드 0, 0.4초, 재기동 뒤 1000건 `SENT`), 남은 파일 중 DB에 등록된 것 0건, `SENDING` 0건이었다. 다시 띄우자 남은 파일이 수집돼 작업 1000건 모두 `SENT`, SMTP 수신 1000통(유일 `Message-ID` 1000개)이었다. 진행 중 전송이 있는 상태의 SIGTERM(전송 응답 지연 중 종료 대기)은 이 스크립트가 만들지 않았고 `worker/worker.integration-spec.ts`만 확인한다.
 - 컨테이너 기동(2026-11-23, 같은 스크립트와 `verify-sigkill-duplicate.sh`): 저장소 `Dockerfile`로 빌드한 이미지가 compose의 `MAILO_DB_*` 분리 변수(비밀번호 `p@ss/w:rd#1%2x`)로 PostgreSQL에 접속해 마이그레이션을 적용하고 healthcheck(`/health/live`)가 `healthy`가 됐다.
 
-- 개발·운영 구분(2026-11-23 코드 리뷰 반영): `NODE_ENV=production`이면 `.env.example` 등 저장소에 공개된 DB 본문 키·지문 키 샘플과 같은 바이트(같은 바이트가 반복된 키 포함)를 거부한다. `config/load-config.spec.ts`가 base64·hex 표기, 이전 버전 변수, 오류에 키 값이 없음, development·test 허용을 확인한다. `MAILO_DB_HOST`는 호스트 이름·IPv4·대괄호 IPv6만 받고 포트·경로가 섞이면 기동을 거부하며, `..._V01`처럼 앞자리 0이 있는 키 버전 변수도 거부한다(같은 파일). compose의 HTTP 포트는 기본 `127.0.0.1`에만 연다(`MAILO_PUBLISH_HOST`). `scripts/container/`는 실행마다 일회용 키를 만들도록 고쳤고 변경 뒤 2026-11-23에 SIGKILL·SIGTERM 두 스크립트를 다시 실행해 기동·종료가 기대와 일치했다(production 기본값, 포트 `127.0.0.1`, 일회용 키로 기동).
+- DB 시간제한과 풀 크기(2026-11-23 코드 리뷰 반영, H1·M1): 앱 풀에 `statement_timeout`·`lock_timeout`·`idle_in_transaction_session_timeout`·`query_timeout`·keepAlive를 건다(`MAILO_DB_*_TIMEOUT_MS`). `db/pool-timeout.integration-spec.ts`가 `pg_sleep`(57014), 잠금 대기(55P03), 유휴 트랜잭션 연결 끊김, 클라이언트 `query_timeout`과 연결 폐기를 확인한다. `worker/worker-resilience.integration-spec.ts`는 DB가 응답하지 않아도 `pause`·`stop`이 drain 상한 안에 끝남과 결과 기록의 lease 마감까지 재시도를 확인한다. `MAILO_DB_POOL_MAX` ≥ `MAILO_WORKER_CONCURRENCY` + 4는 `config/load-config.spec.ts`가 확인한다. 한계: 실제 네트워크 단절(RST 없는 끊김)은 재현하지 않았다. 응답 없는 연결은 풀 래퍼와 `query_timeout`으로 흉내 냈다. 컨테이너 종료 시간은 다시 재지 않았다.
+- 점유 루프 비정상 종료(H2): `poll_loop_crashed`가 나면 정상 종료 경로를 거쳐 종료 코드 70으로 끝난다(`fatal-exit.spec.ts`, `worker-resilience.integration-spec.ts`). `restart: unless-stopped`의 비0 종료 재시작은 일회용 컨테이너로 확인했고 실제 Mailo 컨테이너에서 이 경로를 일으키지는 않았다.
+- 개발·운영 구분(2026-11-23 코드 리뷰 반영, M4): `NODE_ENV`가 `development`·`test`로 명시되지 않으면(값이 없는 경우 포함, fail closed) `.env.example` 등 저장소에 공개된 DB 본문 키·지문 키 샘플과 같은 바이트(같은 바이트가 반복된 키 포함)와 공개 샘플 DB 비밀번호(`mailo-dev-password`)를 거부한다. compose의 `POSTGRES_PASSWORD`는 기본값 없이 필수다(`config/compose-consistency.spec.ts`가 패턴을 확인했다). `config/load-config.spec.ts`가 base64·hex 표기, 이전 버전 변수, 오류에 키 값이 없음, development·test 허용을 확인한다. `MAILO_DB_HOST`는 호스트 이름·IPv4·대괄호 IPv6만 받고 포트·경로가 섞이면 기동을 거부하며, `..._V01`처럼 앞자리 0이 있는 키 버전 변수도 거부한다(같은 파일). compose의 HTTP 포트는 기본 `127.0.0.1`에만 연다(`MAILO_PUBLISH_HOST`). `scripts/container/`는 실행마다 일회용 키를 만들도록 고쳤고 변경 뒤 2026-11-23에 SIGKILL·SIGTERM 두 스크립트를 다시 실행해 기동·종료가 기대와 일치했다(production 기본값, 포트 `127.0.0.1`, 일회용 키로 기동).
 
 ### RQ-026 영속 보관과 자동 복구
 
@@ -984,9 +987,11 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
 - [x] PostgreSQL에 연결할 수 없으면 준비 상태 확인이 실패한다.
 - [x] 발송 중지 상태가 헬스 응답이나 로그에 드러난다.
 - [x] 차단기가 `open`이면 헬스 응답에 상태, `open_until`, 마지막 사유가 있다. (`open_until`과 마지막 사유는 유효한 Bearer가 있을 때만 반환한다. 인증 없는 응답은 상태만 반환한다.)
+- [x] 차단기가 `closed`인데 발송이 멈춘 경우(점유 루프 정지, 적체)를 운영자 토큰 응답의 `queue.oldestDueAgeSeconds`·`worker.lastPollAgeSeconds`로 확인할 수 있다. (`/health/ready`의 200/503에는 반영하지 않는다. 호출처 API 키로는 반환하지 않는다.)
 
 **판정 근거:**
 
+- `http/health-ops.integration-spec.ts`(PostgreSQL, 5건): 운영자 토큰이 `queue`·`worker`·`filePoller`를 받음(작업 ID·수신자 없음), 호출처 키·인증 없음에는 없음, 운영자 토큰은 업무 endpoint에서 401, 미래 작업은 적체에서 제외, 적체가 10000건을 넘으면 `dueCount`는 10000에서 멈추고 `truncated`. `worker/worker-resilience.integration-spec.ts`: `lastPollAt`이 빈 큐에서도 갱신, `claimFailureStreak`, `pollLoopCrashed`. 한계: 정지·적체 경보 기준값은 정하지 않았고 장시간 부하에서 측정하지 않았다. 파일 폴러의 `lastPollAt`·`lastPollOk`는 응답에 연결했으나 폴러가 켜진 상태의 응답은 테스트하지 않았다.
 - `http/rest-intake.integration-spec.ts`: 유효한 Bearer에만 `eventFeed`(RQ-017) 추가. DB 연결 불가 시 `ready` 503과 `unknown`, 인증 없음은 상태만, 유효한 Bearer는 `openUntil`·`lastReason`, `closed`와 `half_open`의 값, 틀린 `Authorization`은 401. Worker는 차단기가 닫히지 않은 결과에 경고 로그를 남긴다(`breaker_not_closed`). 테스트로 단언하지는 않았다.
 
 ### RQ-032 호출처별 발송 할당
@@ -1019,6 +1024,7 @@ ADR-0001~0008은 모두 승인됐다(2026-11-23).
   - `0002` 적용 뒤에도 이전 버전 인스턴스가 돌면 `caller_id` 없이 기록한 시도는 사용량에 잡히지 않는다(롤링 배포 구간의 과소 계수).
   - 한 메시지의 수신자가 많아도 1로 센다. 수신자 수 기준 할당은 지원하지 않는다.
   - 인스턴스가 여럿인 동시 점유는 단일 프로세스 안의 병렬 `claim`으로 확인했다. 실제 다중 프로세스·장시간 부하 배포는 확인하지 않았다.
+  - 할당이 있는 호출처가 있는데 `MAILO_RECORD_RETENTION_SECONDS`가 86400 미만이면 Worker 기동을 거부한다(`worker/worker.spec.ts`). 사용량이 최근 24시간의 `mail_attempts`를 세는데 기록이 먼저 지워지면 할당이 느슨해지기 때문이다.
   - 실제 Gmail 일일 한도와 이 할당의 관계는 확인하지 않았다. 호출처 할당의 합이 계정 한도를 넘지 않는다는 보장은 없다(한도 초과는 차단기가 처리한다).
 
 ## 확정한 항목

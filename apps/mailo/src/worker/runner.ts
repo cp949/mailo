@@ -3,7 +3,7 @@
  * `createWorker`는 순수 의존성만 받는다. 이 파일이 환경 변수에서 읽은 값을 Worker 옵션·SMTP 발송기 설정으로 바꾼다.
  */
 import type pg from "pg";
-import type { AppConfig } from "../config/index.js";
+import { workerDrainTimeoutMs, type AppConfig } from "../config/index.js";
 import type { BodyCipher } from "../queue/index.js";
 import {
   checkSmtpTimeouts,
@@ -15,7 +15,7 @@ import {
 import type { Clock } from "./clock.js";
 import { createJsonLogger, type WorkerLogger } from "./logger.js";
 import type { WorkerOptions } from "./options.js";
-import { createWorker, type WorkerHandle } from "./worker.js";
+import { createWorker, type WorkerDeps, type WorkerHandle } from "./worker.js";
 
 export interface WorkerRunnerDeps {
   pool: pg.Pool;
@@ -29,6 +29,8 @@ export interface WorkerRunnerDeps {
   logger?: WorkerLogger;
   /** 호출처별 24시간 발송 할당(호출처 ID -> 건수, RQ-032). 생략하면 모든 호출처가 무제한이다. */
   callerQuotas?: ReadonlyMap<string, number>;
+  /** 점유 루프가 예외로 끝났을 때 부른다(`WorkerDeps.onFatal`). */
+  onFatal?: WorkerDeps["onFatal"];
 }
 
 /**
@@ -54,7 +56,7 @@ export function toWorkerOptions(
       bodyGraceSeconds: w.retention.bodyGraceSeconds,
       recordSeconds: w.retention.recordRetentionSeconds,
     },
-    drainTimeoutMs: Math.max(1_000, (w.lease.seconds - 10) * 1000),
+    drainTimeoutMs: workerDrainTimeoutMs(w.lease.seconds),
     poisonMaxAttempts: 3,
     ...(callerQuotas && callerQuotas.size > 0 && { callerQuotas }),
   };
@@ -107,6 +109,7 @@ export function createWorkerRunner(deps: WorkerRunnerDeps): WorkerHandle {
       bodyCipher: deps.bodyCipher,
       defaultFrom: config.smtp.defaultFrom,
       ...(deps.clock && { clock: deps.clock }),
+      ...(deps.onFatal && { onFatal: deps.onFatal }),
       logger:
         deps.logger ??
         createJsonLogger((line) => void process.stdout.write(`${line}\n`)),

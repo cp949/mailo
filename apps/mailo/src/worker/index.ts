@@ -1,5 +1,5 @@
 export { createWorker } from "./worker.js";
-export type { WorkerDeps, WorkerHandle } from "./worker.js";
+export type { WorkerDeps, WorkerHandle, WorkerStatus } from "./worker.js";
 export { toOutcome } from "./worker.js";
 export {
   WorkerOptionsError,

@@ -2,7 +2,11 @@ import type pg from "pg";
 import { withTransaction } from "../db/index.js";
 import { recordJobEvent, type JobEventType } from "../events/index.js";
 import type { JsonValue } from "../events/index.js";
-import { recordAccountFailure, recordAccountOk } from "./circuit-breaker.js";
+import {
+  getBreakerState,
+  recordAccountFailure,
+  recordAccountOk,
+} from "./circuit-breaker.js";
 import { breakerInitialWait, retryDelaySeconds } from "./retry-policy.js";
 import type {
   AccountErrorReason,
@@ -61,6 +65,8 @@ const JOB_COLUMNS = `id, caller_id, idempotency_key, attempts, account_trips,
  * - 차단기가 open이거나 이 실패로 open이 되면 계정 단위 장애다. 1·2를 건너뛰고 시도 횟수에 넣지 않는다.
  *   `MAIL FROM` 이후 단계의 오류가 차단기를 `maxAccountTrips`회 연 작업에서 같은 응답으로 다시 나오면 FAILED다(결정 4).
  *   단 한도 사유(DAILY_LIMIT·RATE_LIMIT)는 `account_trips`와 이 판정에서 뺀다. 작업 잘못이 아니라 계정 한도다.
+ *   반복으로 판정되면 `recordAccountFailure`를 부르지 않는다. 대표 작업이면 `recordAccountOk`로 차단기를 닫고,
+ *   아니면 차단기를 건드리지 않는다(구현 중 확정 9). 시도 횟수는 실패 시점의 차단기 상태가 closed일 때만 센다.
  * - 차단기가 closed로 남으면 차단기를 열지 못한 작업별 오류다. 시도 횟수에 넣고 일반 backoff로 재시도하며
  *   최대 시도에 닿으면 FAILED(`ATTEMPTS_EXHAUSTED`)다.
  */
@@ -136,51 +142,60 @@ async function applyOutcome(
       job.account_trips >= deps.breaker.maxAccountTrips &&
       sameResponse;
 
-    const result = await recordAccountFailure(client, deps.breaker, {
-      jobId: job.id,
-      reason: outcome.reason,
-    });
-    breaker = result.snapshot;
+    if (repeated) {
+      // 이 작업의 문제로 보고 끝낸다. 차단기를 다시 열지 않는다. recordAccountFailure를 먼저 부르면 대표 작업의 실패가
+      // 차단기를 되열고 대기가 2배가 된다(일반 PERMANENT가 recordAccountOk를 부르는 것과 어긋난다).
+      // 상태 확인은 행을 잠그지 않는 SELECT다. 잠금 순서(작업 행 -> 차단기 행)를 지킨다.
+      const current = await getBreakerState(client, deps.breaker);
+      const isProbe =
+        current.state === "half_open" && current.probeJobId === job.id;
+      breaker = isProbe
+        ? ((await recordAccountOk(client, deps.breaker, { jobId: job.id })) ??
+          current)
+        : current;
+      // 시도 횟수는 실패 시점의 차단기 상태로 정한다(구현 중 확정 8). closed였으면 작업별 오류로 센다.
+      counted = current.state === "closed";
+      attemptsAfter = job.attempts + (counted ? 1 : 0);
+      target = "FAILED";
+      failureReason = "ACCOUNT_REPEATED";
+    } else {
+      const result = await recordAccountFailure(client, deps.breaker, {
+        jobId: job.id,
+        reason: outcome.reason,
+      });
+      breaker = result.snapshot;
 
-    if (breaker.state === "closed") {
-      // 차단기를 열지 못했고 실패 시점에도 closed였다. 계정 단위 장애로 볼 근거가 없으므로 작업별 오류로 처리한다.
-      counted = true;
-      attemptsAfter = job.attempts + 1;
-      if (repeated) {
-        // 이미 차단기를 3회 연 작업이 같은 응답을 또 받았다. 차단기 상태와 무관하게 이 작업의 문제로 본다.
-        target = "FAILED";
-        failureReason = "ACCOUNT_REPEATED";
-      } else {
+      if (breaker.state === "closed") {
+        // 차단기를 열지 못했고 실패 시점에도 closed였다. 계정 단위 장애로 볼 근거가 없으므로 작업별 오류로 처리한다.
+        counted = true;
+        attemptsAfter = job.attempts + 1;
         ({ target, failureReason, nextAttemptAt } = retryOrFinish(
           job,
           attemptsAfter,
           deps,
         ));
-      }
-    } else {
-      if (outcome.afterMailFrom) {
-        if (result.tripped && !limitReason) accountTrips += 1;
-        if (!limitReason)
-          lastAccountResponse = response === "" ? null : response;
-      }
-
-      // 재개 시각. 차단기가 open이면 open_until, 아니면(half_open의 늦은 실패) 사유별 초기 대기 뒤다.
-      const resume =
-        breaker.state === "open" && breaker.openUntil
-          ? breaker.openUntil
-          : new Date(
-              dbNow.getTime() +
-                breakerInitialWait(deps.breaker, outcome.reason) * 1000,
-            );
-      if (repeated) {
-        target = "FAILED";
-        failureReason = "ACCOUNT_REPEATED";
-      } else if (afterExpiry(resume)) {
-        target = "EXPIRED";
-        failureReason = "EXPIRED";
       } else {
-        target = "RETRY_WAIT";
-        nextAttemptAt = resume;
+        if (outcome.afterMailFrom) {
+          if (result.tripped && !limitReason) accountTrips += 1;
+          if (!limitReason)
+            lastAccountResponse = response === "" ? null : response;
+        }
+
+        // 재개 시각. 차단기가 open이면 open_until, 아니면(half_open의 늦은 실패) 사유별 초기 대기 뒤다.
+        const resume =
+          breaker.state === "open" && breaker.openUntil
+            ? breaker.openUntil
+            : new Date(
+                dbNow.getTime() +
+                  breakerInitialWait(deps.breaker, outcome.reason) * 1000,
+              );
+        if (afterExpiry(resume)) {
+          target = "EXPIRED";
+          failureReason = "EXPIRED";
+        } else {
+          target = "RETRY_WAIT";
+          nextAttemptAt = resume;
+        }
       }
     }
   } else {

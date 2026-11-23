@@ -53,6 +53,26 @@ export interface WorkerDeps {
   /** [0, 1) 난수. 재시도 jitter와 폴링 간격에 쓴다. 생략하면 Math.random이다. */
   random?: () => number;
   logger?: WorkerLogger;
+  /**
+   * 점유 루프가 예상 못한 예외로 끝났을 때 한 번 부른다. 루프는 되살리지 않는다.
+   * 호출자가 정상 종료 경로(`pause`·`stop`)를 거쳐 프로세스를 끝내 재시작을 유도한다.
+   * 즉시 exit하면 진행 중 SMTP 전송이 끊겨 중복 발송이 생긴다.
+   */
+  onFatal?: (reason: "poll_loop_crashed") => void;
+}
+
+/** 헬스가 읽는 Worker 상태. 메일 본문·수신자·작업 ID는 담지 않는다. */
+export interface WorkerStatus {
+  state: "idle" | "running" | "paused" | "stopping" | "stopped";
+  inFlight: number;
+  /** 점유 루프가 마지막으로 한 바퀴를 시작한 시각. 큐가 비어 있어도 갱신된다. 아직 안 돌았으면 null. */
+  lastPollAt: Date | null;
+  /** `lastPollAt`부터 지난 초(단조 시계). */
+  lastPollAgeSeconds: number | null;
+  /** 점유(`claim`)가 연속으로 실패한 횟수. 성공하면 0이다. */
+  claimFailureStreak: number;
+  /** 점유 루프가 예외로 끝났다. 이 상태에서는 더 점유하지 않는다. */
+  pollLoopCrashed: boolean;
 }
 
 /** `src/worker-port.ts`의 `WorkerRunner`와 같은 모양이다. */
@@ -66,13 +86,19 @@ export interface WorkerHandle {
   pause(): Promise<void>;
   /** `pause()` 뒤 진행 중 전송을 기다린다. 대기 시간 상한(`drainTimeoutMs`)이 지나면 포기하고 resolve한다. */
   stop(): Promise<void>;
+  /** 현재 상태 스냅샷. 쿼리를 보내지 않는다. */
+  status(): WorkerStatus;
 }
 
 const SWEEP_BATCH = 500;
 // 배치가 계속 가득 차는 경우에도 한 주기에서 이 횟수까지만 돈다. 다음 주기가 이어받는다.
 const MAX_BATCHES_PER_CYCLE = 20;
 const MAX_POLL_ERROR_BACKOFF_MS = 30_000;
-const COMPLETE_RETRY_DELAYS_MS = [200, 800] as const;
+// 결과 기록 재시도: 200ms부터 2배씩, 간격 상한 5초, ±20% jitter. 끝나는 시각은 lease 잔여 시간이 정한다.
+const COMPLETE_RETRY_BASE_MS = 200;
+const COMPLETE_RETRY_MAX_MS = 5_000;
+// lease 만료 전에 기록을 마치기 위한 여유(smtp의 DEFAULT_LEASE_MARGIN_MS와 같다).
+const COMPLETE_LEASE_MARGIN_MS = 10_000;
 
 /** Mailo 내부 오류로 처리하지 못한 작업. 원문 없이 코드만 담는다. */
 class JobDataError extends Error {
@@ -114,6 +140,11 @@ export function createWorker(
   let quotaBlocked = new Set<string>();
   let wakeUp: (() => void) | undefined;
   let pollLoop: Promise<void> | undefined;
+  let lastPollMono: number | undefined;
+  let lastPollWall: number | undefined;
+  let claimFailureStreak = 0;
+  let pollLoopCrashed = false;
+  let pollLoopDone = false;
   let maintenanceLoop: Promise<void> | undefined;
   let stopPromise: Promise<void> | undefined;
   let pausePromise: Promise<void> | undefined;
@@ -173,8 +204,9 @@ export function createWorker(
   }
 
   async function runPollLoop(): Promise<void> {
-    let errorStreak = 0;
     while (!pauseController.signal.aborted) {
+      lastPollMono = clock.now();
+      lastPollWall = Date.now();
       const free = options.concurrency - inFlight.size;
       if (free <= 0) {
         // 슬롯이 하나 비면 깨어난다.
@@ -182,6 +214,8 @@ export function createWorker(
         continue;
       }
       let claimed: ClaimedJob[];
+      // lease는 claim 쿼리 안에서 시작하므로 호출 전 시각이 가장 이른 기준이다(단조 시계).
+      const claimStartedAt = clock.now();
       try {
         claimed = await claim(pool, {
           leaseSeconds: options.leaseSeconds,
@@ -192,29 +226,38 @@ export function createWorker(
             onQuotaBlocked: reportQuotaBlocked,
           }),
         });
-        errorStreak = 0;
+        claimFailureStreak = 0;
       } catch (error) {
-        errorStreak += 1;
+        claimFailureStreak += 1;
         log.error("claim_failed", {
           error: describeError(error),
-          streak: errorStreak,
+          streak: claimFailureStreak,
         });
         await waitForWork(
           Math.min(
             MAX_POLL_ERROR_BACKOFF_MS,
-            options.pollMs * 2 ** Math.min(errorStreak, 10),
+            options.pollMs * 2 ** Math.min(claimFailureStreak, 10),
           ),
         );
         continue;
       }
+      // drain 상한이 지나 전송을 끊은 뒤에 늦게 돌아온 점유는 처리하지 않는다. lease 만료 뒤 복구가 다룬다.
+      if (sendController.signal.aborted) {
+        if (claimed.length > 0)
+          log.warn("claim_after_drain_timeout", { count: claimed.length });
+        return;
+      }
       // 점유한 작업은 종료 신호가 와도 끝까지 처리한다. 이미 SENDING이고 lease가 걸려 있다.
-      for (const job of claimed) track(processJob(job));
+      for (const job of claimed) track(processJob(job, claimStartedAt));
       // 요청한 만큼 가득 점유했으면 바로 다음 점유를 시도하고, 모자라면 쉰다.
       if (claimed.length < free) await waitForWork(pollDelay());
     }
   }
 
-  async function processJob(job: ClaimedJob): Promise<void> {
+  async function processJob(
+    job: ClaimedJob,
+    claimStartedAt: number,
+  ): Promise<void> {
     let outcome: AttemptOutcome;
     try {
       const message = await buildMessage(job);
@@ -235,7 +278,7 @@ export function createWorker(
         attempt: job.attempts + 1,
       });
     }
-    await record(job, outcome);
+    await record(job, outcome, claimStartedAt);
   }
 
   async function buildMessage(job: ClaimedJob): Promise<SmtpMessage> {
@@ -290,11 +333,21 @@ export function createWorker(
     };
   }
 
+  /**
+   * 전송 결과를 기록한다. 기록에 실패하면 lease가 만료돼 중복 발송이 되므로 lease가 끝나기 전까지 backoff로 재시도한다.
+   * 마감은 `claim` 호출 전 시각 + lease - 여유(단조 시계)다. lease가 5초 같이 짧으면 여유를 lease의 절반으로 줄인다.
+   * 마감이 지났거나 drain 시간 초과로 전송을 끊었으면 포기한다. 첫 시도는 항상 한다.
+   */
   async function record(
     job: ClaimedJob,
     outcome: AttemptOutcome,
+    claimStartedAt: number,
   ): Promise<void> {
-    // 전송은 끝났다. 기록에 실패하면 lease가 만료돼 중복 발송이 되므로 짧게 재시도한다.
+    const leaseMs = options.leaseSeconds * 1000;
+    const deadline =
+      claimStartedAt +
+      leaseMs -
+      Math.min(COMPLETE_LEASE_MARGIN_MS, leaseMs / 2);
     for (let i = 0; ; i++) {
       try {
         const result = await completeAttempt(
@@ -332,14 +385,21 @@ export function createWorker(
         }
         return;
       } catch (error) {
-        const delay = COMPLETE_RETRY_DELAYS_MS[i];
+        const base = Math.min(
+          COMPLETE_RETRY_MAX_MS,
+          COMPLETE_RETRY_BASE_MS * 2 ** Math.min(i, 10),
+        );
+        const delay = Math.round(base * (1 + 0.2 * (2 * random() - 1)));
+        const retry =
+          !sendController.signal.aborted && clock.now() + delay < deadline;
         log.error("complete_failed", {
           jobId: job.id,
           error: describeError(error),
-          retry: delay !== undefined,
+          attempt: i + 1,
+          retry,
         });
-        if (delay === undefined) return; // lease 복구가 이어받는다.
-        await clock.sleep(delay);
+        if (!retry) return; // lease 복구가 이어받는다.
+        await clock.sleep(delay, sendController.signal);
       }
     }
   }
@@ -405,9 +465,15 @@ export function createWorker(
     if (state === "running") return;
     state = "running";
     // 루프 안에서 오류를 모두 처리하지만, 예상 못한 예외가 프로세스를 죽이지 않게 마지막 방어선을 둔다.
-    pollLoop = runPollLoop().catch((error: unknown) =>
-      log.error("poll_loop_crashed", { error: describeError(error) }),
-    );
+    pollLoop = runPollLoop()
+      .catch((error: unknown) => {
+        pollLoopCrashed = true;
+        log.error("poll_loop_crashed", { error: describeError(error) });
+        deps.onFatal?.("poll_loop_crashed");
+      })
+      .finally(() => {
+        pollLoopDone = true;
+      });
     maintenanceLoop = runMaintenanceLoop().catch((error: unknown) =>
       log.error("maintenance_loop_crashed", { error: describeError(error) }),
     );
@@ -429,7 +495,14 @@ export function createWorker(
         .sleep(options.drainTimeoutMs, drainTimerStop.signal)
         .then(() => true);
       // 진행 중이던 점유 호출이 끝나 새 작업이 `inFlight`에 들어간 뒤에 resolve한다.
-      await pollLoop;
+      // DB가 응답하지 않으면 점유 호출이 오래 걸릴 수 있다. drain 상한까지만 기다려 종료가 멈추지 않게 한다.
+      // 늦게 돌아온 점유는 drain 시간 초과 뒤라면 `runPollLoop`가 버린다.
+      const timedOut = await Promise.race([
+        pollLoop!.then(() => false),
+        drainDeadline.then(() => true),
+      ]);
+      if (timedOut)
+        log.warn("pause_timeout", { drainTimeoutMs: options.drainTimeoutMs });
     })();
     return pausePromise;
   }
@@ -454,7 +527,8 @@ export function createWorker(
       const timedOut = await Promise.race([drained, drainDeadline!]);
       drainTimerStop.abort();
       // 시간이 먼저 지났어도 그 사이 전송이 모두 끝났으면 정상 종료다.
-      const finished = !timedOut || inFlight.size === 0;
+      // 점유 호출이 끝나지 않은 채 시간이 지났어도 미완료로 본다. 늦게 돌아온 점유를 버리게 전송 취소 신호를 올린다.
+      const finished = (!timedOut || inFlight.size === 0) && pollLoopDone;
 
       if (!finished) {
         log.warn("drain_timeout", {
@@ -470,7 +544,21 @@ export function createWorker(
     return stopPromise;
   }
 
-  return { start, pause, stop };
+  function status(): WorkerStatus {
+    return {
+      state,
+      inFlight: inFlight.size,
+      lastPollAt: lastPollWall === undefined ? null : new Date(lastPollWall),
+      lastPollAgeSeconds:
+        lastPollMono === undefined
+          ? null
+          : Math.max(0, Math.round((clock.now() - lastPollMono) / 1000)),
+      claimFailureStreak,
+      pollLoopCrashed,
+    };
+  }
+
+  return { start, pause, stop, status };
 }
 
 // --- 변환 ---------------------------------------------------------------------

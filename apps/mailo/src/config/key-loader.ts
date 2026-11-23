@@ -69,7 +69,8 @@ export function loadKeyRing(
     }
     versions.add(Number(digits));
   }
-  const production = reader.raw("NODE_ENV")?.trim() === "production";
+  // NODE_ENV가 development·test로 명시되지 않으면 production과 같이 검사한다(fail closed).
+  const production = reader.strictEnv();
 
   const keys = new Map<number, Buffer>();
   for (const version of [...versions].sort((a, b) => a - b)) {

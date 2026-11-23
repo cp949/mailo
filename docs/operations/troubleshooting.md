@@ -5,7 +5,7 @@
 
 ## 결론
 
-- 발송이 멈췄으면 먼저 인증된 `GET /health/ready`의 `circuitBreaker`를 본다. `open`·`half_open`이면 SMTP 계정 단위 장애다.
+- 발송이 멈췄으면 먼저 인증된 `GET /health/ready`의 `circuitBreaker`를 본다. `open`·`half_open`이면 SMTP 계정 단위 장애다. 차단기가 `closed`인데 쌓이면 운영자 토큰(`MAILO_OPS_TOKEN`)으로 호출해 `queue.oldestDueAgeSeconds`와 `worker.lastPollAgeSeconds`를 본다(`deployment.md` "헬스"). 둘 다 크면 점유 루프가 멈춘 것이다.
 - 차단기가 `closed`인데 작업이 쌓이면 호출처 할당(`caller_quota_exceeded`), lease 회수(`LEASE_EXPIRED`), DB 오류(`claim_failed`)를 순서대로 본다.
 - 파일이 입력 폴더에서 사라지지 않으면 `file_poll` 로그의 `unreadable`을 본다. 권한 문제다.
 - 파일 거부는 이벤트의 `reasonCode`로 원인을 고른다. 원본은 삭제되므로 호출처가 보유한 원본과 `fileName`·`sha256`을 대조한다.
@@ -87,7 +87,9 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | `lease_lost` (warn, `jobId`, `classification`) | Worker 로그 | 전송은 끝났지만 그 사이 lease가 회수돼 결과를 버렸다 |
 | `send_aborted` (warn, `jobId`) | Worker 로그 | 종료 대기(drain) 시간 초과로 전송을 끊었다. 결과는 기록하지 않는다 |
 | `drain_timeout` (warn, `inFlight`, `drainTimeoutMs`) | Worker 로그 | 종료 신호(`worker_paused`) 뒤 `lease − 10초` 안에 진행 중 전송이 끝나지 않았다. lease는 풀지 않고 회수에 맡긴다 |
-| `complete_failed` (error, `jobId`, `retry`) | Worker 로그 | 전송 뒤 결과 기록이 DB 오류로 실패했다. 짧게 재시도한 뒤 포기하면 lease 회수가 이어받는다 |
+| `complete_failed` (error, `jobId`, `attempt`, `retry`) | Worker 로그 | 전송 뒤 결과 기록이 DB 오류로 실패했다. lease 마감(점유 전 시각 + lease − 10초)까지 backoff(200ms에서 2배, 5초 상한)로 재시도하고, `retry`가 false이면 포기한 것이라 lease 회수가 이어받는다 |
+| `pause_timeout` (warn, `drainTimeoutMs`) | Worker 로그 | 종료 신호 뒤 점유 호출이 drain 상한 안에 끝나지 않았다(DB 무응답). 기다리지 않고 종료를 계속한다 |
+| `claim_after_drain_timeout` (warn, `count`) | Worker 로그 | drain 상한 뒤 늦게 돌아온 점유 결과를 처리하지 않았다. 그 작업은 lease 만료 뒤 회수된다 |
 
 ```sql
 SELECT job_id, started_at, finished_at FROM mail_attempts
@@ -98,7 +100,7 @@ SELECT job_id, started_at, finished_at FROM mail_attempts
 
 - 프로세스가 죽었다(OOM, SIGKILL, 호스트 재시작). 재시작 이후 자동 복구된다. 반복되면 메모리 한도와 종료 로그를 본다.
 - `stop_grace_period`가 lease보다 짧다. 재배포마다 진행 중 전송이 lease 회수 대상이 된다. `stop_grace_period`를 lease 이상으로 올린다(`deployment.md`).
-- DB 지연으로 `complete_failed`가 반복된다. DB 상태와 풀 크기(`MAILO_DB_POOL_MAX`)를 본다.
+- DB 지연으로 `complete_failed`가 반복된다. DB 상태와 풀 크기(`MAILO_DB_POOL_MAX`, 기동 때 `MAILO_WORKER_CONCURRENCY` + 4 이상으로 검사한다)를 본다. 오류가 `Query read timeout`이면 DB 응답이 `MAILO_DB_QUERY_TIMEOUT_MS`(기본 35초) 안에 오지 않은 것이다.
 - 영향: SMTP 서버가 이미 수락한 메일이 재전송될 수 있다(RQ-013). 사용처는 같은 메일이 두 번 가는 것을 감수한다.
 - 점유 후 복호화 실패 같은 Mailo 내부 오류는 lease 문제가 아니다. `job_internal_error`(error 수준, 필드 `jobId`, `error`, `attempt`)를 본다. 3번째 시도에서 `FAILED`가 된다. `error=BodyCipherError:UNKNOWN_KEY_VERSION`이면 DB 본문 키의 이전 버전이 없다(`key-management.md`).
 
@@ -204,6 +206,8 @@ SELECT gid, prepared FROM pg_prepared_xacts;   -- 끝나지 않은 prepared tran
 - REST 등록·조회는 503(`service-unavailable`)이다. 사용처는 같은 Key로 재시도한다(ADR-0005 결정 5).
 - Worker는 `claim_failed`(error, `error`, `streak`)를 남기고 간격을 늘려(최대 30초) 다시 시도한다. DB가 돌아오면 자동 재개된다.
 - 풀의 유휴 연결 오류는 `idle client error name=... code=...`로 남는다.
+- DB 시간제한 오류: SQLSTATE `57014`(`statement_timeout`), `55P03`(`lock_timeout`), `25P03`(`idle_in_transaction_session_timeout`으로 연결이 끊김), 메시지 `Query read timeout`(`query_timeout`). 값은 `MAILO_DB_*_TIMEOUT_MS`이고 기본값과 조정 기준은 `deployment.md` "DB 시간제한과 장애 동작"이다.
+- 점유 루프가 예외로 죽으면 `poll_loop_crashed`(error) 뒤 `worker_fatal reason=poll_loop_crashed exitCode=70`이 stderr에 남고, 종료 순서(pause → drain → 풀 닫기)를 거쳐 종료 코드 70으로 끝난다. 컨테이너는 재시작한다. 반복되면 `poll_loop_crashed`의 `error` 이름을 본다.
 - 파일 채널은 파일과 무관한 오류(`file_ingest_failed`)가 3번 연속이면 그 폴링을 접고 다음 간격에 다시 시도한다. 폴더 목록 읽기 실패(`file_poll_failed`)는 이 횟수에 세지 않는다(ADR-0004 구현 중 확정 29).
 
 ## 유지 작업 로그

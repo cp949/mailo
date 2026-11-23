@@ -15,6 +15,7 @@ ADR-0005(Key 필수와 지문)와 ADR-0007(계정 상태 오류와 차단기) �
 - 결정 7의 시도 횟수 계산과 판정 순서: 계정 상태 오류에 한해 ADR-0007 결정 2가 대체한다.
 - 결정 7의 주기 sweep: ADR-0007 결정 6이 차단기 `open` 중에도 멈추지 않도록 보강한다.
 - 2026-11-23 코드 리뷰 반영: 결정 12의 "새 점유를 멈춘다" 시점과 종료 순서는 구현 중 확정 6이 정한다. 구현 중 확정 5의 회수 시점 서술은 구현 중 확정 7이 정정한다. 결정 문구는 그대로 둔다.
+- 2026-11-23 코드 리뷰 반영(2): DB 시간제한, 결과 기록 재시도, `pause()`의 대기 상한, 풀 크기 검사는 구현 중 확정 8이, `stop_grace_period` 검사는 구현 중 확정 9가 정한다(결정 6·12 보완). 구현 중 확정 6의 "검사하는 코드는 없다"는 구현 중 확정 9가 정정한다. 결정 문구는 그대로 둔다.
 
 ## 배경
 
@@ -135,13 +136,25 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
    - HTTP 서버 시간제한은 요청 수신 30초(`requestTimeout`), 헤더 수신 30초(`headersTimeout`)다. 설정 변수 없이 `src/app.module.ts`의 상수 `DEFAULT_HTTP_TIMEOUTS`다. Node는 `server.close()`를 부른 뒤 이 시간제한 점검을 멈춘다(실측: 닫기 뒤 느린 요청이 끝까지 남아 `app.close()`가 끝나지 않았다). 그래서 종료 훅이 유휴 연결을 닫고(`closeIdleConnections`) `requestTimeout`이 지나면 남은 연결을 끊는다(`closeAllConnections`).
    - drain 상한이 지나도 진행 중 작업의 lease를 풀지 않는다. 남은 전송을 끊고 결과를 기록하지 않으며, 다음 `claim`의 lease 만료 회수가 이어받는다(중복 발송 가능, RQ-013). 이 동작은 이전부터 같았고 이제 테스트가 고정한다(`worker.integration-spec.ts`).
    - `stop_grace_period`는 drain 상한 + 10초 이상이어야 한다. 기본값은 lease 120초, drain 상한 110초, `stop_grace_period` 150초이므로 충족한다(여유 40초).
-   - drain 상한은 SMTP 시간제한(연결·greeting·소켓, 기본 10·10·30초)의 최장값과 HTTP `requestTimeout` 30초 중 긴 쪽보다 길어야 한다. 한 건 전체 마감(`totalMs`, 기본 90초)은 기동 검증이 `totalMs + 10초 ≤ lease`로 강제하므로 `totalMs ≤ lease − 10초`, 곧 drain 상한 이하다. 연결·greeting·소켓은 `totalMs` 안에 있다. HTTP 30초는 lease가 40초 이상이면 drain 상한 안에 들어간다. 그보다 짧은 lease에서는 HTTP 닫기가 drain 상한을 넘을 수 있지만 둘은 병행하므로 `stop_grace_period`를 넘기는 쪽은 더 긴 하나뿐이다. 이 관계는 기재만 하고, `stop_grace_period`를 검사하는 코드는 없다(`docs/operations/deployment.md`).
+   - drain 상한은 SMTP 시간제한(연결·greeting·소켓, 기본 10·10·30초)의 최장값과 HTTP `requestTimeout` 30초 중 긴 쪽보다 길어야 한다. 한 건 전체 마감(`totalMs`, 기본 90초)은 기동 검증이 `totalMs + 10초 ≤ lease`로 강제하므로 `totalMs ≤ lease − 10초`, 곧 drain 상한 이하다. 연결·greeting·소켓은 `totalMs` 안에 있다. HTTP 30초는 lease가 40초 이상이면 drain 상한 안에 들어간다. 그보다 짧은 lease에서는 HTTP 닫기가 drain 상한을 넘을 수 있지만 둘은 병행하므로 `stop_grace_period`를 넘기는 쪽은 더 긴 하나뿐이다. 이 관계는 기재만 하고, `stop_grace_period`를 검사하는 코드는 없다(`docs/operations/deployment.md`). [정정됨: 구현 중 확정 9. 이제 `MAILO_STOP_GRACE_PERIOD`가 설정된 경우 앱이 검사한다.]
    - 종료 중 SIGKILL(`stop_grace_period` 초과 포함)은 중복 발송 1회를 만들 수 있다. at-least-once 범위다(구현 중 확정 5).
    - 검증: `test/worker/worker.integration-spec.ts`, `test/http/lifecycle.integration-spec.ts`. 시간제한은 테스트에서 줄여 확인했고 컨테이너 SIGTERM은 이 변경 뒤 다시 실행하지 않았다.
 7. **lease 회수 경로 정정(구현 중 확정 5, 2026-11-23 코드 리뷰).** 구현 중 확정 5의 "회수는 주기 sweep(기본 60초)에서 한다"는 부정확하다. 회수는 두 곳에서 일어난다.
    - `claim()` 앞단의 `recoverExpiredLeases`(`src/queue/claim.ts`). 점유 폴링마다 실행하므로 폴링 간격(기본 1초)으로 돈다.
    - 유지보수 루프(`MAILO_MAINTENANCE_INTERVAL_SECONDS`, 기본 60초). 점유가 멈춘 상태(차단기 `open` 등)에서도 회수가 돌게 한다.
    - 관찰한 100초와 95초의 대부분은 `LEASE_EXPIRED` 시도 뒤의 재시도 백오프(첫 재시도 기본 60초 ±20%)이고 회수 지연이 아니다(코드 읽기 결과이며 시점별 로그로 분리해 확인하지 않았다).
+8. **DB 시간제한, 결과 기록 재시도, `pause()` 대기 상한, 풀 크기(결정 6·9·12 보완, 2026-11-23 코드 리뷰, `src/db/`·`src/worker/worker.ts`·`src/config/load-config.ts`).** 결정 문구는 바꾸지 않는다.
+   - **문제.** 연결이 RST 없이 끊기면 `claim`·`completeAttempt`가 응답을 기다리며 멈춘다. `pause()`가 이 호출을 기다리므로 SIGTERM 뒤 종료가 `stop_grace_period`를 넘겨 SIGKILL이 되고 진행 중 전송이 재발송된다. 멈춘 트랜잭션은 차단기 행 잠금과 xmin을 잡아 이벤트 피드도 멈춘다. 이전에는 시간제한이 없었다. 결과 기록 재시도는 3회(200ms, 800ms)였고 풀 크기와 동시 전송 수의 관계를 검사하지 않았다.
+   - **시간제한(추정 기본값, 환경 변수로 변경).** 앱 풀 연결에 `statement_timeout` 30초, `lock_timeout` 10초, `idle_in_transaction_session_timeout` 60초를 시작 매개변수로, pg `query_timeout` 35초와 keepAlive(첫 탐침 10초)를 건다. `query_timeout`은 `statement_timeout`보다 길어야 한다. 서버가 먼저 취소해 연결이 살아남게 하기 위해서다. 서버가 응답하지 않는 단절은 `query_timeout`이 끊는다. keepalive만으로는 감지에 수 분이 걸릴 수 있어(Linux 기본 75초 × 9회, 미측정) 실제 상한은 `query_timeout`이다.
+   - pg는 `query_timeout`이 지나도 연결을 닫지 않는다. `withTransaction`은 이 오류나 ROLLBACK 실패 때 연결을 풀에 돌려주지 않고 버린다(`pool.query`는 pg-pool이 버린다). 응답 없는 연결에 ROLLBACK을 보내면 같은 시간만큼 더 기다리기 때문이다.
+   - 마이그레이션 CLI는 `statement_timeout` 없이 `lock_timeout` 10초만 건다. 인스턴스 사이의 advisory lock 대기는 `lock_timeout = 0`으로 예외를 둔다. 정리 쿼리는 500건 배치라 30초 안에 끝난다고 가정했다(미측정).
+   - **`pause()` 상한.** 진행 중인 점유 호출을 drain 상한과 `Promise.race`로 묶는다. 상한이 지나면 `pause_timeout` 경고를 남기고 넘어간다. 그 뒤 늦게 돌아온 점유는 처리하지 않는다(`claim_after_drain_timeout`). 점유 호출이 끝나지 않았으면 `stop()`도 미완료(`drained: false`)로 보고 전송 취소 신호를 올린다. DB 풀 닫기는 5초까지만 기다린다.
+   - **결과 기록 재시도.** lease 마감(점유 호출 전 단조 시각 + lease − 10초, lease가 20초 이하이면 여유를 lease의 절반으로)까지 200ms에서 시작해 2배씩 늘리는 backoff(간격 5초 상한, ±20%)로 재시도한다. 첫 시도는 항상 한다. 마감이 지났거나 종료로 전송을 끊었으면 포기하고 lease 회수에 맡긴다. 시각은 단조 시계이고 작업 시각은 계속 DB `now()`다(결정 10).
+   - **풀 크기.** 기동 때 `MAILO_DB_POOL_MAX` ≥ `MAILO_WORKER_CONCURRENCY` + 4를 검사한다. 4는 점유, 주기 작업, HTTP·헬스·파일 폴러 몫의 추정이다. 기본값(풀 10, 동시 4)은 통과한다.
+   - 검증: `test/db/pool-timeout.integration-spec.ts`, `test/worker/worker-resilience.integration-spec.ts`, `test/config/load-config.spec.ts`. 한계: 실제 RST 없는 네트워크 단절은 재현하지 않았다.
+9. **`stop_grace_period` 검사와 compose 변수(결정 12 보완, 구현 중 확정 6 정정, 2026-11-23 코드 리뷰, `src/config/load-config.ts`·`docker-compose.yml`).** 결정 문구는 바꾸지 않는다.
+   - compose의 `stop_grace_period`는 `${MAILO_STOP_GRACE_PERIOD:-150s}`이고 같은 값이 앱의 환경 변수 `MAILO_STOP_GRACE_PERIOD`로 전달된다. 앱은 이 변수가 있을 때만 `max(1초, lease − 10초) + 10초` 이상인지 검사하고 어긋나면 기동을 거부한다. 앱이 오케스트레이터 설정을 알 수 없는 환경이 있어 변수가 없으면 검사하지 않는다. 표기는 compose와 같은 기간(`150s`, `2m30s`, `1h`)이다.
+   - 검증: `test/config/load-config.spec.ts`(경계값, 형식 오류, lease 변경), `test/config/compose-consistency.spec.ts`(compose 기본값과 `.env.example` lease의 관계). compose는 텍스트 패턴으로 검사한다. `docker compose config`로 기본값 `2m30s`와 `MAILO_STOP_GRACE_PERIOD=3m` 재정의가 `stop_grace_period`에 반영됨을 수동 확인했고, 실행 중 컨테이너의 `StopTimeout`은 확인하지 않았다.
 
 ## 검토한 대안
 

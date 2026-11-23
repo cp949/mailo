@@ -13,6 +13,9 @@ import { PG_POOL, POOL_OWNED } from "./db/index.js";
 import { FILE_POLLER, type FilePollerRunner } from "./file-channel/index.js";
 import { WORKER_RUNNER, type WorkerRunner } from "./worker-port.js";
 
+/** 종료 때 DB 풀을 닫는 대기 상한(ms). 추정값이다. drain 상한(lease - 10초) 뒤 남는 10초 안에 들어간다. */
+export const POOL_END_TIMEOUT_MS = 5_000;
+
 /** HTTP 시간제한 주입 토큰. 종료 때 HTTP 닫기를 기다리는 상한에 쓴다. */
 export const HTTP_TIMEOUTS = Symbol("HTTP_TIMEOUTS");
 
@@ -70,7 +73,25 @@ export class AppLifecycle
         await this.runner.stop();
       }
     } finally {
-      if (this.poolOwned) await this.pool.end();
+      if (this.poolOwned) await this.endPool();
+    }
+  }
+
+  /**
+   * 풀을 닫는다. `pool.end()`는 반납되지 않은 연결을 기다린다. 응답 없는 DB 연결이 남아 있으면
+   * 종료가 `stop_grace_period`를 넘겨 SIGKILL이 되므로 상한(`POOL_END_TIMEOUT_MS`)까지만 기다린다.
+   */
+  private async endPool(): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, POOL_END_TIMEOUT_MS);
+      timer.unref();
+    });
+    const ending = this.pool.end().catch(() => undefined);
+    try {
+      await Promise.race([ending, timeout]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 

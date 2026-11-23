@@ -20,6 +20,15 @@ export class EnvReader {
     return value === undefined || value === "" ? undefined : value;
   }
 
+  /**
+   * 공개 샘플 값 거부 같은 엄격 검사를 적용할지 본다. `NODE_ENV`가 `development`·`test`로 명시된 경우만 false다.
+   * 값이 없거나 알 수 없는 값이면 true다(fail closed). 로컬 시험은 `NODE_ENV=development`를 명시한다.
+   */
+  strictEnv(): boolean {
+    const value = this.raw("NODE_ENV")?.trim();
+    return value !== "development" && value !== "test";
+  }
+
   issue(message: string): void {
     this.issues.push(message);
   }

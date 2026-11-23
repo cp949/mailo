@@ -12,6 +12,7 @@
 - ADR-0003의 결정 2·3(코드 계열 규칙, 매핑 표)은 이 ADR의 결정 3이 메시지 오류에 한정해 이어받는다.
 - 이 ADR의 결정 2·6은 ADR-0002 결정 7의 판정 순서와 주기 sweep에 예외를 둔다.
 - 2026-11-23 코드 리뷰 반영: 결정 2(계정 상태 오류는 시도 횟수에 넣지 않는다)는 차단기를 열지 못한 오류에 한해 구현 중 확정 8이 대체한다. 결정 4의 `account_trips`·`FAILED` 승격은 한도 사유에 한해 구현 중 확정 8이 대체한다. 결정 문구는 그대로 둔다.
+- 2026-11-23 코드 리뷰 반영(2): 결정 4의 "`PERMANENT`로 보고 `FAILED`로 전이"는 실제 분류·사유·차단기 처리가 다르다. 구현 중 확정 9가 사실을 정한다. 결정 문구는 그대로 둔다.
 
 ## 배경
 
@@ -171,6 +172,15 @@ ADR-0003은 오류를 작업 단위로 `TRANSIENT`·`PERMANENT`·`SYSTEM`으로 
      - 영향: 계정 장애로 차단기가 열리기 전의 연속 실패(기본 2건)는 그 작업들의 시도 횟수를 1씩 쓴다. 차단기를 연 3번째 실패와 그 뒤는 쓰지 않는다. 결정 배경의 "큐 전체가 시도 횟수를 소진"하는 문제는 이 범위(최대 임계값 − 1건)로 제한된다.
      - 호출처 할당(구현 중 확정 7)의 사용량은 `counted`이고 `stage`가 `WORKER`가 아닌 시도다. 이제 `ACCOUNT` 시도도 `counted = true`이면 사용량에 든다(차단기를 연 시도는 그대로 들지 않는다).
    - 검증: `test/queue/circuit-breaker.integration-spec.ts`(한도 사유 `RETRY_WAIT` 유지, 차단기 closed·open에서의 `OTHER`, 한도 사유 만료), `test/worker/worker.integration-spec.ts`. 실제 Gmail 응답으로는 확인하지 않았다.
+9. **반복 계정 오류(`ACCOUNT_REPEATED`)의 분류와 차단기 처리(결정 4 보완, 2026-11-23 코드 리뷰, `src/queue/complete.ts`).** 결정 문구는 바꾸지 않는다. 충돌하면 이 항목이 우선한다.
+   - **분류와 사유.** 결정 4와 RQ-009의 "`PERMANENT`로 보고 `FAILED`"는 구현과 다르다. 구현은 시도 분류를 `ACCOUNT` 그대로 두고 작업을 `FAILED`로 전이하며 `failure_reason`은 `ACCOUNT_REPEATED`다. REST 응답의 `failureReason`은 `ACCOUNT_ERROR_REPEATED`로 바뀐다(`docs/api/README.md`). 일반 `PERMANENT`(`failure_reason = PERMANENT`)와 구분하려는 것이다.
+   - **차단기를 다시 열지 않는다.** 이전 구현은 반복 판정 전에 `recordAccountFailure`를 불렀다. 대표 작업(`half_open`)이 반복으로 끝나면 차단기가 다시 `open`이 되고 대기가 2배가 됐다. 일반 `PERMANENT`는 `recordAccountOk`를 부르므로 둘이 어긋났다. 이제 반복 판정을 먼저 하고 해당하면 `recordAccountFailure`를 부르지 않는다.
+     - 대표 작업이면 `recordAccountOk`로 차단기를 `closed`로 닫는다(대기 시간 0). 이 작업의 문제로 끝냈으므로 계정이 막혔다는 증거로 쓰지 않는다.
+     - 대표 작업이 아니면 차단기를 바꾸지 않는다(연속 실패 수도 늘리지 않는다).
+     - 차단기 상태는 행을 잠그지 않는 SELECT(`getBreakerState`)로 읽는다. 잠금 순서(작업 행 → 차단기 행)는 그대로다.
+   - **시도 횟수.** 판정 시점의 차단기가 `closed`였으면 작업별 오류로 세고(`counted = true`, 구현 중 확정 8), `open`·`half_open`이었으면 세지 않는다. 이전 구현과 같다.
+   - 영향: 이전에는 반복으로 끝난 작업의 마지막 실패가 계정 장애로 한 번 더 기록돼 차단기 대기가 길어졌다. 이제 길어지지 않는다. 계정이 실제로 막힌 상태라면 다음 작업이 차단기를 다시 연다.
+   - 검증: `test/queue/circuit-breaker.integration-spec.ts`(`half_open` 대표 작업의 반복 → `closed`·대기 0, `closed`에서의 반복 → 연속 실패 수 불변·`counted`·시도 횟수 증가, `open`에서의 늦은 반복 → 차단기 불변). 실제 Gmail 응답으로는 확인하지 않았다.
 
 ## 검토한 대안
 

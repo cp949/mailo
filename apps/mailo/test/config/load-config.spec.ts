@@ -433,6 +433,9 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
         loadConfig(
           env({
             NODE_ENV: "production",
+            // 테스트 기본 DB URL은 공개 샘플 비밀번호라 production에서 거부된다(M4). 다른 값을 준다.
+            MAILO_DATABASE_URL:
+              "postgres://mailo:production-secret-1@localhost:5432/mailo",
             MAILO_DB_ENCRYPTION_KEY_V1: randomBytes(32).toString("base64"),
             MAILO_FINGERPRINT_KEY_V1: randomBytes(32).toString("base64"),
           }),
@@ -486,7 +489,9 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
       if (match) parsed[match[1]!] = match[2]!;
     }
 
-    const config = loadConfig(parsed);
+    // 공개 샘플 값(키, DB 비밀번호)은 NODE_ENV가 없으면 거부된다(fail closed, M4). 로컬 시험은 development를 명시한다.
+    expect(() => loadConfig(parsed)).toThrow(ConfigError);
+    const config = loadConfig({ ...parsed, NODE_ENV: "development" });
 
     expect(config.callersFile).toBe("./callers.json");
     expect(config.smtp.security).toBe("starttls");
@@ -602,5 +607,244 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
       }).reveal(),
     ).toBe("postgres://u:p@db/x");
     expect(() => loadDatabaseUrlOnly({})).toThrow("MAILO_DATABASE_URL");
+  });
+});
+
+describe("DB 시간제한·풀 크기·운영자 토큰 (H1·M1·H2)", () => {
+  it("DB 시간제한 기본값은 statement 30초, lock 10초, idle in transaction 60초, query 35초다", () => {
+    const config = loadConfig(env());
+
+    expect(config.database.timeouts).toEqual({
+      statementMs: 30_000,
+      lockMs: 10_000,
+      idleInTransactionMs: 60_000,
+      queryMs: 35_000,
+    });
+  });
+
+  it("환경 변수로 DB 시간제한을 바꾼다", () => {
+    const config = loadConfig(
+      env({
+        MAILO_DB_STATEMENT_TIMEOUT_MS: "5000",
+        MAILO_DB_LOCK_TIMEOUT_MS: "2000",
+        MAILO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: "9000",
+        MAILO_DB_QUERY_TIMEOUT_MS: "8000",
+      }),
+    );
+
+    expect(config.database.timeouts).toEqual({
+      statementMs: 5000,
+      lockMs: 2000,
+      idleInTransactionMs: 9000,
+      queryMs: 8000,
+    });
+  });
+
+  it("query 시간제한이 statement 시간제한 이하이면 거부한다(서버가 먼저 취소해야 한다)", () => {
+    const message = issuesOf({
+      MAILO_DB_STATEMENT_TIMEOUT_MS: "30000",
+      MAILO_DB_QUERY_TIMEOUT_MS: "30000",
+    });
+
+    expect(message).toContain("MAILO_DB_QUERY_TIMEOUT_MS");
+    expect(message).toContain("MAILO_DB_STATEMENT_TIMEOUT_MS");
+  });
+
+  it.each([
+    "MAILO_DB_STATEMENT_TIMEOUT_MS",
+    "MAILO_DB_LOCK_TIMEOUT_MS",
+    "MAILO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS",
+    "MAILO_DB_QUERY_TIMEOUT_MS",
+  ])("%s가 1000 미만이면 거부한다", (variable) => {
+    expect(issuesOf({ [variable]: "999" })).toContain(variable);
+  });
+
+  it("풀 크기가 동시 전송 수 + 4보다 작으면 거부하고, 같으면 통과한다", () => {
+    const message = issuesOf({
+      MAILO_WORKER_CONCURRENCY: "8",
+      MAILO_DB_POOL_MAX: "11",
+    });
+
+    expect(message).toContain("MAILO_DB_POOL_MAX");
+    expect(message).toContain("MAILO_WORKER_CONCURRENCY");
+    expect(() =>
+      loadConfig(
+        env({ MAILO_WORKER_CONCURRENCY: "8", MAILO_DB_POOL_MAX: "12" }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("기본 설정(동시 전송 4, 풀 10)은 풀 검사를 통과하고 동시 전송 100은 풀 104가 필요하다", () => {
+    expect(() => loadConfig(env())).not.toThrow();
+    expect(issuesOf({ MAILO_WORKER_CONCURRENCY: "100" })).toContain(
+      "MAILO_DB_POOL_MAX",
+    );
+    expect(() =>
+      loadConfig(
+        env({ MAILO_WORKER_CONCURRENCY: "100", MAILO_DB_POOL_MAX: "104" }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("운영자 토큰은 없으면 null이고, 32자 이상이면 받으며, 짧거나 공백이 있으면 거부한다. 값은 오류에 나오지 않는다", () => {
+    expect(loadConfig(env()).ops.token).toBeNull();
+    const token = "t".repeat(32);
+    expect(
+      loadConfig(env({ MAILO_OPS_TOKEN: token })).ops.token?.reveal(),
+    ).toBe(token);
+
+    for (const bad of ["short-token", `${"t".repeat(20)} ${"t".repeat(20)}`]) {
+      const message = issuesOf({ MAILO_OPS_TOKEN: bad });
+      expect(message).toContain("MAILO_OPS_TOKEN");
+      expect(message).not.toContain(bad);
+    }
+    // 객체를 그대로 찍어도 값이 나오지 않는다.
+    expect(inspect(loadConfig(env({ MAILO_OPS_TOKEN: token })))).not.toContain(
+      token,
+    );
+  });
+});
+
+describe("기본값이 안전하지 않은 설정 거부 (M4)", () => {
+  const SAMPLE = "mailo-dev-password";
+
+  it("production은 공개 샘플 DB 비밀번호를 거부한다(URL·분리 변수 모두). 오류에 비밀번호가 없다", () => {
+    const viaUrl = issuesOf({
+      NODE_ENV: "production",
+      MAILO_DATABASE_URL: `postgres://mailo:${SAMPLE}@localhost:5432/mailo`,
+      MAILO_DB_ENCRYPTION_KEY_V1: randomBytes(32).toString("base64"),
+      MAILO_FINGERPRINT_KEY_V1: randomBytes(32).toString("base64"),
+    });
+    const viaParts = issuesOf({
+      NODE_ENV: "production",
+      MAILO_DATABASE_URL: "",
+      MAILO_DB_HOST: "postgres",
+      MAILO_DB_USER: "mailo",
+      MAILO_DB_NAME: "mailo",
+      MAILO_DB_PASSWORD: SAMPLE,
+      MAILO_DB_ENCRYPTION_KEY_V1: randomBytes(32).toString("base64"),
+      MAILO_FINGERPRINT_KEY_V1: randomBytes(32).toString("base64"),
+    });
+
+    for (const message of [viaUrl, viaParts]) {
+      expect(message).toContain("DB 비밀번호");
+      expect(message).not.toContain(SAMPLE);
+    }
+  });
+
+  it("production에서 다른 DB 비밀번호는 통과하고, URL 인코딩된 샘플 비밀번호도 디코딩해 거부한다", () => {
+    const keys = {
+      MAILO_DB_ENCRYPTION_KEY_V1: randomBytes(32).toString("base64"),
+      MAILO_FINGERPRINT_KEY_V1: randomBytes(32).toString("base64"),
+    };
+    expect(() =>
+      loadConfig(
+        env({
+          NODE_ENV: "production",
+          MAILO_DATABASE_URL:
+            "postgres://mailo:real-secret-1@localhost:5432/mailo",
+          ...keys,
+        }),
+      ),
+    ).not.toThrow();
+    expect(
+      issuesOf({
+        NODE_ENV: "production",
+        MAILO_DATABASE_URL: `postgres://mailo:${encodeURIComponent("mailo-dev-password")}@localhost/mailo`,
+        ...keys,
+      }),
+    ).toContain("DB 비밀번호");
+  });
+
+  it("development·test에서는 공개 샘플 DB 비밀번호를 받는다", () => {
+    for (const nodeEnv of ["development", "test"]) {
+      expect(() =>
+        loadConfig(
+          env({
+            NODE_ENV: nodeEnv,
+            MAILO_DATABASE_URL: `postgres://mailo:${SAMPLE}@localhost:5432/mailo`,
+          }),
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  it("NODE_ENV가 없으면 production과 같이 공개 샘플 값을 거부한다(fail closed)", () => {
+    const message = issuesOf({
+      NODE_ENV: "",
+      MAILO_DATABASE_URL: `postgres://mailo:${SAMPLE}@localhost:5432/mailo`,
+    });
+
+    expect(message).toContain("DB 비밀번호");
+    expect(message).toContain("MAILO_DB_ENCRYPTION_KEY_V1");
+    expect(
+      loadConfig(
+        env({
+          NODE_ENV: "",
+          MAILO_DATABASE_URL:
+            "postgres://mailo:real-secret-1@localhost:5432/mailo",
+          MAILO_DB_ENCRYPTION_KEY_V1: randomBytes(32).toString("base64"),
+          MAILO_FINGERPRINT_KEY_V1: randomBytes(32).toString("base64"),
+        }),
+      ).env,
+    ).toBe("production");
+  });
+});
+
+describe("stop_grace_period와 lease 관계 (M6, RQ-025, ADR-0002 결정 12)", () => {
+  it("MAILO_STOP_GRACE_PERIOD가 없으면 검사하지 않고 null이다", () => {
+    expect(loadConfig(env()).stopGracePeriodMs).toBeNull();
+  });
+
+  it.each([
+    ["150s", 150_000],
+    ["2m30s", 150_000],
+    ["1h", 3_600_000],
+    ["120s", 120_000],
+  ])("기본 lease(120초)에서 %s는 통과한다", (value, ms) => {
+    expect(
+      loadConfig(env({ MAILO_STOP_GRACE_PERIOD: value })).stopGracePeriodMs,
+    ).toBe(ms);
+  });
+
+  it("drain 상한(lease - 10초) + 10초보다 짧으면 거부한다. 필요한 초가 오류에 있다", () => {
+    const message = issuesOf({ MAILO_STOP_GRACE_PERIOD: "119s" });
+
+    expect(message).toContain("MAILO_STOP_GRACE_PERIOD");
+    expect(message).toContain("120초");
+  });
+
+  it("lease를 올리면 grace도 올려야 한다: lease 300초는 300초 이상이 필요하다", () => {
+    expect(
+      issuesOf({ MAILO_LEASE_SECONDS: "300", MAILO_STOP_GRACE_PERIOD: "150s" }),
+    ).toContain("300초");
+    expect(() =>
+      loadConfig(
+        env({
+          MAILO_LEASE_SECONDS: "300",
+          MAILO_STOP_GRACE_PERIOD: "5m",
+          MAILO_SMTP_TIMEOUT_SECONDS: "30",
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it.each(["150", "abc", "1d", "0s", "s", "1.5s", "-5s"])(
+    "형식이 틀린 기간(%s)은 거부한다",
+    (value) => {
+      expect(issuesOf({ MAILO_STOP_GRACE_PERIOD: value })).toContain(
+        "MAILO_STOP_GRACE_PERIOD",
+      );
+    },
+  );
+
+  it("lease가 짧아 drain 상한이 최소 1초가 되는 경우에도 grace는 11초 이상이어야 한다", () => {
+    expect(
+      issuesOf({
+        MAILO_LEASE_SECONDS: "5",
+        MAILO_STOP_GRACE_PERIOD: "10s",
+        MAILO_SMTP_TIMEOUT_SECONDS: "2",
+      }),
+    ).toContain("11초");
   });
 });
