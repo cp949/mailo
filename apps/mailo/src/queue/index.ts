@@ -1,6 +1,12 @@
 export { QueueModule } from "./queue.module.js";
 export { register } from "./register.js";
 export {
+  cancelJob,
+  type CancelResult,
+  type CancelTarget,
+  type CanceledBy,
+} from "./cancel.js";
+export {
   BACKLOG_COUNT_LIMIT,
   getQueueBacklog,
   type QueueBacklog,

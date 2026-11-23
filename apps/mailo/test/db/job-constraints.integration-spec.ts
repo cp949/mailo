@@ -85,7 +85,7 @@ describe("PostgreSQL 통합: 작업 행의 CHECK 제약 (RQ-014, ADR-0002 결정
     expect(
       await violation(
         db,
-        "UPDATE mail_jobs SET status = 'CANCELED' WHERE id = $1",
+        "UPDATE mail_jobs SET status = 'PAUSED' WHERE id = $1",
         [jobId],
       ),
     ).toMatchObject({ code: "23514", constraint: "mail_jobs_status_check" });
@@ -94,6 +94,60 @@ describe("PostgreSQL 통합: 작업 행의 CHECK 제약 (RQ-014, ADR-0002 결정
         jobId,
       ]),
     ).toMatchObject({ code: "23514", constraint: "mail_jobs_attempts_check" });
+  });
+
+  it("CANCELED는 finished_at과 함께일 때만 허용하고 mail_jobs_terminal_state가 짝을 강제한다(RQ-040, ADR-0011 결정 10)", async () => {
+    expect(
+      await violation(
+        db,
+        "UPDATE mail_jobs SET status = 'CANCELED' WHERE id = $1",
+        [jobId],
+      ),
+    ).toMatchObject({ code: "23514", constraint: "mail_jobs_terminal_state" });
+
+    await db.pool.query(
+      "UPDATE mail_jobs SET status = 'CANCELED', finished_at = now() WHERE id = $1",
+      [jobId],
+    );
+    const { rows } = await db.pool.query("SELECT status FROM mail_jobs");
+    expect(rows).toEqual([{ status: "CANCELED" }]);
+
+    await db.pool.query(
+      "UPDATE mail_jobs SET status = 'PENDING', finished_at = NULL WHERE id = $1",
+      [jobId],
+    );
+  });
+
+  it("mail_events는 JOB_CANCELED를 받고 모르는 종류는 23514(mail_events_type_check)로 거부한다(ADR-0011 결정 10)", async () => {
+    const insert = (type: string) =>
+      violation(
+        db,
+        `INSERT INTO mail_events (caller_id, type, job_id) VALUES ('caller-a', $2, $1)`,
+        [jobId, type],
+      );
+
+    expect(await insert("JOB_CANCELED")).toBeNull();
+    expect(await insert("JOB_PAUSED")).toMatchObject({
+      code: "23514",
+      constraint: "mail_events_type_check",
+    });
+    await db.pool.query("DELETE FROM mail_events WHERE job_id = $1", [jobId]);
+  });
+
+  it("0006·0007은 CHECK를 NOT VALID로 다시 추가하고 이름을 유지한다(ADR-0011 결정 10)", async () => {
+    const { rows } = await db.pool.query(
+      `SELECT conname, convalidated FROM pg_constraint
+        WHERE conname IN ('mail_jobs_status_check', 'mail_jobs_terminal_state', 'mail_events_type_check')
+          AND connamespace = (SELECT oid FROM pg_namespace WHERE nspname = $1)
+        ORDER BY conname`,
+      [db.schema],
+    );
+
+    expect(rows).toEqual([
+      { conname: "mail_events_type_check", convalidated: false },
+      { conname: "mail_jobs_status_check", convalidated: false },
+      { conname: "mail_jobs_terminal_state", convalidated: false },
+    ]);
   });
 
   it("제약을 만족하는 정상 전이(PENDING에서 SENDING, 종결)는 통과한다", async () => {

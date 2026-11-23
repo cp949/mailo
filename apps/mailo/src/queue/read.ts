@@ -26,9 +26,9 @@ export interface JobView {
   attempts: number;
   createdAt: Date;
   expiresAt: Date;
-  /** 종결(SENT·FAILED·EXPIRED) 시각. 종결 전이면 null. */
+  /** 종결(SENT·FAILED·EXPIRED·CANCELED) 시각. 종결 전이면 null. */
   finishedAt: Date | null;
-  /** DB에 저장된 값(`PERMANENT`, `ATTEMPTS_EXHAUSTED`, `ACCOUNT_REPEATED`, `EXPIRED`). 응답 이름 변환은 호출자가 한다. */
+  /** DB에 저장된 값(`PERMANENT`, `ATTEMPTS_EXHAUSTED`, `ACCOUNT_REPEATED`, `EXPIRED`, 취소는 `CANCELED_BY_CALLER`·`CANCELED_BY_OPERATOR`). 응답 이름 변환은 호출자가 한다. */
   failureReason: string | null;
   lastError: JobLastError | null;
   /** `SENT` 시도가 기록한 거부 수신자. 없으면 null. */

@@ -7,7 +7,11 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type JobEventType = "JOB_SENT" | "JOB_FAILED" | "JOB_EXPIRED";
+export type JobEventType =
+  | "JOB_SENT"
+  | "JOB_FAILED"
+  | "JOB_EXPIRED"
+  | "JOB_CANCELED";
 export type EventType = JobEventType | "INTAKE_REJECTED";
 
 /** 작업 종결 이벤트 입력. 작업 종결 전이와 같은 트랜잭션에서 기록한다(ADR-0006 결정 2). */

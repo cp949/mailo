@@ -7,9 +7,16 @@ export type JobStatus =
   | "RETRY_WAIT"
   | "SENT"
   | "FAILED"
-  | "EXPIRED";
+  | "EXPIRED"
+  /** 호출처나 운영자가 나가기 전에 취소했다. 종결 상태다(RQ-040, ADR-0011 결정 4). */
+  | "CANCELED";
 
-export const TERMINAL_STATUSES = ["SENT", "FAILED", "EXPIRED"] as const;
+export const TERMINAL_STATUSES = [
+  "SENT",
+  "FAILED",
+  "EXPIRED",
+  "CANCELED",
+] as const;
 
 /** DB에 저장하는 암호화 본문(ADR-0008 결정 6). */
 export interface EncryptedBody {
