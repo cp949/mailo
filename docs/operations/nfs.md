@@ -12,7 +12,7 @@
 - 호출처가 파일을 만드는 호스트의 클라이언트도 `vers=4.2`여야 한다. NFSv4.1 클라이언트가 만든 파일은 호출처 umask가 077이면 default ACL을 받아도 Mailo가 읽지 못했다(실측).
 - 기존 폴더에 rename한 파일은 mount 옵션과 무관하게 다음 폴링에서 보였다(실측, 6개 옵션). 폴링 간격이 지연의 상한이다.
 - `close` 전에 `rename`해도 Linux NFSv4 클라이언트에서는 Mailo가 전체 내용을 읽었다(실측). ADR-0004 결정 3의 추정(비어 보일 수 있다)은 이 환경에서 재현되지 않았다. 호출처 규약(쓰기, `fsync`, `close`, `rename`)은 유지한다.
-- 컨테이너에서는 호스트 mount를 bind하지 않고 Docker `local` 드라이버의 NFS named volume을 쓰는 구성(`docker-compose.nfs-example.yml`)을 예시로 둔다. 이 구성은 실행해 확인하지 않았다(미검증, "컨테이너에서 쓰는 방법").
+- 컨테이너에서는 호스트 mount를 bind하지 않고 Docker `local` 드라이버의 NFS named volume을 쓰는 구성(`docker-compose.nfs-example.yml`)을 예시로 둔다. 이 구성은 같은 호스트 loopback NFS에서 `verify-docker-volume.sh`로 확인했다(2026-11-23, 13개 통과). 실제 NAS 제품과 `hard` mount에서 서버를 멈췄을 때의 동작은 미검증이다("컨테이너에서 쓰는 방법").
 - 파일 채널이 켜져 있고 `<root>/inbox`가 없거나 통과(X)할 수 없으면 앱이 기동을 거부한다. mount 전의 빈 디렉터리를 읽는 상황을 막는다. `inbox`의 읽기(R) 권한은 요구하지 않는다(운영 모델의 `0711`). 호출처 폴더 하나가 없는 것은 경고(`file_inbox_missing`)다.
 - 폴러가 `ESTALE`을 오류로 세던 결함을 찾아 고쳤다(`src/file-channel/errno.ts`). 이전에는 Node가 `ESTALE`을 `code === "ESTALE"`로 주지 않아 어떤 분기에도 걸리지 않았다.
 
@@ -24,7 +24,7 @@
 | 서버            | 커널 nfsd(`nfs-kernel-server` 2.6.1), `rw,sync,root_squash,no_subtree_check`, 백업 파일시스템 ext4(POSIX ACL) |
 | 클라이언트      | 같은 커널의 NFS 클라이언트 3개: `w`(호출처), `m1`·`m2`(Mailo 인스턴스). 주소(127.0.0.1~3)와 호스트 이름을 다르게 mount해 별개 클라이언트로 동작한다 |
 | 계정            | 호출처 UID 2001·2002, Mailo는 테스트를 돌리는 사용자(UID 1000), 그룹 방식 대안용 공용 GID 2100             |
-| 프로토콜        | 클라이언트 NFSv4.1(ADR-0004 결정)과 4.2. 31건 전체를 4.1 기본값과 4.2 기본값(`MAILO_NFS_VERS=4.2`)으로 각각 실행해 통과했고 측정값은 같았다 |
+| 프로토콜        | 클라이언트 NFSv4.1(ADR-0004 결정)과 4.2. 31건 전체를 4.1 기본값과 4.2 기본값(`MAILO_NFS_VERS=4.2`)으로 각각 실행해 통과했고 측정값은 같았다. 같은 날 `CallerClient` 수정(`ci.md` "NFS 잡") 뒤 `run.sh`를 기본값(4.1) 1회 다시 실행해 31건이 통과했다(4.2 기본값 전체 재실행은 하지 않았다. (e)의 일부 테스트는 `w` 클라이언트를 4.2·4.1로 다시 mount해 쓴다) |
 
 한계(모두 미검증):
 
@@ -59,7 +59,7 @@ mount -t nfs4 -o vers=4.2,sec=sys,hard,lookupcache=pos <서버>:<export> <root>
 
 ## 컨테이너에서 쓰는 방법
 
-검증 상태: 이 절의 구성은 실행해 확인하지 않았다(미검증). 작성 환경에 `nfs-kernel-server`가 없어 `apps/mailo/scripts/nfs/verify-docker-volume.sh`를 실행하지 못했다. 이 호스트에는 비밀번호 없는 `sudo`가 있었지만 패키지 설치는 하지 않았다. 아래 "근거"는 코드·문서 읽기 결과다.
+검증 상태: 이 절의 구성은 2026-11-23에 같은 호스트 loopback NFS(WSL2, `nfs-kernel-server` 2.6.1, 사용자 승인으로 설치)에서 `apps/mailo/scripts/nfs/verify-docker-volume.sh`로 실행해 확인했다(종료 코드 0, 통과 13, 실패 0). 확인한 것: named volume(`vers=4.2,hard,lookupcache=pos`)으로 컨테이너 기동, `/var/mailo/files`가 `nfs4` mount, non-root UID 1000, `inbox/alpha` 읽기, `file_channel_started`, 이미지 읽기 전용(`/repo` 쓰기 실패), `/tmp` tmpfs 쓰기, `CapEff` 0, 호출처 UID 2001(umask 077)이 `w` mount에 넣은 파일을 컨테이너가 등록하고 삭제, 로그에 본문 없음, `<root>/inbox`가 없는 경로를 volume으로 주면 종료 코드 1로 끝나고 로그가 inbox 문제를 알림. 확인하지 않은 것: 실제 NAS 제품, NFSv3·4.0, `hard` mount에서 서버를 멈췄을 때의 동작, 서버 재시작·failover. 아래 "근거" 중 "추정"·"코드 읽기 결과"로 적은 항목은 이 스크립트가 확인하지 않았다.
 
 구성: `docker-compose.nfs-example.yml`을 `docker-compose.yml` 위에 덮어 쓴다.
 
@@ -74,7 +74,7 @@ docker compose -f docker-compose.yml -f docker-compose.nfs-example.yml up -d --b
 - NFS 서버에 닿지 않으면 named volume mount가 실패해 컨테이너가 시작하지 않는다(fail closed, 추정, 실행하지 않았다).
 - 서버 쪽 전제: `root_squash`(기본)와 컨테이너 `node` UID 1000이 서버에서도 같은 UID로 보여야 한다. `all_squash`나 ID 매핑이 있으면 Mailo UID가 달라져 폴더 소유·ACL이 맞지 않는다(확인하지 않았다). 폴더와 권한은 서버에서 운영자가 만든다(다음 절). 앱은 만들지 않는다.
 - `hard` mount에서 NAS가 멈추면 폴러의 `opendir`·`stat` 같은 파일 호출이 응답이 올 때까지 끝나지 않는다. 그 폴링은 끝나지 않으므로 `filePoller.lastPollAt`(폴링이 끝난 시각, `poller.ts`가 폴링 끝에 기록한다)이 갱신되지 않는다. 운영자 토큰으로 `/health/ready`를 읽으면 `lastPollAt`이 폴링 간격보다 오래되는 것으로 알 수 있다(코드 읽기 결과, 서버를 멈춰 실행하지 않았다). `/health/ready`는 메모리 값만 읽어 계속 응답한다. 막힌 호출이 Node의 libuv 스레드 풀(기본 4개)을 점유하면 다른 파일 작업도 늦어질 수 있다(추정). DB와 SMTP는 파일 시스템을 쓰지 않아 영향이 없다.
-- 재현 스크립트: `apps/mailo/scripts/nfs/verify-docker-volume.sh`. 같은 호스트 loopback NFS를 만들고(`setup.sh`) 컨테이너가 named volume으로 파일을 읽어 등록·삭제하는지, `inbox`가 없으면 기동을 거부하는지, 읽기 전용 루트·capability 제거 상태에서 동작하는지 확인한다. 비밀번호 없는 `sudo`, `nfs-kernel-server`가 필요하고, 작성했으나 실행하지 못했다. 첫 실행에서 스크립트 자체의 오류가 나올 수 있다.
+- 재현 스크립트: `apps/mailo/scripts/nfs/verify-docker-volume.sh`. 같은 호스트 loopback NFS를 만들고(`setup.sh`) 컨테이너가 named volume으로 파일을 읽어 등록·삭제하는지, `inbox`가 없으면 기동을 거부하는지, 읽기 전용 루트·capability 제거 상태에서 동작하는지 확인한다. 비밀번호 없는 `sudo`, Docker, `openssl`, `nfs-kernel-server`가 필요하다. 2026-11-23 첫 실행에서 통과 13, 실패 0이었다. 호출처 쪽 mount는 `vers=4.2`만 실행했다.
 
 ## 폴더와 계정 구성
 
@@ -166,7 +166,7 @@ MAILO_NFS_VERS=4.2 apps/mailo/scripts/nfs/run.sh   # 4.2 기준
 
 ## 남은 일
 
-- Docker local 드라이버 NFS named volume(`docker-compose.nfs-example.yml`)의 실제 동작. `verify-docker-volume.sh`를 `nfs-kernel-server`가 있는 호스트에서 실행한다.
+- Docker local 드라이버 NFS named volume(`docker-compose.nfs-example.yml`)을 실제 NAS 제품에서 확인한다(같은 호스트 loopback은 2026-11-23에 확인했다). NFSv3·4.0 서버와 호출처 UID 매핑 불일치도 같다.
 - NAS가 멈췄을 때(`hard` mount) 폴러 정지가 `filePoller.lastPollAt`으로 감지되는지와 다른 파일 작업에 미치는 영향.
 - 실제 NAS(대상 제품과 mount 옵션)에서 `apps/mailo/scripts/nfs/run.sh`를 대신할 검증. 최소한 (a) 새 폴더 가시성, (b) `close` 전 `rename`, (e) umask 077 읽기를 다시 확인한다.
 - `nfs` 잡을 GitHub에서 실행해 `run.sh` 동작 확인(워크플로는 작성함, 미실행). 성공을 확인한 뒤에도 필수 체크 지정 여부를 따로 정한다.

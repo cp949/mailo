@@ -36,7 +36,7 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 - 원인(로그와 로컬 재현으로 확인): 테스트가 호출처 UID(2001)로 `sudo setpriv ... node test/nfs/caller-client.mjs`를 띄우는데, 러너의 저장소 경로 `/home/runner/work/mailo/mailo/...`에 호출처 UID가 통과할 수 없어 Node가 `Error: Cannot find module '/home/runner/work/mailo/mailo/apps/mailo/test/nfs/caller-client.mjs'`(`code: 'MODULE_NOT_FOUND'`)로 종료했다. 로그에 이 오류가 10번 나온다. 로컬에서 통과를 막는 폴더(0750)에 복사한 같은 파일을 UID 2001로 실행하면 같은 오류가 재현된다. 러너의 `/home/runner` 권한(Ubuntu 기본 0750으로 추정)은 로그에 없어 확인하지 못했다.
 - 매달린 원인(코드로 확인): `CallerClient.call()`은 응답 대기열에 넣고 응답을 기다리기만 했다. 자식 프로세스가 종료돼도 대기 중인 호출을 끝내지 않아 각 테스트가 jest `testTimeout`(180초)까지 기다렸다. 로그의 오류 간격이 약 3분이다. 호출처 클라이언트를 쓰지 않는 측정 테스트는 진행해 `[nfs-measure]` 줄이 06:01에 출력됐다(그 테스트의 통과 여부는 취소된 로그에 없다).
 - 수정(2026-11-23): (1) `test/nfs/support.ts`가 `caller-client.mjs`를 `/tmp`의 임시 폴더(0755, 파일 0644)로 복사해 그 사본을 다른 UID로 실행한다(저장소 경로 권한은 바꾸지 않는다). (2) `CallerClient`가 자식 종료·기동 오류 때 대기 중인 호출을 즉시 실패시키고, 명령당 30초(`MAILO_NFS_CALL_TIMEOUT_MS`) 안에 응답이 없으면 클라이언트를 강제 종료하고 실패시킨다. (3) `run.sh`가 `pnpm test:nfs`를 `timeout`으로 감싼다(`MAILO_NFS_RUN_TIMEOUT`, 기본 1200초, 초과 시 종료 코드 124, teardown은 실행). (4) 워크플로의 실행 단계에 `timeout-minutes: 25`를 두었다. 시간 상한은 run.sh 20분 < 단계 25분 < 잡 30분이다.
-- 수정 뒤 재실행 전이다. **`nfs` 잡이 GitHub 러너에서 통과하는지는 여전히 확인하지 못했다.** 사본 경로로 바꾼 뒤 다른 uid·NFS 동작이 로컬과 같은지, 러너에서 나머지 테스트가 통과하는지는 재실행해야 안다. 로컬(WSL2)에서는 `nfs-kernel-server`가 없어 NFS 자체를 돌리지 못했고, NFS 없이 `CallerClient`만 UID 2001로 확인했다.
+- 수정 뒤 재실행 전이다. **`nfs` 잡이 GitHub 러너에서 통과하는지는 여전히 확인하지 못했다.** 사본 경로로 바꾼 뒤 다른 uid·NFS 동작이 로컬과 같은지, 러너에서 나머지 테스트가 통과하는지는 재실행해야 안다. 로컬(WSL2)에서는 수정 직후 `nfs-kernel-server`가 없어 NFS 자체를 돌리지 못하고 NFS 없이 `CallerClient`만 UID 2001로 확인했다. 이후 같은 날 사용자 승인으로 `nfs-kernel-server` 2.6.1을 설치하고 수정한 소스(브랜치 `fix/ci-nfs`)로 `apps/mailo/scripts/nfs/run.sh`를 실행했다: 종료 코드 0, Test Suites 1 passed, Tests 31 passed(기본 NFSv4.1 클라이언트 1회). 로컬 통과이고 GitHub 러너 통과가 아니다.
 - 그래서 `continue-on-error: true`이고 push·pull_request에서는 돌지 않는다. 첫 실행 결과를 확인하기 전까지 필수 체크가 아니다. 실패해도 워크플로 전체는 실패로 표시되지 않는다.
 - 설치(`MAILO_NFS_INSTALL=1`, `acl`)는 일회용 러너를 전제로 한다. `teardown.sh`는 설치를 되돌리지 않는다.
 - 이 잡이 러너에서 통과하면 `nfs.md`의 "CI 러너 미확인" 항목을 갱신한다.
@@ -49,7 +49,7 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 | `static` 명령 | `format:check`·`typecheck`·`lint`·`build`·`test` 통과. 단위 407건 통과. turbo 캐시 적중 때문에 `typecheck`·`lint`·`test`는 이전 실행 결과의 재생이다 |
 | `integration` 명령 | 로컬 PostgreSQL(`postgres:17-alpine`)로 `pnpm test:integration` 15개 파일 222건 통과 |
 | `container` 스크립트 | 9개 모두 통과(관찰값은 아래) |
-| `nfs` | 작성 시에는 실행하지 않았다. 첫 GitHub 실행은 위 "NFS 잡"에 적었다. 수정 뒤 로컬에서는 NFS 없이 `CallerClient`의 사본 실행·종료 감지·응답 timeout·`run.sh` timeout만 확인했다 |
+| `nfs` | 작성 시에는 실행하지 않았다. 첫 GitHub 실행은 위 "NFS 잡"에 적었다. 수정 뒤 로컬에서는 먼저 NFS 없이 `CallerClient`의 사본 실행·종료 감지·응답 timeout·`run.sh` timeout을 확인했고, 이어 `nfs-kernel-server`를 설치해 `run.sh` 전체(31건)가 통과했다. 러너에서는 재실행 전이다 |
 
 컨테이너·볼륨 스크립트 관찰값(로컬 Docker 29.8.0, compose v5.5.1):
 

@@ -5,7 +5,7 @@
 # 위험도: 중간. setup.sh·teardown.sh와 같은 호스트 NFS export·mount를 추가했다가 되돌리고, compose 프로젝트 mailo-nfsvol 2개를 만들었다가 `down -v`로 지운다.
 # 롤백: 이 스크립트가 trap으로 정리한다. 중간에 죽었으면 `docker compose -p mailo-nfsvol down -v`, `-p mailo-nfsvol-noinbox down -v`, scripts/nfs/teardown.sh를 실행한다.
 # 전제: 비밀번호 없는 sudo(없으면 exit 20), docker, openssl, 호스트 NFS 클라이언트, nfs-kernel-server(없으면 setup.sh가 exit 21. MAILO_NFS_INSTALL=1을 주면 apt로 설치한다).
-# 상태: 작성했으나 실행하지 못했다(작성 환경에 nfs-kernel-server가 없었고 호스트 패키지 설치는 하지 않았다). 첫 실행에서 스크립트 자체의 오류가 나올 수 있다.
+# 상태: 2026-11-23 로컬(WSL2, nfs-kernel-server 2.6.1, 같은 호스트 loopback)에서 처음 실행했고 종료 코드 0, 통과 13·실패 0이었다. 실제 NAS 제품, NFSv3·4.0, `hard` mount에서 서버를 멈췄을 때의 폴러 정지 감지(`filePoller.lastPollAt`)는 이 스크립트가 확인하지 않는다.
 # 사용: scripts/nfs/verify-docker-volume.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

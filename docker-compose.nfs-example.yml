@@ -12,8 +12,9 @@
 # 동작:
 #   - NFS 서버에 닿지 않으면 컨테이너 시작이 실패한다(fail closed). `hard`라 mount 이후 서버가 멈추면 폴러의 파일 호출이 막힌다(nfs.md).
 #   - Docker가 mount하므로 non-root 컨테이너가 mount 권한을 가질 필요가 없다. 호스트에 NFS 클라이언트(mount.nfs, nfs-common)가 필요하다.
-#   - 미검증: 이 구성(Docker local 드라이버 type=nfs)은 실행해 확인하지 않았다. 작성 환경에 nfs-kernel-server가 없어
-#     apps/mailo/scripts/nfs/verify-docker-volume.sh를 실행하지 못했다. 실제 NAS 제품에서도 확인하지 않았다(nfs.md "검증 상태").
+#   - 검증 범위: 2026-11-23 같은 호스트 loopback NFS(nfs-kernel-server 2.6.1, vers=4.2)에서 apps/mailo/scripts/nfs/verify-docker-volume.sh로
+#     이 구성의 기동·읽기·등록·삭제를 확인했다(통과 13, 실패 0). 미검증: 실제 NAS 제품, NFSv3·4.0, hard mount에서 서버를 멈췄을 때의
+#     동작(nfs.md "검증 상태").
 services:
   mailo:
     volumes:
