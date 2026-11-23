@@ -1,11 +1,13 @@
 import type { Queryable } from "../db/index.js";
 
 /**
- * 정지 범위(RQ-043, ADR-0011 결정 2). REST가 쓰는 범위는 `all`과 `caller`뿐이다.
- * `account` 범위 행은 `claim`이 읽어 점유에 적용한다(`SendControls.pausedAccountIds`, ADR-0013 결정 3 다).
- * 계정 정지를 쓰고 지우는 REST·CLI 표면은 구현 묶음 C다. 그 전에는 이 모듈이 `account` 행을 쓰지 않고 목록·요약에도 내지 않는다.
+ * 정지 범위(RQ-043·061, ADR-0011 결정 2, ADR-0013 결정 3 다·5). `account`의 `id`는 계정 ID이고 `caller`의 `id`는 호출처 ID다.
+ * 분기는 `scope.type`을 모두 나열한다. `all`이 아니면 호출처라고 가정하는 분기를 만들지 않는다(계정을 호출처로 오인하는 것을 막는다).
  */
-export type SendScope = { type: "all" } | { type: "caller"; id: string };
+export type SendScope =
+  | { type: "all" }
+  | { type: "caller"; id: string }
+  | { type: "account"; id: string };
 
 /** 점유 판정에 쓰는 정지 상태. */
 export interface SendControls {
@@ -28,16 +30,21 @@ export interface PauseRecord {
 }
 
 interface ControlRow {
-  scope_type: "all" | "caller";
+  scope_type: "all" | "caller" | "account";
   scope_id: string;
   paused_at: Date;
   paused_by: string;
 }
 
 function scopeOf(row: Pick<ControlRow, "scope_type" | "scope_id">): SendScope {
-  return row.scope_type === "all"
-    ? { type: "all" }
-    : { type: "caller", id: row.scope_id };
+  switch (row.scope_type) {
+    case "all":
+      return { type: "all" };
+    case "caller":
+      return { type: "caller", id: row.scope_id };
+    case "account":
+      return { type: "account", id: row.scope_id };
+  }
 }
 
 function toRecord(row: ControlRow): PauseRecord {
@@ -49,7 +56,14 @@ function toRecord(row: ControlRow): PauseRecord {
 }
 
 function keyOf(scope: SendScope): [string, string] {
-  return scope.type === "all" ? ["all", ""] : ["caller", scope.id];
+  switch (scope.type) {
+    case "all":
+      return ["all", ""];
+    case "caller":
+      return ["caller", scope.id];
+    case "account":
+      return ["account", scope.id];
+  }
 }
 
 /**
@@ -110,11 +124,11 @@ export async function clearPause(
   return { changed: (rowCount ?? 0) > 0 };
 }
 
-/** 정지 목록. `all`과 `caller`만 낸다. 정지 시각 순서다. */
+/** 정지 목록. `all`·`caller`·`account` 범위를 모두 낸다. 구성에 없는 호출처·계정의 행도 낸다. 정지 시각 순서다. */
 export async function listPauses(db: Queryable): Promise<PauseRecord[]> {
   const { rows } = await db.query<ControlRow>(
     `SELECT scope_type, scope_id, paused_at, paused_by FROM mail_send_controls
-      WHERE scope_type IN ('all', 'caller')
+      WHERE scope_type IN ('all', 'caller', 'account')
       ORDER BY paused_at, scope_type, scope_id`,
   );
   return rows.map(toRecord);

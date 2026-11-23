@@ -24,15 +24,24 @@ import {
   type AccountStatus,
   type PauseChange,
 } from "./ops.service.js";
-import { parseAuditQuery, parseCallerId } from "./query-params.js";
+import {
+  parseAccountId,
+  parseAuditQuery,
+  parseCallerId,
+} from "./query-params.js";
 
 /** 운영 응답은 캐시하지 않는다. 정지 상태와 감사 기록은 최신 값이어야 한다. */
 const NO_STORE = { "Cache-Control": "no-store" };
 
 function presentScope(scope: SendScope) {
-  return scope.type === "all"
-    ? { type: "all" }
-    : { type: "caller", id: scope.id };
+  switch (scope.type) {
+    case "all":
+      return { type: "all" };
+    case "caller":
+      return { type: "caller", id: scope.id };
+    case "account":
+      return { type: "account", id: scope.id };
+  }
 }
 
 function presentPauseRecord(record: PauseRecord) {
@@ -57,6 +66,7 @@ function presentChange(change: PauseChange) {
     ...(change.inRegistry !== undefined
       ? { inRegistry: change.inRegistry }
       : {}),
+    ...(change.inConfig !== undefined ? { inConfig: change.inConfig } : {}),
   };
 }
 
@@ -162,6 +172,38 @@ export class OpsController {
     const change = await this.ops.resume(actorOf(req), {
       type: "caller",
       id: callerId.value,
+    });
+    sendJson(res, 200, presentChange(change), NO_STORE);
+  }
+
+  @Put("pauses/accounts/:accountId")
+  @UseGuards(OpsAdminGuard)
+  async pauseAccount(
+    @Param("accountId") rawAccountId: string,
+    @Req() req: HttpRequest,
+    @Res() res: HttpResponse,
+  ): Promise<void> {
+    const accountId = parseAccountId(rawAccountId);
+    if (!accountId.ok) throw problems.validationFailed(accountId.errors);
+    const change = await this.ops.pause(actorOf(req), {
+      type: "account",
+      id: accountId.value,
+    });
+    sendJson(res, 200, presentChange(change), NO_STORE);
+  }
+
+  @Delete("pauses/accounts/:accountId")
+  @UseGuards(OpsAdminGuard)
+  async resumeAccount(
+    @Param("accountId") rawAccountId: string,
+    @Req() req: HttpRequest,
+    @Res() res: HttpResponse,
+  ): Promise<void> {
+    const accountId = parseAccountId(rawAccountId);
+    if (!accountId.ok) throw problems.validationFailed(accountId.errors);
+    const change = await this.ops.resume(actorOf(req), {
+      type: "account",
+      id: accountId.value,
     });
     sendJson(res, 200, presentChange(change), NO_STORE);
   }

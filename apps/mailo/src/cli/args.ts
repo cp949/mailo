@@ -7,11 +7,15 @@
  */
 
 /** 정지 범위. 서버 `/ops/pauses/...` 경로에 대응한다. */
-export type CliScope = { type: "all" } | { type: "caller"; id: string };
+export type CliScope =
+  | { type: "all" }
+  | { type: "caller"; id: string }
+  | { type: "account"; id: string };
 
 export type CliCommand =
   | { name: "status" }
   | { name: "queue-stats" }
+  | { name: "accounts-list" }
   | { name: "jobs-show"; jobId: string }
   | { name: "audit-list"; limit: number | null; before: string | null }
   | { name: "pause"; scope: CliScope }
@@ -26,11 +30,14 @@ export type ParsedArgs =
 // 호출처 ID 형식. 서버의 레지스트리 ID 규칙(`callers/registry.ts`의 `isCallerId`)과 같다.
 // CLI가 Nest 모듈을 불러오지 않게 복사했다. 같은 판정은 `test/cli/args.spec.ts`가 고정한다.
 const CALLER_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+// 계정 ID 형식. 서버의 `config/smtp-accounts.ts`의 `isAccountId`와 같다(`unregistered`는 예약어). 같은 판정은 `test/cli/args.spec.ts`가 고정한다.
+const ACCOUNT_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const RESERVED_ACCOUNT_ID = "unregistered";
 const UUID =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const INT64_MAX = 9_223_372_036_854_775_807n;
 const MAX_AUDIT_LIMIT = 200;
-const VALUE_FLAGS = new Set(["caller", "limit", "before"]);
+const VALUE_FLAGS = new Set(["caller", "account", "limit", "before"]);
 const BOOLEAN_FLAGS = new Set(["all", "yes", "help"]);
 // 토큰·비밀번호를 받는 것처럼 보이는 옵션. 값을 읽지 않고 거부한다.
 const SECRET_FLAG = /^(?:token|password|secret|api-?key|auth)/i;
@@ -104,12 +111,25 @@ function requireYes(tokens: Tokens, what: string): string | undefined {
 function scopeOf(tokens: Tokens): CliScope | string {
   const all = tokens.flags.has("all");
   const caller = tokens.flags.get("caller");
-  if (all === (caller !== undefined))
-    return "범위를 --all 또는 --caller <호출처 ID> 중 하나만 명시한다";
+  const account = tokens.flags.get("account");
+  const given = [all, caller !== undefined, account !== undefined].filter(
+    Boolean,
+  ).length;
+  if (given !== 1)
+    return "범위를 --all, --caller <호출처 ID>, --account <계정 ID> 중 하나만 명시한다";
   if (all) return { type: "all" };
-  if (typeof caller !== "string" || !CALLER_ID.test(caller))
-    return "--caller 값이 호출처 ID 형식이 아니다";
-  return { type: "caller", id: caller };
+  if (caller !== undefined) {
+    if (typeof caller !== "string" || !CALLER_ID.test(caller))
+      return "--caller 값이 호출처 ID 형식이 아니다";
+    return { type: "caller", id: caller };
+  }
+  if (
+    typeof account !== "string" ||
+    !ACCOUNT_ID.test(account) ||
+    account === RESERVED_ACCOUNT_ID
+  )
+    return "--account 값이 계정 ID 형식이 아니다";
+  return { type: "account", id: account };
 }
 
 /** `argv`(실행 파일 이름 뒤의 인자)를 명령으로 해석한다. */
@@ -134,6 +154,11 @@ export function parseCliArgs(argv: readonly string[]): ParsedArgs {
       if (second !== "stats" || third !== undefined || only(tokens, []))
         return usage("사용법: queue stats");
       return done({ name: "queue-stats" });
+    }
+    case "accounts": {
+      if (second !== "list" || third !== undefined || only(tokens, []))
+        return usage("사용법: accounts list");
+      return done({ name: "accounts-list" });
     }
     case "audit": {
       if (second !== "list" || third !== undefined)
@@ -182,8 +207,10 @@ export function parseCliArgs(argv: readonly string[]): ParsedArgs {
     case "pause":
     case "resume": {
       if (second !== undefined)
-        return usage(`사용법: ${first} --all|--caller <호출처 ID> --yes`);
-      const flagProblem = only(tokens, ["all", "caller", "yes"]);
+        return usage(
+          `사용법: ${first} --all|--caller <호출처 ID>|--account <계정 ID> --yes`,
+        );
+      const flagProblem = only(tokens, ["all", "caller", "account", "yes"]);
       if (flagProblem) return usage(flagProblem);
       const scope = scopeOf(tokens);
       if (typeof scope === "string") return usage(scope);

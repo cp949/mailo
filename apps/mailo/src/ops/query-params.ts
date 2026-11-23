@@ -2,6 +2,7 @@
  * `/ops/*`의 경로·쿼리 파라미터 검증. 오류는 파라미터 이름과 고정 코드만 담는다(요청 값은 담지 않는다, RQ-027).
  */
 import { isCallerId } from "../callers/index.js";
+import { isAccountId } from "../config/index.js";
 import type { ValidationErrorItem } from "../validation/index.js";
 
 export type Parsed<T> =
@@ -18,6 +19,16 @@ export function parseCallerId(raw: string): Parsed<string> {
     : {
         ok: false,
         errors: [{ parameter: "callerId", code: "INVALID_FORMAT" }],
+      };
+}
+
+/** 계정 ID 형식(`^[a-z0-9][a-z0-9_-]{0,31}$`, `unregistered` 제외)을 검사한다. 구성에 있는지는 보지 않는다(ADR-0013 결정 5). */
+export function parseAccountId(raw: string): Parsed<string> {
+  return isAccountId(raw)
+    ? { ok: true, value: raw }
+    : {
+        ok: false,
+        errors: [{ parameter: "accountId", code: "INVALID_FORMAT" }],
       };
 }
 

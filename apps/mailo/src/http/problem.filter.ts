@@ -52,7 +52,7 @@ export class ProblemExceptionFilter implements ExceptionFilter {
     if (exception instanceof ProblemException) return exception;
     // Express가 경로 파라미터의 퍼센트 인코딩을 풀지 못해 던진 오류(예: `/jobs/%`).
     // Nest 어댑터가 URIError를 BadRequestException("Failed to decode param ...")으로 바꿔 전달한다.
-    // 경로 파라미터는 `/jobs/{jobId}`·`/jobs/{jobId}/cancel`의 jobId와 `/ops/jobs/{jobId}`·`/ops/pauses/callers/{callerId}`뿐이다.
+    // 경로 파라미터는 `/jobs/{jobId}`·`/jobs/{jobId}/cancel`의 jobId와 `/ops/jobs/{jobId}`·`/ops/pauses/callers/{callerId}`·`/ops/pauses/accounts/{accountId}`뿐이다.
     // 이 경로만 validation-failed로 보고 나머지는 404다(ADR-0011 결정 7).
     if (isParamDecodeError(exception)) {
       const errors = paramDecodeErrors(req.url);
@@ -86,6 +86,8 @@ function paramDecodeErrors(
     return [{ parameter: "jobId", code: "INVALID_FORMAT" }];
   if (url.startsWith("/ops/pauses/callers/"))
     return [{ parameter: "callerId", code: "INVALID_FORMAT" }];
+  if (url.startsWith("/ops/pauses/accounts/"))
+    return [{ parameter: "accountId", code: "INVALID_FORMAT" }];
   return null;
 }
 

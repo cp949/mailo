@@ -31,7 +31,10 @@ export interface PauseChange {
   paused: boolean;
   changed: boolean;
   pause?: PauseRecord;
+  /** 호출처 범위일 때만. 레지스트리에 있는 호출처인지. */
   inRegistry?: boolean;
+  /** 계정 범위일 때만. 이 인스턴스 구성에 있는 계정인지. */
+  inConfig?: boolean;
 }
 
 /** `GET /ops/accounts`의 계정 한 건. host·user·`from`·비밀 변수 이름은 담지 않는다(RQ-027, ADR-0013 결정 6). */
@@ -75,7 +78,7 @@ export class OpsService {
     );
     if (changed)
       logger.log({ event: "ops_pause_set", actor, ...logScope(scope) });
-    return { scope, paused: true, changed, pause, ...this.registryFlag(scope) };
+    return { scope, paused: true, changed, pause, ...this.knownFlag(scope) };
   }
 
   async resume(actor: string, scope: SendScope): Promise<PauseChange> {
@@ -87,14 +90,29 @@ export class OpsService {
     });
     if (changed)
       logger.log({ event: "ops_pause_cleared", actor, ...logScope(scope) });
-    return { scope, paused: false, changed, ...this.registryFlag(scope) };
+    return { scope, paused: false, changed, ...this.knownFlag(scope) };
   }
 
-  /** 호출처 정지·재개 응답의 `inRegistry`. 오타를 알아보게 한다(ADR-0011 결정 3). 레지스트리에 없어도 정지한다. */
-  private registryFlag(scope: SendScope): { inRegistry?: boolean } {
-    return scope.type === "caller"
-      ? { inRegistry: this.registry.callers.some((c) => c.id === scope.id) }
-      : {};
+  /**
+   * 호출처 정지·재개 응답의 `inRegistry`와 계정 정지·재개 응답의 `inConfig`. 오타를 알아보게 한다(ADR-0011 결정 3, ADR-0013 결정 5).
+   * 레지스트리·구성에 없어도 정지·재개한다(구성에서 뺀 대상의 정지 행을 정리할 수 있어야 한다).
+   */
+  private knownFlag(scope: SendScope): {
+    inRegistry?: boolean;
+    inConfig?: boolean;
+  } {
+    switch (scope.type) {
+      case "all":
+        return {};
+      case "caller":
+        return {
+          inRegistry: this.registry.callers.some((c) => c.id === scope.id),
+        };
+      case "account":
+        return {
+          inConfig: this.config.smtpAccounts.some((a) => a.id === scope.id),
+        };
+    }
   }
 
   pauses(): Promise<PauseRecord[]> {
@@ -182,8 +200,17 @@ export class OpsService {
   }
 }
 
-function logScope(scope: SendScope): { scope: string; callerId?: string } {
-  return scope.type === "all"
-    ? { scope: "all" }
-    : { scope: "caller", callerId: scope.id };
+function logScope(scope: SendScope): {
+  scope: string;
+  callerId?: string;
+  accountId?: string;
+} {
+  switch (scope.type) {
+    case "all":
+      return { scope: "all" };
+    case "caller":
+      return { scope: "caller", callerId: scope.id };
+    case "account":
+      return { scope: "account", accountId: scope.id };
+  }
 }

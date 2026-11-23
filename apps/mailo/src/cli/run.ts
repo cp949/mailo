@@ -46,12 +46,13 @@ const USAGE_TEXT = `사용법: node dist/cli.js <명령> [옵션]
 읽기 명령(읽기 또는 관리 토큰)
   status                              /health/ready와 /ops/pauses
   queue stats                         /health/ready의 queue
+  accounts list                       /ops/accounts(계정별 차단기·정지·사용량·대기)
   jobs show <jobId>                   /ops/jobs/{jobId}
   audit list [--limit N] [--before ID]  /ops/audit
 
 변경 명령(관리 토큰, --yes 필요)
-  pause --all | --caller <호출처 ID> --yes
-  resume --all | --caller <호출처 ID> --yes
+  pause --all | --caller <호출처 ID> | --account <계정 ID> --yes
+  resume --all | --caller <호출처 ID> | --account <계정 ID> --yes
   jobs cancel <jobId> --yes
 
 환경 변수
@@ -191,9 +192,14 @@ async function call(
 }
 
 function scopePath(scope: CliScope): string {
-  return scope.type === "all"
-    ? "/ops/pauses/all"
-    : `/ops/pauses/callers/${encodeURIComponent(scope.id)}`;
+  switch (scope.type) {
+    case "all":
+      return "/ops/pauses/all";
+    case "caller":
+      return `/ops/pauses/callers/${encodeURIComponent(scope.id)}`;
+    case "account":
+      return `/ops/pauses/accounts/${encodeURIComponent(scope.id)}`;
+  }
 }
 
 async function execute(
@@ -226,6 +232,8 @@ async function execute(
         );
       return ready.queue;
     }
+    case "accounts-list":
+      return send("GET", "/ops/accounts");
     case "jobs-show":
       return send("GET", `/ops/jobs/${command.jobId}`);
     case "audit-list": {

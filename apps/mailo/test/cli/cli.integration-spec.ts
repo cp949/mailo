@@ -168,6 +168,48 @@ describe("운영 CLI 통합 (RQ-047, ADR-0011 결정 7)", () => {
     expect(await pauseRows()).toEqual([]);
   });
 
+  it("accounts list와 pause·resume --account: 계정 상태를 읽고 관리 토큰으로 정지·재개한다 (RQ-061, ADR-0013 결정 5)", async () => {
+    const listed = await cli(["accounts", "list"], asRead);
+    expect(listed.code).toBe(CLI_EXIT.OK);
+    expect(JSON.parse(listed.out).accounts).toMatchObject([
+      { accountId: "default", paused: false },
+    ]);
+
+    const paused = await cli(
+      ["pause", "--account", "default", "--yes"],
+      asAdmin,
+    );
+    expect(paused.code).toBe(CLI_EXIT.OK);
+    expect(JSON.parse(paused.out)).toMatchObject({
+      scope: { type: "account", id: "default" },
+      paused: true,
+      changed: true,
+      pausedBy: "oncall",
+      inConfig: true,
+    });
+    expect(
+      JSON.parse((await cli(["accounts", "list"], asRead)).out).accounts[0],
+    ).toMatchObject({ paused: true });
+
+    const denied = await cli(
+      ["resume", "--account", "default", "--yes"],
+      asRead,
+    );
+    expect(denied.code).toBe(CLI_EXIT.HTTP);
+    expect(denied.err).toContain("HTTP 403");
+
+    const resumed = await cli(
+      ["resume", "--account", "default", "--yes"],
+      asAdmin,
+    );
+    expect(resumed.code).toBe(CLI_EXIT.OK);
+    expect(JSON.parse(resumed.out)).toMatchObject({
+      paused: false,
+      changed: true,
+    });
+    expect(await pauseRows()).toEqual([]);
+  });
+
   it("읽기 토큰으로 변경 명령을 부르면 종료 코드 2(403)이고 상태가 바뀌지 않는다", async () => {
     const result = await cli(["pause", "--all", "--yes"], asRead);
 

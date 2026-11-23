@@ -499,7 +499,7 @@ describe("PostgreSQL 통합: 발송 정지와 claim (RQ-043, ADR-0011 결정 2·
       });
     });
 
-    it("listPauses는 all과 caller를 정지 시각 순서로 준다. account 행은 REST 목록에 없다", async () => {
+    it("listPauses는 all·caller·account를 정지 시각 순서로 준다 (RQ-061, ADR-0013 결정 5)", async () => {
       await pauseCaller("beta");
       await pauseAll();
       await db.pool.query(
@@ -511,6 +511,7 @@ describe("PostgreSQL 통합: 발송 정지와 claim (RQ-043, ADR-0011 결정 2·
       expect(pauses.map((p) => p.scope)).toEqual([
         { type: "caller", id: "beta" },
         { type: "all" },
+        { type: "account", id: "default" },
       ]);
     });
 

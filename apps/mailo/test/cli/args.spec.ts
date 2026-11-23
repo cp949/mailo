@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import { isCallerId } from "../../src/callers/index.js";
+import { isAccountId } from "../../src/config/index.js";
 import { parseCliArgs } from "../../src/cli/index.js";
 
 // RQ-047, ADR-0011 결정 7: 운영 CLI의 인자 해석. 토큰은 인자로 받지 않고, 변경 명령은 --yes가 필요하다.
@@ -163,5 +164,78 @@ describe("토큰과 알 수 없는 인자 (결정 7, RQ-027)", () => {
   it("--help·-h는 도움말이다", () => {
     expect(parseCliArgs(["--help"]).kind).toBe("help");
     expect(parseCliArgs(["status", "-h"]).kind).toBe("help");
+  });
+});
+
+describe("계정 명령 (RQ-061, ADR-0013 결정 5)", () => {
+  it("accounts list를 읽기 명령으로 해석한다", () => {
+    expect(parseCliArgs(["accounts", "list"])).toEqual({
+      kind: "command",
+      command: { name: "accounts-list" },
+    });
+    for (const argv of [
+      ["accounts"],
+      ["accounts", "show"],
+      ["accounts", "list", "extra"],
+      ["accounts", "list", "--yes"],
+    ])
+      expect(parseCliArgs(argv).kind).toBe("usage-error");
+  });
+
+  it("pause·resume --account는 --yes가 있어야 하고 계정 범위로 해석한다", () => {
+    expect(usageMessage(["pause", "--account", "marketing"])).toContain(
+      "--yes",
+    );
+    expect(usageMessage(["resume", "--account", "marketing"])).toContain(
+      "--yes",
+    );
+    expect(parseCliArgs(["pause", "--account", "marketing", "--yes"])).toEqual({
+      kind: "command",
+      command: { name: "pause", scope: { type: "account", id: "marketing" } },
+    });
+    expect(parseCliArgs(["resume", "--account=a_b-1", "--yes"])).toEqual({
+      kind: "command",
+      command: { name: "resume", scope: { type: "account", id: "a_b-1" } },
+    });
+  });
+
+  it("범위는 --all·--caller·--account 중 하나만 받는다", () => {
+    for (const argv of [
+      ["pause", "--all", "--account", "marketing", "--yes"],
+      ["pause", "--caller", "billing", "--account", "marketing", "--yes"],
+      ["pause", "--account", "--yes"],
+      ["resume", "--yes"],
+    ])
+      expect(parseCliArgs(argv).kind).toBe("usage-error");
+  });
+
+  it("계정 ID 형식은 서버의 계정 ID 형식(isAccountId)과 같다", () => {
+    for (const id of [
+      "default",
+      "marketing",
+      "a",
+      "a_b-c",
+      "x".repeat(32),
+      "x".repeat(33),
+      "Marketing",
+      "-a",
+      "_a",
+      "a b",
+      "a.b",
+      "a@b",
+      "unregistered",
+      "",
+      "한글",
+    ]) {
+      const parsed = parseCliArgs(["pause", "--account", id, "--yes"]);
+      expect(parsed.kind === "command").toBe(isAccountId(id));
+    }
+  });
+
+  it("계정 ID 오류 메시지에 입력 값을 되풀이하지 않는다", () => {
+    const secret = "Canary.Secret@3f9a";
+    expect(usageMessage(["pause", "--account", secret, "--yes"])).not.toContain(
+      secret,
+    );
   });
 });

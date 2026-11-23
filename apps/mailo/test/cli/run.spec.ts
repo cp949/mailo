@@ -246,6 +246,41 @@ describe("명령과 REST 호출 (결정 7)", () => {
       `POST /ops/jobs/${JOB}/cancel`,
     ]);
   });
+
+  it("accounts list와 pause·resume --account는 계정 경로를 쓴다 (RQ-061, ADR-0013 결정 5)", async () => {
+    const run = async (argv: string[]) => {
+      const a = harness(() => json({ accounts: [] }));
+      const code = await runCli(argv, a.deps);
+      return { code, calls: a.calls };
+    };
+    const paths = async (argv: string[]) => {
+      const { code, calls } = await run(argv);
+      expect(code).toBe(CLI_EXIT.OK);
+      return calls.map(
+        (c) => `${c.method} ${c.url.replace("http://127.0.0.1:3000", "")}`,
+      );
+    };
+    expect(await paths(["accounts", "list"])).toEqual(["GET /ops/accounts"]);
+    expect(await paths(["pause", "--account", "marketing", "--yes"])).toEqual([
+      "PUT /ops/pauses/accounts/marketing",
+    ]);
+    expect(await paths(["resume", "--account", "marketing", "--yes"])).toEqual([
+      "DELETE /ops/pauses/accounts/marketing",
+    ]);
+    // --yes 없이는 호출하지 않는다.
+    const noYes = await run(["pause", "--account", "marketing"]);
+    expect(noYes.code).toBe(CLI_EXIT.USAGE);
+    expect(noYes.calls).toEqual([]);
+  });
+
+  it("accounts list의 오류 응답에 든 제어 문자를 치환해 낸다 (sanitizeForTerminal)", async () => {
+    const a = harness(
+      () => new Response('{"title":"x\u001b[31mred"}', { status: 500 }),
+    );
+    expect(await runCli(["accounts", "list"], a.deps)).toBe(CLI_EXIT.HTTP);
+    expect(a.err.join("")).not.toContain("\u001b");
+    expect(a.err.join("")).toContain("\uFFFD");
+  });
 });
 
 describe("종료 코드 (결정 7: 성공 0, 사용법 1, HTTP 2, 연결 3)", () => {
