@@ -142,6 +142,11 @@ export interface AppConfig {
    * 호출처 API 키로는 전역 수치를 볼 수 없다(다른 호출처의 발송량이 드러난다). 업무 endpoint에는 어느 토큰도 쓸 수 없다.
    */
   ops: OpsConfig;
+  /** `GET /metrics`의 전역 gauge 수집 캐시(RQ-049, ADR-0012 결정 5). */
+  metrics: {
+    /** DB 수집 결과를 재사용하는 시간 초(`MAILO_METRICS_CACHE_SECONDS`, 기본 5, 1~60). 기본값은 추정이다. */
+    cacheSeconds: number;
+  };
   /** 호출처 레지스트리 JSON 파일 경로(RQ-028). 내용은 callers 모듈이 읽는다. */
   callersFile: string;
   /** 로그 줄의 `instance` 값(`MAILO_INSTANCE_ID`, 없으면 호스트 이름). */
@@ -851,6 +856,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       fingerprint: new Secret(fingerprint as KeyRingInput),
     },
     ops,
+    metrics: {
+      cacheSeconds: reader.int("MAILO_METRICS_CACHE_SECONDS", 5, {
+        min: 1,
+        max: 60,
+      }),
+    },
     callersFile: callersFile ?? "",
     instanceId: loadInstanceId(reader),
     fileChannel,

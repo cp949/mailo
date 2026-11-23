@@ -1022,3 +1022,26 @@ describe("stop_grace_period와 lease 관계 (M6, RQ-025, ADR-0002 결정 12)", (
     ).toContain("11초");
   });
 });
+
+// 메트릭 캐시 TTL(RQ-049, ADR-0012 결정 5). 기본값 5는 추정이라 리터럴로 둔다.
+describe("메트릭 캐시 MAILO_METRICS_CACHE_SECONDS (RQ-049, ADR-0012 결정 5)", () => {
+  it("생략하면 5초다", () => {
+    expect(loadConfig(env()).metrics).toEqual({ cacheSeconds: 5 });
+  });
+
+  it.each(["1", "30", "60"])("범위 안의 값(%s)을 받는다", (value) => {
+    expect(
+      loadConfig(env({ MAILO_METRICS_CACHE_SECONDS: value })).metrics
+        .cacheSeconds,
+    ).toBe(Number(value));
+  });
+
+  it.each(["0", "61", "-1", "1.5", "abc"])(
+    "범위 밖이거나 정수가 아닌 값(%s)은 기동을 거부하고 변수 이름으로 가리킨다",
+    (value) => {
+      expect(issuesOf({ MAILO_METRICS_CACHE_SECONDS: value })).toContain(
+        "MAILO_METRICS_CACHE_SECONDS",
+      );
+    },
+  );
+});
