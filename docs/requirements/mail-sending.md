@@ -1073,7 +1073,7 @@ NFS 통합 테스트 환경(3단계, 추정):
 - `root_squash`를 켜고 서로 다른 non-root UID 2개로 실행한다.
 - WSL 로컬에서는 건너뛴다. 특권 컨테이너는 필요 없다. (실행 결과: WSL2 커널 6.6에 nfsd 모듈이 있어 건너뛰지 않고 실행했다. `apps/mailo/scripts/nfs/run.sh`.)
 - 속성 캐시는 커널 NFS 클라이언트에서 생기므로 loopback으로 재현된다고 본다. (실행 결과: 주소·호스트 이름이 다른 클라이언트 3개를 mount하면 새 폴더 가시성 지연 31초가 재현됐다.)
-- GitHub 호스티드 러너에서 mount는 됐다(2026-11-23 첫 실행, 서버 설치·export·mount 3개 준비 성공). 같은 실행에서 테스트 단계는 호출처 UID가 `caller-client.mjs` 경로를 통과하지 못해 실패했다. 사본 경로 실행과 timeout을 추가했고 재실행 전이라 `nfs` 잡 통과는 확인하지 못했다(`docs/operations/ci.md`).
+- GitHub 호스티드 러너에서 mount는 됐다(2026-11-23 첫 실행, 서버 설치·export·mount 3개 준비 성공). 같은 실행에서 테스트 단계는 호출처 UID가 `caller-client.mjs` 경로를 통과하지 못해 실패했다. 사본 경로 실행과 timeout을 추가한 뒤 두 번째 실행(2026-11-23, run 45126208202)에서 31건 중 28 통과·3 실패했다(캐시 만료 시점 `lstat` `EACCES` 2건, ESTALE 미재현 1건). 수정(ADR-0004 구현 중 확정 37·38)을 반영했고 러너 재실행 전까지 `nfs` 잡 통과는 확인하지 못했다(`docs/operations/ci.md`).
 
 ## 미결정 항목
 

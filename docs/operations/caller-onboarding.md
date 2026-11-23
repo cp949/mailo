@@ -116,7 +116,7 @@ printf '%s' "$KEY" | sha256sum | cut -d' ' -f1   # callers.json의 apiKeyHashes�
 | default ACL(권장) | 파일시스템이 POSIX ACL을 지원할 때 | 호출처 umask 022·027·077·000 모두 읽음 | 호출처가 파일 생성 mode를 `0600`으로 만들면 읽지 못한다 |
 | 공용 그룹 + setgid(대안) | ACL을 쓸 수 없는 파일시스템 | umask 027까지 읽고 077은 못 읽음 | 호출처 umask를 `027` 이하로 고정해야 한다. 호출처가 자기 폴더 권한을 바꿀 수 있다 |
 
-- Mailo는 폴링마다 `<root>`, `inbox`, `inbox/<caller_id>`가 링크가 아닌 디렉터리인지 확인한다. 링크이면 그 폴링에서 읽지 않고 `file_dir_unsafe`를 남긴다(`MAILO_FILE_CHANNEL_ROOT`에는 링크가 아닌 실제 경로를 준다). `o+w`가 있는 폴더(`<root>`·`inbox`는 `g+w`도)는 `file_channel_dir_permissive` 경고를 한 번 남기고 수집은 계속한다. 호출처 폴더의 `g+w`는 default ACL 마스크 때문에 정상이라 경고하지 않는다(ADR-0004 구현 중 확정 32).
+- Mailo는 폴링마다 `<root>`, `inbox`, `inbox/<caller_id>`가 링크가 아닌 디렉터리인지 확인한다. 링크이면 그 폴링에서 읽지 않고 `file_dir_unsafe`를 남긴다. 경로를 통과할 권한이 없어 확인하지 못해도(`EACCES`) 같은 경고(`why: ACCESS`)를 남기고 그 폴링에서 읽지 않는다(`MAILO_FILE_CHANNEL_ROOT`에는 링크가 아닌 실제 경로를 준다). `o+w`가 있는 폴더(`<root>`·`inbox`는 `g+w`도)는 `file_channel_dir_permissive` 경고를 한 번 남기고 수집은 계속한다. 호출처 폴더의 `g+w`는 default ACL 마스크 때문에 정상이라 경고하지 않는다(ADR-0004 구현 중 확정 32).
 - 호출처가 `0600`으로 만든 파일은 두 방식 모두 수집되지 않는다. 파일은 삭제되지 않고 남으며 `file_poll` 로그의 `unreadable`로 드러난다. 호출처가 `rename` 전에 `0660`으로 `chmod`해야 수집된다(`troubleshooting.md`).
 - 계정은 Mailo 1개와 호출처마다 1개이고 모두 non-root, UID가 서로 달라야 한다. root나 Mailo와 같은 UID의 호출처는 다른 호출처 폴더를 읽고 쓴다(검증됨, `verify-root-model.sh`).
 

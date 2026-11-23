@@ -34,7 +34,7 @@
 - 호출처가 Windows·macOS 클라이언트인 경우, 서로 다른 커널 버전 조합은 확인하지 않았다.
 - 시계 어긋남(임시 파일 정리가 mtime과 Mailo 시계의 차이로 판정한다, ADR-0004 구현 중 확정 9)은 확인하지 않았다.
 - 폴더당 수천 개 파일에서의 `readdir` 성능은 확인하지 않았다.
-- GitHub 호스티드 러너에서 `apps/mailo/scripts/nfs/run.sh`가 통과하는지 확인하지 못했다. 첫 실행(2026-11-23)에서 NFS 서버 설치·export·mount 3개 준비는 성공했지만, 테스트가 호출처 UID로 띄우는 `caller-client.mjs`를 그 UID가 찾지 못해(러너의 저장소 경로 통과 불가, `MODULE_NOT_FOUND`) 실패했고 잡이 30분 timeout까지 끝나지 않았다. 사본 경로 실행과 timeout을 추가했으나 재실행 전이라 러너 통과는 확인하지 못했다(`ci.md` "NFS 잡").
+- GitHub 호스티드 러너에서 `apps/mailo/scripts/nfs/run.sh`가 통과하는지 확인하지 못했다. 첫 실행(2026-11-23)에서 NFS 서버 설치·export·mount 3개 준비는 성공했지만, 테스트가 호출처 UID로 띄우는 `caller-client.mjs`를 그 UID가 찾지 못해(러너의 저장소 경로 통과 불가, `MODULE_NOT_FOUND`) 실패했고 잡이 30분 timeout까지 끝나지 않았다. 사본 경로 실행과 timeout을 추가한 뒤 두 번째 실행(2026-11-23, dev, run 45126208202)에서 처음으로 끝까지 실행됐고 31건 중 28 통과·3 실패했다. 실패는 호출처 폴더를 나중에 만드는 테스트 2건(속성 캐시 만료 시점의 `lstat` `EACCES`, 원인 미확정)과 ESTALE 테스트 1건(러너에서 ESTALE 0/40, 재현 안 됨)이다. 수정은 반영했지만(ADR-0004 구현 중 확정 37·38) 러너 재실행 전까지 통과 확인 안 됨이다. 러너에서 ESTALE 경로는 검증되지 않았다(`ci.md` "NFS 잡").
 - 호출처 UID가 실행하는 파일의 경로(테스트의 `caller-client.mjs` 사본)와 그 위 폴더가 호출처 UID에게 열려 있어야 한다. 저장소가 `0750` 홈 아래에 있어도 테스트는 `/tmp` 사본을 쓰므로 통과한다. 호출처 UID가 접근할 수 없는 `TMPDIR`는 쓰지 않는다.
 
 ## 권장 mount 옵션
@@ -136,6 +136,8 @@ ESTALE 관찰:
 - Node(libuv)에는 ESTALE 이름이 없어 `error.code`가 `"Unknown system error -116"`이고 `error.errno`가 `-116`이다. `code === "ESTALE"` 비교는 동작하지 않는다.
 - 수정: `errno.ts`의 `isStale`이 `errno -116`을 판별한다. `open`·`fstat`·`read`·`lstat`·`unlink`의 ESTALE은 "이미 없음"(`gone`)으로 다룬다. `opendir`·`readdir`의 ESTALE은 한 번 다시 읽고, 두 번째도 실패하면 그 호출처를 건너뛰고 경고 로그(`file_inbox_stale`)를 남긴다.
 - 서버를 재시작하거나 export를 바꾼 뒤의 ESTALE은 확인하지 않았다.
+- GitHub 러너(ubuntu-24.04, `nfs-kernel-server` 2.6.4)에서는 같은 테스트의 ESTALE 표본이 0/40이었다. 위 5~50%는 로컬 관찰이고 환경마다 다르다. ESTALE이 나지 않으면 테스트는 `[nfs-measure] ESTALE 재현 못 함`을 남기고 통과하며, 그때 ESTALE 경로는 이 테스트로 검증되지 않은 것이다(분류는 단위 테스트가 확인).
+- 속성 캐시가 만료된 뒤 `<root>/inbox`의 `lstat`이 `EACCES`로 실패한 적이 있다(러너 1회, 로컬 재현 안 됨). 폴러는 던지지 않고 그 폴링을 건너뛰며 `file_dir_unsafe`(`why: ACCESS`)를 남긴다(ADR-0004 구현 중 확정 37).
 
 ## 재현 방법과 위험
 
@@ -169,6 +171,6 @@ MAILO_NFS_VERS=4.2 apps/mailo/scripts/nfs/run.sh   # 4.2 기준
 - Docker local 드라이버 NFS named volume(`docker-compose.nfs-example.yml`)을 실제 NAS 제품에서 확인한다(같은 호스트 loopback은 2026-11-23에 확인했다). NFSv3·4.0 서버와 호출처 UID 매핑 불일치도 같다.
 - NAS가 멈췄을 때(`hard` mount) 폴러 정지가 `filePoller.lastPollAt`으로 감지되는지와 다른 파일 작업에 미치는 영향.
 - 실제 NAS(대상 제품과 mount 옵션)에서 `apps/mailo/scripts/nfs/run.sh`를 대신할 검증. 최소한 (a) 새 폴더 가시성, (b) `close` 전 `rename`, (e) umask 077 읽기를 다시 확인한다.
-- `nfs` 잡을 GitHub에서 실행해 `run.sh` 동작 확인(워크플로는 작성함, 미실행). 성공을 확인한 뒤에도 필수 체크 지정 여부를 따로 정한다.
+- `nfs` 잡을 GitHub에서 다시 실행해 수정 뒤 31건 통과를 확인(2026-11-23 두 번째 실행은 28 통과·3 실패였고 수정 뒤 재실행 전이다). 성공을 확인한 뒤에도 필수 체크 지정 여부를 따로 정한다.
 - 서버 재시작·failover 뒤 폴러의 동작(ESTALE, 재연결 지연).
 - 시계 어긋남이 있는 서버와의 임시 파일 정리.

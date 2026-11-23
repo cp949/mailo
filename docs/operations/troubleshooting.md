@@ -132,7 +132,7 @@ SELECT job_id, started_at, finished_at FROM mail_attempts
 | `file_channel_disabled` | warn | 호출처에 `fileChannel: true`가 있는데 `MAILO_FILE_CHANNEL_ROOT`가 없다(`callers` 수) |
 | `file_inbox_missing` / `file_inbox_found` | warn / info | 호출처 폴더가 없다(`code`: `ENOENT`·`ENOTDIR`) / 다시 생겼다. 폴더를 만드는 것은 운영자의 몫이다. 호출처당 한 번만 남는다 |
 | `file_inbox_stale` | warn | NFS `ESTALE`로 이번 폴링에서 호출처를 건너뛰었다. 다음 간격에 다시 본다 |
-| `file_dir_unsafe` / `file_dir_safe` | warn / info | `<root>`·`inbox`·호출처 폴더가 심볼릭 링크이거나 디렉터리가 아니라서 그 폴링에서 읽지 않는다(`dir`: `root`·`inbox`·`callerInbox`, `why`: `SYMLINK`·`NOT_DIRECTORY`) / 복구됐다. 상태가 바뀔 때 한 번만 남는다. 링크를 지우고 실제 디렉터리를 둔다 |
+| `file_dir_unsafe` / `file_dir_safe` | warn / info | `<root>`·`inbox`·호출처 폴더가 심볼릭 링크이거나 디렉터리가 아니라서 그 폴링에서 읽지 않는다(`dir`: `root`·`inbox`·`callerInbox`, `why`: `SYMLINK`·`NOT_DIRECTORY`·`ACCESS`). `ACCESS`는 경로를 통과할 권한이 없어 `lstat`이 `EACCES`·`EPERM`이라 종류를 확인하지 못한 경우다(NFS에서 속성 캐시 만료 직후 일시적으로 나온 적이 있다). 호출처 폴더는 `errors`로 세고 `<root>`·`inbox`는 폴링 전체를 건너뛴다 / 복구됐다. 상태가 바뀔 때 한 번만 남는다. 링크를 지우고 실제 디렉터리를 둔다. `ACCESS`가 한 번 나오고 `file_dir_safe`가 뒤따르면 일시적이다. 계속되면 Mailo 실행 계정의 `<root>`(`0755`)·`inbox`(`0711`) 통과 권한과 mount 상태를 확인한다(`namei -l <경로>`) |
 | `file_channel_dir_permissive` | warn | 폴더 권한이 넓다(`o+w`, `<root>`·`inbox`는 `g+w`도). `mode`는 8진수. 수집은 막지 않는다. 폴더당 한 번 남는다. 호출처 폴더의 `g+w`는 default ACL 마스크 때문에 정상이라 경고하지 않는다 |
 | `file_rejected` | info | 수집 거부 기록. `callerId`, `reasonCode`, `rejectionId`, `sizeBytes`, `sha256`(본문·파일 이름 없음). 파일 이름은 호출처가 정하므로 로그에 남기지 않는다. `rejectionId`로 `mail_intake_rejections.id`나 이벤트 피드의 `INTAKE_REJECTED`(`fileName` 포함)를 찾는다 |
 | `file_temp_delete_failed` | warn | 오래된 임시 파일 삭제 실패(`error`) |

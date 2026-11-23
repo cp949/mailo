@@ -1414,6 +1414,75 @@ describe("디렉터리 경로 검사(L3, RQ-024)", () => {
     expect(h.logs.some((l) => l.includes("file_dir_unsafe"))).toBe(true);
   });
 
+  // 경로 통과 권한이 없으면 lstat이 EACCES다(CI 러너 NFS 첫 실행에서 속성 캐시가 만료된 뒤 관찰, ADR-0004 구현 중 확정 37).
+  // root는 권한 검사를 건너뛰므로 만들 수 없는 상황이다.
+  (asRoot ? it.skip : it)(
+    "inbox를 통과할 수 없으면 던지지 않고 그 호출처만 건너뛰며 ACCESS 경고를 한 번 남기고, 풀리면 다시 읽는다(ADR-0004 구현 중 확정 37)",
+    async () => {
+      const inbox = path.join(h.root, "inbox");
+      h.drop(
+        "alpha",
+        "late.json",
+        JSON.stringify(fileRequest({ idempotencyKey: "acc-1" })),
+      );
+      const poller = h.makePoller();
+
+      chmodSync(inbox, 0o600);
+      let first: PollSummary;
+      try {
+        first = await poller.pollOnce();
+        await poller.pollOnce();
+      } finally {
+        chmodSync(inbox, 0o755);
+      }
+
+      expect(first.callers.find((c) => c.callerId === "alpha")?.errors).toBe(1);
+      expect(await jobCount()).toBe(0);
+      expect(poller.status().lastPollOk).toBe(false);
+      // 하네스 호출처는 alpha·beta·signed 3곳이다. 두 번 폴링해도 호출처마다 한 번만 남는다.
+      const unsafe = h.logs.filter((l) => l.includes("file_dir_unsafe"));
+      expect(unsafe).toHaveLength(3);
+      for (const line of unsafe) {
+        expect(line).toContain("callerInbox");
+        expect(line).toContain("ACCESS");
+      }
+
+      await poller.pollOnce();
+
+      expect(await jobCount()).toBe(1);
+      expect(poller.status().lastPollOk).toBe(true);
+      expect(h.logs.some((l) => l.includes("file_dir_safe"))).toBe(true);
+    },
+  );
+
+  (asRoot ? it.skip : it)(
+    "root를 통과할 수 없으면 폴링이 던지지 않고 아무것도 읽지 않으며 inbox ACCESS 경고를 남긴다(ADR-0004 구현 중 확정 37)",
+    async () => {
+      h.drop(
+        "alpha",
+        "late.json",
+        JSON.stringify(fileRequest({ idempotencyKey: "acc-2" })),
+      );
+      const poller = h.makePoller();
+
+      chmodSync(h.root, 0o600);
+      let summary: PollSummary;
+      try {
+        summary = await poller.pollOnce();
+      } finally {
+        chmodSync(h.root, 0o755);
+      }
+
+      expect(summary.callers).toEqual([]);
+      expect(await jobCount()).toBe(0);
+      expect(poller.status().lastPollOk).toBe(false);
+      const unsafe = h.logs.filter((l) => l.includes("file_dir_unsafe"));
+      expect(unsafe).toHaveLength(1);
+      expect(unsafe[0]).toContain("inbox");
+      expect(unsafe[0]).toContain("ACCESS");
+    },
+  );
+
   it("링크가 풀리면 다시 읽는다", async () => {
     h.inbox("alpha");
     const dir = path.join(h.root, "inbox", "alpha");

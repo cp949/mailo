@@ -149,6 +149,43 @@ describe("입력 파일 읽기 (ADR-0004 결정 5, RQ-002)", () => {
     expect(result).toEqual({ kind: "gone", nlinkZero: true });
   });
 
+  // NFS에서 다른 클라이언트가 지운 파일은 open 뒤 fstat·read에서 ESTALE(errno -116)로 실패할 수 있다(ADR-0004 구현 중 확정 37).
+  // 러너에서는 ESTALE이 재현되지 않아 NFS 테스트가 이 경로를 확인하지 못하므로, 같은 모양의 오류를 afterOpen에서 던져 분류만 확인한다.
+  // open 자체가 ESTALE인 경로는 fs 호출을 대체하지 않고는 만들 수 없어 이 파일에서 확인하지 않는다(errnoCode 분류는 errno.spec.ts).
+  const nodeEstale = () =>
+    Object.assign(new Error("Unknown system error -116"), {
+      code: "Unknown system error -116",
+      errno: -116,
+      syscall: "fstat",
+    });
+
+  it("open 뒤 fstat·read 단계에서 ESTALE(errno -116)이 나면 던지지 않고 gone이다", async () => {
+    const target = file("estale-after-open.json");
+    writeFileSync(target, '{"x":1}');
+
+    const result = await readInboxFile(target, LIMIT, {
+      afterOpen: () => {
+        throw nodeEstale();
+      },
+    });
+
+    // nlinkZero 표시가 없어야 한다(nlink 0 오보고 집계와 섞이지 않는다).
+    expect(result).toEqual({ kind: "gone" });
+  });
+
+  it("open 뒤 단계의 ESTALE이 아닌 오류는 그대로 던진다", async () => {
+    const target = file("eio-after-open.json");
+    writeFileSync(target, '{"x":1}');
+
+    await expect(
+      readInboxFile(target, LIMIT, {
+        afterOpen: () => {
+          throw Object.assign(new Error("EIO"), { code: "EIO", errno: -5 });
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EIO" });
+  });
+
   it("없는 파일은 gone이다", async () => {
     // ENOENT에는 nlinkZero 표시가 없다.
     expect(await readInboxFile(file("nothing.json"), LIMIT)).toEqual({

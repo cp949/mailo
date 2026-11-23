@@ -1,6 +1,6 @@
 # CI (GitHub Actions)
 
-`.github/workflows/ci.yml`이 정의한다. 2026-11-23에 작성했다. 같은 날 수동 실행 1회(run 45119061025, `run_nfs=true`, 커밋 `9c31318`)에서 `static`·`integration`·`container` 잡은 성공했고 `nfs` 잡은 취소됐다(아래 "NFS 잡"). 아래 "로컬 확인"은 워크플로의 각 명령을 같은 순서로 로컬에서 실행한 결과다. **`nfs` 잡은 GitHub 러너에서 통과를 확인하지 못했다.**
+`.github/workflows/ci.yml`이 정의한다. 2026-11-23에 작성했다. 같은 날 수동 실행 1회(run 45119061025, `run_nfs=true`, 커밋 `9c31318`)에서 `static`·`integration`·`container` 잡은 성공했고 `nfs` 잡은 취소됐다. 두 번째 수동 실행(run 45126208202)에서 `nfs` 잡이 처음 끝까지 실행됐고 31건 중 3건이 실패했다(아래 "NFS 잡"). 아래 "로컬 확인"은 워크플로의 각 명령을 같은 순서로 로컬에서 실행한 결과다. **`nfs` 잡은 GitHub 러너에서 통과를 확인하지 못했다.**
 
 ## 잡
 
@@ -38,6 +38,11 @@ branch protection·필수 체크 지정은 이 저장소에서 하지 않았다.
 - 수정(2026-11-23): (1) `test/nfs/support.ts`가 `caller-client.mjs`를 `/tmp`의 임시 폴더(0755, 파일 0644)로 복사해 그 사본을 다른 UID로 실행한다(저장소 경로 권한은 바꾸지 않는다). (2) `CallerClient`가 자식 종료·기동 오류 때 대기 중인 호출을 즉시 실패시키고, 명령당 30초(`MAILO_NFS_CALL_TIMEOUT_MS`) 안에 응답이 없으면 클라이언트를 강제 종료하고 실패시킨다. (3) `run.sh`가 `pnpm test:nfs`를 `timeout`으로 감싼다(`MAILO_NFS_RUN_TIMEOUT`, 기본 1200초, 초과 시 종료 코드 124, teardown은 실행). (4) 워크플로의 실행 단계에 `timeout-minutes: 25`를 두었다. 시간 상한은 run.sh 20분 < 단계 25분 < 잡 30분이다.
 - 수정 뒤 재실행 전이다. **`nfs` 잡이 GitHub 러너에서 통과하는지는 여전히 확인하지 못했다.** 사본 경로로 바꾼 뒤 다른 uid·NFS 동작이 로컬과 같은지, 러너에서 나머지 테스트가 통과하는지는 재실행해야 안다. 로컬(WSL2)에서는 수정 직후 `nfs-kernel-server`가 없어 NFS 자체를 돌리지 못하고 NFS 없이 `CallerClient`만 UID 2001로 확인했다. 이후 같은 날 사용자 승인으로 `nfs-kernel-server` 2.6.1을 설치하고 수정한 소스(브랜치 `fix/ci-nfs`)로 `apps/mailo/scripts/nfs/run.sh`를 실행했다: 종료 코드 0, Test Suites 1 passed, Tests 31 passed(기본 NFSv4.1 클라이언트 1회). 로컬 통과이고 GitHub 러너 통과가 아니다.
 - 그래서 `continue-on-error: true`이고 push·pull_request에서는 돌지 않는다. 첫 실행 결과를 확인하기 전까지 필수 체크가 아니다. 실패해도 워크플로 전체는 실패로 표시되지 않는다.
+- 두 번째 실행 결과(2026-11-23, run 45126208202, dev, 수동 `run_nfs=true`): 이 잡이 처음으로 테스트까지 끝까지 실행됐다(06:45 시작, 46.6초). Tests 31개 중 28 통과, 3 실패. 러너: ubuntu-24.04(이미지 20261116.133.1), `nfs-kernel-server` 2.6.4-3ubuntu5.1, `mailoUid=1001`. 로컬은 2.6.1, `mailoUid=1000`이다.
+  - 실패 1·2: "나중에 만든 호출처 폴더는 mount 옵션 ''에서 90000 ms 안에 보인다"(30468 ms 경과)와 "…'acdirmin=3,acdirmax=3'에서 12000 ms 안에 보인다"(3291 ms 경과). 오류는 `EACCES: permission denied, lstat '/srv/mailo-nfs-test/mnt/m1/inbox'`(`dir-check.ts` `inspectDir`, 폴링마다 하는 링크 검사)다. 경과 시간이 mount 옵션의 디렉터리 속성 캐시 만료(기본 30초, `acdirmin=3`)와 같아 캐시 만료 시점의 revalidate에서 났다고 추정한다. `lookupcache=pos` 케이스와 기존 폴더 케이스(캐시가 만료되기 전에 끝남)는 통과했다. **EACCES의 원인은 확정하지 못했다.** 로컬에서 Mailo UID 1001로 환경을 만들고(`MAILO_NFS_MAILO_UID=1001 scripts/nfs/setup.sh`) UID 1001로 `acdirmin=3` mount를 1초마다 `lstat`했을 때 재현되지 않았다. 추정 원인은 러너 커널·nfs-utils 차이이며 확인하지 못했다. 로컬 통과는 1000으로 돌린 것이라 UID 차이로 설명되지도 않는다.
+  - 실패 3: "다른 클라이언트가 지운 파일에서 ESTALE이 나도 readInboxFile은 던지지 않고 gone으로 돌려준다". `ESTALE 표본 0/40`(`readInboxFile` 결과 `{"gone":40}`, 던진 오류 없음)이라 `probeStale > 0` 단언이 실패했다. 이 러너에서는 ESTALE이 재현되지 않았다(로컬은 5~50%). 코드 결함이 아니라 재현 조건의 차이로 보지만, 러너에서 ESTALE 경로가 동작하는지는 확인하지 못했다.
+  - 수정(2026-11-23, ADR-0004 구현 중 확정 37·38): (1) `inspectDir`가 `EACCES`·`EPERM`이면 던지지 않고 `why: ACCESS`로 돌려주고, 폴러는 그 폴링의 해당 디렉터리를 건너뛰며 `file_dir_unsafe`를 한 번 남긴다. (2) ESTALE 표본이 0이면 실패시키지 않고 `[nfs-measure] ESTALE 재현 못 함 ... 검증되지 않았다`를 남긴다. ESTALE 분류는 단위 테스트(`errno.spec.ts`, `read-file.spec.ts`)가 확인한다. (3) 새 폴더 테스트가 오류 폴링 수와 `ACCESS` 경고 수를 `[nfs-measure]`로 남긴다.
+  - **수정 뒤 러너 재실행 전까지 통과 확인 안 됨.** 로컬(WSL2, UID 1000)에서는 수정 뒤 `run.sh` 31건이 모두 통과했다(오류 폴링 0, ACCESS 경고 0, ESTALE 표본 6/40). 러너에서 (1)이 EACCES를 해소하는지(일시적이면 건너뛰고 복구하지만 지속되면 테스트는 계속 실패한다)와 (2)로 통과한 3번 테스트가 ESTALE을 검증하지 않은 채 통과한다는 점은 재실행 로그의 `[nfs-measure]` 줄로 확인한다.
 - 설치(`MAILO_NFS_INSTALL=1`, `acl`)는 일회용 러너를 전제로 한다. `teardown.sh`는 설치를 되돌리지 않는다.
 - 이 잡이 러너에서 통과하면 `nfs.md`의 "CI 러너 미확인" 항목을 갱신한다.
 

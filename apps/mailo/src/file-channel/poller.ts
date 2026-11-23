@@ -219,6 +219,8 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
   /**
    * 디렉터리가 링크가 아닌 디렉터리인지 확인한다(L3). 읽어도 되면 true다.
    * 없는 디렉터리는 true다(이후 `opendir`의 기존 처리가 맡는다). 링크·비디렉터리는 `file_dir_unsafe` 경고를 남기고 false다.
+   * 경로 통과 권한이 없어 확인하지 못한 경우(`why: ACCESS`)도 같은 경고를 남기고 false다. 호출처 폴더는 `errors`로 센다.
+   * 일시적이면 다음 폴링에 복구되어 `file_dir_safe`가 남고, 계속되면 폴링마다 `errors`와 `lastPollOk=false`로 드러난다.
    * 권한이 넓으면 `file_channel_dir_permissive` 경고를 남기되 막지 않는다.
    */
   async function dirIsSafe(
