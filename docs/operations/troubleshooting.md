@@ -436,6 +436,29 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 
 이벤트 쓰기 실패 등 DB 오류로 취소 요청이 503이면 전이도 롤백되어 `PENDING`·`RETRY_WAIT` 그대로다. 같은 요청을 다시 보내면 된다.
 
+## SMTP 계정 구성
+
+근거: RQ-053·054·056, ADR-0013. 계정 형식과 배포 순서는 `deployment.md` "SMTP 계정"이다. 로그에는 계정 ID와 호출처 ID, 건수만 싣고 host·user·from·비밀번호는 싣지 않는다.
+
+| 증상·로그 | 의미 | 조치 |
+| --------- | ---- | ---- |
+| 기동 실패 `MAILO_SMTP_SECRET_<이름> 또는 …_FILE이 필요하다(accounts[i].auth.secretVar)` | 계정 파일이 가리키는 비밀 변수가 없다 | 변수나 `_FILE`을 준다. 변수 이름은 파일의 `secretVar`와 같아야 한다 |
+| 기동 실패 `accounts[i].id가 …`, `알 수 없는 필드`, `host·port·user` | 계정 파일 형식 오류. 위치(`accounts[i]`)와 사유만 나온다 | 위치의 항목을 `deployment.md` "SMTP 계정"의 필드 표에 맞춘다 |
+| 기동 실패 `MAILO_SMTP_<변수>은 MAILO_SMTP_ACCOUNTS_FILE이 있고 MAILO_SMTP_HOST가 없을 때 쓸 수 없다` | 계정 파일로 `default`를 정의하는데 `MAILO_SMTP_*` 잔여 변수가 남았다 | 변수를 지우거나 `MAILO_SMTP_HOST`를 주어 `default`를 환경 변수로 정의한다 |
+| 기동 실패 `callers[i].accountId가 구성에 없는 SMTP 계정을 가리킨다` | 레지스트리가 모르는 계정을 지정했다 | 계정 파일에 계정을 넣거나 `accountId`를 고친다. 계정 파일 배포가 이 인스턴스에 끝났는지 본다 |
+| 기동 실패 `callers[i].accountId를 생략하면 default 계정을 쓰는데 구성에 default 계정이 없다` | `default` 계정이 없는데 `accountId`를 생략한 호출처가 있다 | 그 호출처에 `accountId`를 지정하거나 `default` 계정을 정의한다 |
+| `account_orphan_jobs`(warn, `accountId`, `count`) | 구성에 없는 계정의 비종결 작업이 DB에 있다. 점유되지 않고 만료 시각에 `EXPIRED`가 된다 | 계정을 구성에 되돌리면 다시 발송된다. 의도한 제거면 기다리거나 취소한다. 다른 계정으로 옮기지 않는다 |
+| `account_unused`(info, `accountId`) | 어느 호출처도 쓰지 않는 계정 | 의도한 것인지 확인한다. 거부하지 않는다 |
+| `allowed_from_other_account`(warn, `callerId`) | 그 호출처의 `allowedFrom`이 다른 계정의 `from`과 같다 | 의도한 별칭 공유인지 확인한다. 거부하지 않는다 |
+| `account_limits_not_enforced`(warn, `accountId`) | `sendQuota24h`·`concurrency`를 설정했지만 쓰지 않는다(구현 묶음 B 전) | 한도에 기대지 않는다. 계정별 한도는 B 이후다 |
+| `accounts_not_isolated`(warn, `accountCount`) | 계정이 둘 이상이다. 계정별 차단기·정지·할당이 다른 계정의 점유를 막지 않는다(묶음 B 전) | 둘째 계정을 운영에서 켜지 않는다 |
+| `job_internal_error`(error)가 계속된다 | 작업이 고정한 계정의 발송기가 없는 등 Mailo 내부 오류. 차단기를 건드리지 않고 같은 작업이 3번째 시도에서 `FAILED`가 된다 | 정상 경로에서는 일어나지 않는다. 계정 구성과 `mail_jobs.account_id`를 확인한다 |
+| `account_orphan_check_failed`(warn, `error`) | 기동 때 구성 밖 계정 작업을 세는 쿼리가 실패했다 | 기동은 막지 않는다. DB 연결을 본다 |
+
+- 작업의 계정 확인(읽기): `SELECT account_id, status, count(*) FROM mail_jobs GROUP BY 1, 2 ORDER BY 1, 2;`
+- 계정별 차단기 행(읽기): `SELECT breaker_key, state, open_until, last_reason FROM mail_circuit_breaker ORDER BY 1;`. 행 키가 계정 ID다. 구성에 있는 계정의 행은 기동 때 만든다. 구성에서 빠진 계정의 행은 지우지 않는다.
+- 이 버전은 계정별 차단기 상태를 `/health/ready`·`/ops`·`/metrics`에 내지 않는다(구현 묶음 C). 위 SQL로 본다.
+
 ## 호출처 할당 초과
 
 신호: `caller_quota_exceeded`(warn, `callerId`, `limit`)는 할당을 넘긴 호출처가 새로 생겼을 때 한 번, `caller_quota_recovered`(info, `callerId`)는 풀렸을 때 한 번 남는다. 폴링마다 반복되지 않는다.
@@ -469,7 +492,7 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 | `records_deleted` | 보존 기간이 지난 작업 행(시도·이벤트 포함)과 거부 기록을 삭제했다 |
 | `<이름>_failed`(error) | 위 작업의 실패. `error`에 오류 이름 |
 
-그 밖의 Worker 로그: `smtp_plaintext_enabled`(warn, `auth`, `message`, 기동 때 한 번. `MAILO_SMTP_SECURITY=none`이라 인증 정보와 본문이 평문으로 나간다. `deployment.md` "평문 SMTP 모드"), `worker_started`, `worker_paused`(`inFlight`, 종료 신호 직후 새 점유 중지), `worker_stopping`, `worker_stopped`(`drained`), `job_completed`(`jobId`, `status`, `classification`, `probe`), `poll_loop_crashed`, `maintenance_loop_crashed`.
+그 밖의 Worker 로그: `smtp_plaintext_enabled`(warn, `accountId`, `auth`, `message`, 평문(`security=none`) 계정마다 기동 때 한 번. 인증 정보와 본문이 평문으로 나간다. `deployment.md` "평문 SMTP 모드"), `worker_started`, `worker_paused`(`inFlight`, 종료 신호 직후 새 점유 중지), `worker_stopping`, `worker_stopped`(`drained`), `job_completed`(`jobId`, `status`, `classification`, `probe`), `poll_loop_crashed`, `maintenance_loop_crashed`.
 
 ## 지표 해석
 
@@ -521,3 +544,4 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 - 실제 Gmail의 응답 코드·텍스트로 `lastReason` 분류를 대조하지 않았다(ADR-0007 구현 중 확정 2).
 - "지표 해석"은 지표 이름과 라벨을 코드의 카탈로그와 대조했고 `/metrics` 통합 테스트(`test/http/metrics-*.integration-spec.ts`, `test/e2e/metrics-counters.integration-spec.ts`)가 값을 확인한다. 위 증상 표의 원인 후보와 조치는 부하나 실제 장애에서 확인하지 않았다.
 - 긴 트랜잭션의 원인 목록(`pg_dump`, prepared transaction)은 일반 지식이며 Mailo 피드로 재현하지 않았다.
+- "SMTP 계정 구성"의 기동 오류와 로그 이벤트는 단위·통합 테스트(`test/config/smtp-accounts.spec.ts`, `test/callers/account-id.spec.ts`, `test/e2e/multi-account.integration-spec.ts`, `test/worker/account-startup.spec.ts`)가 확인한다. 운영 환경에서 실행하지 않았고 실제 Gmail·Workspace 계정 둘 이상으로 확인하지 않았다.

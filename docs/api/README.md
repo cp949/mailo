@@ -185,7 +185,7 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 - 큐 내부의 실패 원인은 `failureReason`으로 변환한다. `PERMANENT`는 `PERMANENT_ERROR`, `ATTEMPTS_EXHAUSTED`는 `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_REPEATED`는 `ACCOUNT_ERROR_REPEATED`다. `EXPIRED`는 그대로다.
 - 404는 없는 ID, 다른 호출처의 작업, 보존 기간이 지나 삭제된 작업을 구분하지 않는다.
 - 409 응답에 먼저 등록된 작업의 `jobId`를 넣는다(같은 호출처 작업이다).
-- 검증 오류 코드는 `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`, `CONTROL_CHARACTER`, `UNKNOWN_FIELD`, `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`, `RECIPIENT_DOMAIN_NOT_ALLOWED`, `OUT_OF_RANGE`다. `FROM_NOT_ALLOWED`는 `from`이 호출처의 허용 발신 주소(기본 발신 주소 + `allowedFrom`)가 아닐 때이고 위치는 `/from`이다. `RECIPIENT_DOMAIN_NOT_ALLOWED`는 수신자(`to`·`cc`·`bcc`)의 도메인이 호출처의 `allowedRecipientDomains`에 없을 때이고 어긴 주소마다 `/to/0` 같은 위치를 준다. 하나라도 어기면 요청 전체를 거부한다. 주소와 도메인 값은 응답에 없다. `replyTo`는 제한하지 않는다.
+- 검증 오류 코드는 `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`, `CONTROL_CHARACTER`, `UNKNOWN_FIELD`, `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`, `RECIPIENT_DOMAIN_NOT_ALLOWED`, `OUT_OF_RANGE`다. `FROM_NOT_ALLOWED`는 `from`이 호출처의 허용 발신 주소(호출처 SMTP 계정의 기본 발신 주소 + `allowedFrom`)가 아닐 때이고 위치는 `/from`이다. `RECIPIENT_DOMAIN_NOT_ALLOWED`는 수신자(`to`·`cc`·`bcc`)의 도메인이 호출처의 `allowedRecipientDomains`에 없을 때이고 어긴 주소마다 `/to/0` 같은 위치를 준다. 하나라도 어기면 요청 전체를 거부한다. 주소와 도메인 값은 응답에 없다. `replyTo`는 제한하지 않는다.
 
 이벤트 피드.
 

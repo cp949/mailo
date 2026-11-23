@@ -5,6 +5,7 @@
       "apiKeyHashes": [
         "93b3ed82f4ad4745e120e01b99f5ba7b4e224aac11d67708148742ac1e209a6b"
       ],
+      "accountId": "default",
       "fileChannel": false,
       "signature": { "mode": "none" }
     }

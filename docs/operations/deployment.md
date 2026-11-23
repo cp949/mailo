@@ -111,7 +111,7 @@ services:
   - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX CONCURRENTLY`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다).
   - 실행기는 표식 파일을 실행한 뒤 기록 전에 현재 schema의 `INVALID` 인덱스(`pg_index.indisvalid = false`)를 조회한다. 있으면 기록하지 않고 인덱스 이름을 담은 오류로 실패한다. `IF NOT EXISTS`는 같은 이름의 `INVALID` 인덱스가 있으면 건너뛰고 성공하기 때문이다. 같은 schema에서 수동 `CREATE INDEX CONCURRENTLY`가 진행 중이어도 실패한다.
   - 같은 실행에서 앞서 적용한 파일은 이미 커밋돼 있다. 표식 파일이 실패해도 앞 파일은 롤백되지 않는다.
-  - 현재 파일 중 `0005_job_priority_claim_index.sql`만 표식 파일이다. 나머지(`0001`~`0004`, `0006`, `0007`)는 트랜잭션 실행이다.
+  - 현재 파일 중 `0005_job_priority_claim_index.sql`만 표식 파일이다. 나머지(`0001`~`0004`, `0006`~`0011`)는 트랜잭션 실행이다.
   - `0005`의 확인·복구 절차는 `troubleshooting.md` "등급별 적체"다.
 - 잠금 대기: 기본(트랜잭션) 실행은 풀에 `lock_timeout`이 걸려 있으면 그 값(CLI는 10초)을 쓰고, 없으면(0) 10초를 `SET LOCAL`로 건다. 표식 파일은 같은 값을 세션 `SET`으로 걸고 끝나면 `RESET`한다. 마이그레이션이 다른 쿼리를 막는 잠금을 10초 넘게 기다리면 실패한다(`55P03`). 인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
 
@@ -215,6 +215,32 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 롤백: 취소 API 사용 중지 후 앱만 이전 버전으로 되돌린다. 스키마는 되돌리지 않는다(되돌리려면 pg_dump 복원)
 ```
 
+### SMTP 계정 도입 배포 순서
+
+근거: RQ-053~056, ADR-0013 결정 2·4. 구현 묶음 A의 마이그레이션은 `0010`(`mail_jobs.account_id`)·`0011`(`mail_attempts.account_id`)이다. 둘 다 `ADD COLUMN ... NOT NULL DEFAULT 'default'`와 `ADD CONSTRAINT ... NOT VALID`다. 표를 다시 쓰지 않고 백필하지 않는다. 기존 행은 `default`로 보인다. 구버전은 컬럼을 열거해 읽고 쓰므로 새 컬럼을 무시하고, 컬럼 없는 `INSERT`는 `default`가 된다. `0012`~`0016`(인덱스 교체)은 묶음 B다.
+
+1. 마이그레이션 전에 `pg_dump`를 받는다("백업과 복구"). `0010`·`0011`을 적용한다(기동 때 자동 또는 `mailo-migrate`). 파일마다 `ALTER TABLE`이 `mail_jobs`·`mail_attempts`에 각각 `ACCESS EXCLUSIVE` 잠금을 잡는다. 150만 행 임시 schema에서는 1.2ms였다(ADR-0013 측정, 로컬 단일 실행). 이미 도는 긴 트랜잭션이 있으면 잠금을 기다리고 `lock_timeout`(기본 10초)을 넘기면 그 파일만 롤백되며 실행기가 실패한다. 다시 실행한다.
+2. 모든 Mailo 인스턴스를 새 버전으로 바꾼다. 새 버전은 계정 `default`만으로 현행과 같다. 이 단계가 끝나기 전에 `default`가 아닌 계정의 작업이 생기면 안 된다. 구버전 점유는 `account_id`를 보지 않아 그 작업을 `default` SMTP로 보낸다.
+3. 계정 파일(`MAILO_SMTP_ACCOUNTS_FILE`)과 비밀 변수를 모든 인스턴스에 배포하고 재시작한다. 호출처 레지스트리는 아직 그대로다.
+4. 호출처 레지스트리에 `accountId`를 넣고 재시작한다. 모든 인스턴스가 3을 마친 뒤에만 한다. 구버전은 `accountId`를 모르는 필드로 거부해 기동하지 못하고, 새 버전도 계정 파일이 없으면 구성에 없는 계정이라 기동하지 못한다. 순서는 "코드 먼저, 레지스트리 나중"이다(ADR-0009 결정 10, ADR-0011 결정 10).
+5. 호출처별 전환은 레지스트리 항목 단위로 새 요청에만 적용된다. 이미 등록한 작업은 등록 때 계정으로 나간다. 같은 Key의 재전송은 기존 작업의 계정을 그대로 두고 200이나 409를 돌려준다.
+
+묶음 B 전에는 4에서 `default`가 아닌 계정을 호출처에 지정하지 않는다("SMTP 계정"의 한계).
+
+계정 구성에서 빠진 계정의 작업은 점유되지 않고 만료 sweep이 `EXPIRED`로 만든다(`JOB_EXPIRED` 이벤트). 다른 계정으로 옮기지 않는다. 기동 때 구성 밖 계정의 비종결 작업이 있으면 `account_orphan_jobs`(warn, `accountId`, `count`)를 남긴다.
+
+롤백(이 순서를 지킨다):
+
+1. 레지스트리에서 `accountId`를 빼고 재시작한다. 새 작업은 `default`다. 남기면 구버전이 기동하지 못한다.
+2. `default`가 아닌 계정의 비종결 작업이 0이 될 때까지 기다리거나 취소·만료시킨다. 확인 SQL: `SELECT count(*) FROM mail_jobs WHERE account_id <> 'default' AND status IN ('PENDING','RETRY_WAIT','SENDING')`. 남은 채 구버전으로 바꾸면 그 작업이 `default` SMTP로 나간다.
+3. 이전 버전으로 인스턴스를 바꾼다.
+4. 마이그레이션은 되돌리지 않는다. 컬럼과 제약은 구버전이 무시한다. 묶음 B의 레거시 인덱스 삭제 전에는 인덱스를 다시 만들 일이 없다.
+
+```txt
+위험도: 중간 (0010·0011의 ACCESS EXCLUSIVE 잠금 대기. 순서를 어기면 default가 아닌 계정의 작업이 default SMTP로 나갈 수 있음)
+롤백: 레지스트리의 accountId를 빼고, default가 아닌 계정의 비종결 작업이 0이 된 뒤 앱만 이전 버전으로 되돌린다. 스키마는 되돌리지 않는다(되돌리려면 pg_dump 복원)
+```
+
 ## 환경 변수
 
 모든 값은 `loadConfig`(`config/load-config.ts`)가 기동 때 검증한다. 빈 문자열은 설정하지 않은 값으로 본다. 정수는 숫자만 허용한다(`1e3`, 공백 포함 불가, 앞뒤 공백은 제거).
@@ -298,13 +324,74 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 
 | 변수 | 기본값 | 범위·형식 | 설명 |
 | ---- | ------ | --------- | ---- |
-| `MAILO_SMTP_HOST` | 없음(필수) | 호스트 이름 | |
+| `MAILO_SMTP_HOST` | 없음(`MAILO_SMTP_ACCOUNTS_FILE`이 없으면 필수) | 호스트 이름 | `default` 계정의 호스트. 아래 "SMTP 계정"이 `MAILO_SMTP_*`와 계정 파일의 관계를 정한다 |
 | `MAILO_SMTP_SECURITY` | `starttls` | `starttls`, `tls`, `none` | `starttls`는 587 + STARTTLS 필수, `tls`는 465 implicit TLS, `none`은 TLS 없는 평문 연결(아래 "평문 SMTP 모드"). 인증서 검증 해제는 없다 |
 | `MAILO_SMTP_PORT` | 587 (`tls`면 465) | 1~65535 | `none`도 기본 587이다 |
 | `MAILO_SMTP_USER` | 없음 | 문자열 | `MAILO_SMTP_PASSWORD`와 함께 설정하거나 둘 다 비운다(IP 허용 릴레이) |
 | `MAILO_SMTP_PASSWORD` | 없음 | 시크릿(`_FILE` 지원) | |
-| `MAILO_SMTP_FROM` | `MAILO_SMTP_USER` | 주소 하나 | 요청이 `from`을 생략할 때의 발신 주소이자 모든 호출처가 쓸 수 있는 발신 주소. 그 밖의 `from`은 호출처의 `allowedFrom`(`callers.json`)에 있어야 하고 없으면 400 `FROM_NOT_ALLOWED`다(ADR-0008 구현 중 확정 12). USER도 없으면 필수 |
+| `MAILO_SMTP_FROM` | `MAILO_SMTP_USER` | 주소 하나 | `default` 계정의 기본 발신 주소. 요청이 `from`을 생략할 때의 발신 주소이자 `default` 계정을 쓰는 호출처가 쓸 수 있는 발신 주소다. 그 밖의 `from`은 호출처의 `allowedFrom`(`callers.json`)에 있어야 하고 없으면 400 `FROM_NOT_ALLOWED`다(ADR-0008 구현 중 확정 12, ADR-0013 결정 6). USER도 없으면 필수 |
 | `MAILO_SMTP_TIMEOUT_SECONDS` | 30 | 1~3600, `MAILO_LEASE_SECONDS` 미만. 기동 조건은 더 엄격하다(아래 표) | 소켓 무응답 상한. 연결·greeting·DNS는 이 값과 10초 중 작은 값, 한 건 전체 마감은 `min(이 값×3, lease−10초)` |
+| `MAILO_SMTP_ACCOUNTS_FILE` | 없음 | 파일 경로 | SMTP 계정 정의 JSON(RQ-053, ADR-0013 결정 1). 아래 "SMTP 계정" |
+| `MAILO_SMTP_SECRET_<이름>` / `_FILE` | 계정 파일이 가리킬 때 필수 | 시크릿(`_FILE` 우선) | 계정 파일의 `auth.secretVar`가 가리키는 계정 비밀번호. 이름은 `^MAILO_SMTP_SECRET_[A-Z0-9_]{1,40}$`이고 `_FILE`로 끝날 수 없다. 두 계정이 같은 변수를 쓸 수 없다 |
+
+#### SMTP 계정
+
+근거: RQ-053, ADR-0013 결정 1. 계정은 호출처가 쓰는 SMTP 연결과 기본 발신 주소의 묶음이다. 계정 ID는 운영자가 정한 불투명 이름이다. SMTP 사용자 주소를 로그·지표·감사에 쓰지 않으려고 주소 형태(`@`, `.`)를 ID로 받지 않는다.
+
+`default` 계정의 출처는 아래 넷 중 하나다. 환경 변수와 파일이 모두 `default`를 정의하면 기동을 거부한다.
+
+| 상태 | 동작 |
+| ---- | ---- |
+| `MAILO_SMTP_ACCOUNTS_FILE` 없음 | `MAILO_SMTP_*`가 `default` 하나를 정의한다. `MAILO_SMTP_HOST`가 필수다. 단일 계정 배포는 변경 없이 동작한다 |
+| 파일 있음, `MAILO_SMTP_HOST` 있음 | `default`는 환경 변수 정의다. 파일에 `id: "default"`가 있으면 기동을 거부한다. 파일 계정이 뒤따른다 |
+| 파일 있음, `MAILO_SMTP_HOST` 없음 | `default`는 파일에 있으면 그것이고 없으면 `default` 계정이 없다. 이때 `MAILO_SMTP_USER`·`PASSWORD`(`_FILE`)·`FROM`·`PORT`·`SECURITY`가 있으면 오설정으로 거부한다. `MAILO_SMTP_TIMEOUT_SECONDS`는 계정 공통 기본값이라 둘 수 있다 |
+| 파일 없음, `MAILO_SMTP_HOST` 없음 | 기동을 거부한다 |
+
+환경 변수로 정의한 `default`는 `sendQuota24h`·`concurrency`를 받지 않는다. 필요하면 `default`를 파일로 옮긴다. 이때 비밀 변수 이름을 `MAILO_SMTP_SECRET_*`로 바꿔 시크릿 파일 이름을 맞춘다.
+
+계정 파일 형식(값은 가짜다):
+
+```json
+{
+  "accounts": [
+    {
+      "id": "marketing",
+      "host": "smtp.gmail.com",
+      "port": 587,
+      "security": "starttls",
+      "auth": { "user": "marketing@example.com", "secretVar": "MAILO_SMTP_SECRET_MARKETING" },
+      "from": "marketing@example.com",
+      "timeoutSeconds": 30
+    }
+  ]
+}
+```
+
+| 필드 | 필수 | 규칙 |
+| ---- | ---- | ---- |
+| `id` | 필수 | `^[a-z0-9][a-z0-9_-]{0,31}$`. `unregistered`는 예약어다. 파일 안에서 겹칠 수 없다 |
+| `host` | 필수 | 호스트 이름 |
+| `port` | 선택 | 1~65535. 기본은 `security`가 `tls`면 465, 아니면 587 |
+| `security` | 선택 | `starttls`·`tls`·`none`. 기본 `starttls`. `none`이면 기동 때 `smtp_plaintext_enabled`(warn)에 `accountId`가 붙는다(위험은 "평문 SMTP 모드"와 같다) |
+| `auth` | 선택 | `user`와 `secretVar` 쌍. 생략하면 인증 없는 릴레이다. `user`는 주소가 아닌 값도 받는다 |
+| `from` | 조건부 | 주소 하나. 생략하면 `auth.user`를 쓰고, `auth`가 없거나 `user`가 주소가 아니면 거부한다 |
+| `timeoutSeconds` | 선택 | 1~3600이고 `MAILO_LEASE_SECONDS` 미만. 생략하면 `MAILO_SMTP_TIMEOUT_SECONDS`(기본 30) |
+| `sendQuota24h`, `concurrency` | 선택 | 형식만 검증한다. 구현 묶음 A는 점유에 쓰지 않는다(아래 "한계") |
+
+- 모르는 필드와 최상위의 `accounts` 밖 필드는 기동을 거부한다. 파일에는 비밀번호 값을 두지 않는다. 비밀 변수 이름만 둔다(호출처 레지스트리의 JWS 키와 같은 방식).
+- 비밀번호는 `<변수>_FILE`(우선) 또는 `<변수>`로 받는다. `_FILE`이 있으면 파일을 읽지 못해도 환경 변수로 돌아가지 않고 기동을 거부한다.
+- 같은 `(host, port, user)`(대소문자 무시)를 가진 인증 계정이 둘이면 거부한다. 같은 메일박스를 차단기 둘로 쪼개는 오설정이다. 인증 없는 릴레이는 `user`가 없어 이 검사에서 뺀다.
+- 계정 수는 환경 변수 `default`를 포함해 20개 이하(추정)이고 `MAILO_WORKER_CONCURRENCY` 이하여야 한다. 한 계정에 슬롯 하나를 보장하려는 조건이다.
+- 오류 메시지에는 위치(`accounts[2].auth.secretVar`)와 고정 사유만 담는다. host·user·from·비밀번호 값은 담지 않는다(RQ-027).
+- 변경은 재시작 뒤 반영된다. 핫 리로드는 없다.
+- 어느 호출처도 참조하지 않는 계정은 허용한다. 기동 로그 `account_unused`(info, `accountId`)를 남긴다.
+
+한계(구현 묶음 A):
+
+- 계정 `default`가 아닌 계정은 운영에서 켜지 않는다. 한 번의 점유 호출이 모든 계정의 작업을 함께 다룬다. 계정별 차단기가 점유를 막지 못하고(차단기 행은 완료 경로가 갱신한다), 계정 정지와 24시간 할당도 아직 없다. 한 계정의 장애가 다른 계정의 슬롯을 쥘 수 있다. 계정별 점유와 레거시 인덱스 삭제는 묶음 B이고 둘째 계정은 B 뒤에만 켠다(ADR-0013 구현 순서).
+- `sendQuota24h`·`concurrency`를 설정하면 기동 때 `account_limits_not_enforced`(warn)가 남는다. 값은 검증만 하고 쓰지 않는다.
+- 계정이 둘 이상이면 기동 때 `accounts_not_isolated`(warn, `accountCount`)가 남는다.
+- `/metrics`의 `account_id` 라벨은 아직 모든 작업을 `default`로 센다. `/health/ready`와 `/ops`에는 계정 정보가 없다(묶음 C).
 
 #### 평문 SMTP 모드
 
@@ -317,7 +404,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 - 모든 `NODE_ENV`에서 받는다. 기본값은 `starttls`이고, `none`은 명시해야만 쓰인다.
 - 서버가 STARTTLS를 광고해도 TLS로 올리지 않는다(nodemailer `ignoreTLS: true`).
 - `MAILO_SMTP_USER`·`MAILO_SMTP_PASSWORD`가 있으면 평문으로 인증한다. 평문으로 보낸 인증 정보는 노출된 것으로 보고, 운영 계정에 쓰지 않는다. 썼다면 교체한다.
-- 기동 때 Worker가 warn 로그 `smtp_plaintext_enabled`를 한 줄 남긴다. 필드는 `auth`(인증 정보 사용 여부)와 고정 문구 `message`뿐이고 호스트·사용자·비밀번호는 없다.
+- 기동 때 Worker가 평문 계정마다 warn 로그 `smtp_plaintext_enabled`를 한 줄 남긴다. 필드는 `accountId`, `auth`(인증 정보 사용 여부)와 고정 문구 `message`뿐이고 호스트·사용자·비밀번호는 없다.
 - implicit TLS 포트(465)에 `none`으로 붙으면 TLS로 대체하지 않고 실패한다.
 - 규칙 고정 테스트: `config/load-config.spec.ts`, `smtp/sender.spec.ts`, `worker/worker.spec.ts`, `e2e/smtp-plaintext.integration-spec.ts`.
 
@@ -376,11 +463,14 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_DB_QUERY_TIMEOUT_MS` > `MAILO_DB_STATEMENT_TIMEOUT_MS` | 기동 실패. 서버가 먼저 쿼리를 취소해야 연결이 살아남는다 |
 | `MAILO_DB_CONNECT_TIMEOUT_MS` + `MAILO_DB_QUERY_TIMEOUT_MS` < `MAILO_LEASE_SECONDS` × 1000 − 10000 | 기동 실패. 결과 기록 시도 하나는 연결을 기다린 뒤 응답 없는 쿼리를 최대 이 시간까지 기다린다. 기록 재시도는 다음 시도의 시작 시각에 이 합을 더해도 lease 마감(lease − 10초) 안일 때만 한다. 기본값은 5초 + 35초 = 40초이고 lease 120초에서 통과한다(lease 50초 이하는 거부). 한 트랜잭션의 여러 문장이 각각 `query_timeout` 가까이 걸리는 경우까지는 막지 못한다 |
 | 호출처 `sendQuota24h`가 있으면 `MAILO_RECORD_RETENTION_SECONDS` ≥ 86400 | Worker 기동 실패(`invalid worker option (field=callerQuotas.retention)`). 사용량은 최근 24시간의 `mail_attempts`를 세는데 기록이 그 전에 지워지면 할당이 느슨해진다(RQ-032) |
+| 계정 파일의 계정 수(환경 변수 `default` 포함) ≤ 20, ≤ `MAILO_WORKER_CONCURRENCY` | 기동 실패(설정 오류). 계정마다 슬롯 하나를 보장하려는 조건이다(ADR-0013 결정 1) |
+| 계정의 `timeoutSeconds`(생략하면 `MAILO_SMTP_TIMEOUT_SECONDS`) < `MAILO_LEASE_SECONDS` | 기동 실패. 계정마다 위 `MAILO_SMTP_TIMEOUT_SECONDS` 행의 발송기 조건(`SmtpConfigError`)도 만족해야 한다 |
+| 호출처의 `accountId`가 구성한 계정에 있다 | 기동 실패(`호출처 레지스트리가 올바르지 않다`). `accountId`를 생략한 호출처가 있는데 `default` 계정이 없어도 같다 |
 
 ## 시크릿 주입
 
 - 시크릿 변수는 `<NAME>_FILE`(파일 경로)을 주면 파일 내용을 읽는다. 파일이 있으면 같은 이름의 환경 변수보다 우선한다. 끝의 개행 한 개는 제거한다. 파일이 비었거나 읽지 못하면 기동 실패다(사유는 변수 이름과 errno 코드만 출력).
-- `_FILE`을 지원하는 변수: `MAILO_DATABASE_URL`, `MAILO_DB_PASSWORD`, `MAILO_OPS_TOKEN`, `MAILO_OPS_ADMIN_TOKEN_<이름>`, `MAILO_SMTP_PASSWORD`, `MAILO_DB_ENCRYPTION_KEY_V<n>`, `MAILO_FINGERPRINT_KEY_V<n>`, 개인키 `MAILO_JWE_KEY_*`, 호출처 비밀키 `MAILO_JWS_SECRET_*`.
+- `_FILE`을 지원하는 변수: `MAILO_DATABASE_URL`, `MAILO_DB_PASSWORD`, `MAILO_OPS_TOKEN`, `MAILO_OPS_ADMIN_TOKEN_<이름>`, `MAILO_SMTP_PASSWORD`, 계정 비밀번호 `MAILO_SMTP_SECRET_<이름>`, `MAILO_DB_ENCRYPTION_KEY_V<n>`, `MAILO_FINGERPRINT_KEY_V<n>`, 개인키 `MAILO_JWE_KEY_*`, 호출처 비밀키 `MAILO_JWS_SECRET_*`.
 - 운영은 시크릿 파일 마운트를 권장한다(ADR-0008 결정 5·6). 환경 변수도 허용하지만 `docker inspect`와 프로세스 환경에서 보인다(일반 지식).
 - 이미지에는 시크릿을 넣지 않는다. `Dockerfile`에 시크릿을 넣는 단계가 없다(이미지를 빌드해 검사하지는 않았다).
 - 이 저장소의 `docker-compose.yml`은 compose `secrets:`를 정의하지 않는다(기본 구성은 `.env`의 환경 변수다. `scripts/container/`와 CI가 이 구성에 의존한다). 운영은 아래처럼 compose `secrets:`와 `_FILE`로 바꾸는 것을 권한다. 이 방식은 실행해 확인하지 않았다(추정, compose는 파일 시크릿을 컨테이너의 `/run/secrets/<이름>`에 읽기 전용으로 둔다).
@@ -405,7 +495,7 @@ secrets:
   - 마운트한 파일은 컨테이너의 `node`(UID 1000)가 읽을 수 있어야 한다. compose `secrets`의 `file:` 시크릿은 호스트 파일의 권한을 그대로 보이므로(`uid`·`mode` 지정은 Swarm 전용) 호스트 파일을 UID 1000 또는 그룹이 읽게 둔다(추정).
 - 마운트한 파일은 Mailo 실행 계정(UID 1000)이 읽을 수 있어야 한다. 다른 계정은 읽지 못하게 둔다.
 - 개인키 PEM은 환경 변수로 줄 때 줄바꿈을 `\n` 두 글자로 써도 된다(`key-file.ts`). 파일로 주면 일반 PEM이다.
-- 시크릿 파일 목록: DB 접속 URL, SMTP 비밀번호, 운영 읽기·관리 토큰, DB 본문 키 전 버전, 지문 키 전 버전, JWE 개인키 전부, JWS 비밀키 전부. 발급·교체는 `key-management.md`다.
+- 시크릿 파일 목록: DB 접속 URL, SMTP 비밀번호(계정마다 하나), 운영 읽기·관리 토큰, DB 본문 키 전 버전, 지문 키 전 버전, JWE 개인키 전부, JWS 비밀키 전부. 발급·교체는 `key-management.md`다.
 - API 키 평문은 Mailo에 두지 않는다. `callers.json`에는 SHA-256 해시만 둔다(`caller-onboarding.md`).
 - 로그·오류·이벤트에는 본문, 제목, 수신자 주소, 인증 정보, 키를 남기지 않는다(RQ-027).
 - 관리 토큰 변수는 `.env`의 `MAILO_*`로 컨테이너에 전달되므로(`env_file`) compose에 이름별 설정을 더하지 않는다. `_FILE`로 받으면 파일 마운트를 따로 연다(위 `secrets:` 예시와 같다).
@@ -789,6 +879,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 작업 취소 도입(`0006`·`0007`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기 시간(대용량·쓰기 부하). 구버전의 동작은 코드를 읽어 적었다.
 - 요청별 만료 시간 도입의 롤링 배포·롤백 실행, 긴 `MAILO_JOB_EXPIRY_MAX_SECONDS`에서의 대기 건수와 점유 지연.
 - 마이그레이션의 대용량 DB 적용 시간. `0005`(`CREATE INDEX CONCURRENTLY`)를 쓰기 부하 중에 적용한 시간도 측정하지 않았다.
+- SMTP 계정 도입(묶음 A, `0010`·`0011`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기(동시 쓰기 부하), 둘 이상의 실제 Gmail·Workspace 계정, 계정별 한도 수치. 구버전의 `accountId` 거부와 컬럼 무시는 코드 읽기와 통합 테스트(컬럼 없는 `INSERT`)로만 확인했다. 컨테이너 `read_only`에서 계정 파일 마운트와 `_FILE` 비밀 읽기는 실행하지 않았다.
 - `/metrics`(RQ-049~052): 운영 크기(수백만 행)·다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프에서의 쿼리 비용과 풀 점유(예비 연결 4개 가정), 롤링 배포(구버전 404는 코드 읽기 결과)와 롤백, 알림 규칙의 발화 조건과 임계값, 부하에서의 스크레이프 간격. 컨테이너·실제 Prometheus 스크레이프·`promtool`은 한 번씩 실행했다("지표").
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).

@@ -71,14 +71,19 @@
 | `signature.mode` | 예(기본값 없음) | `required` 또는 `none`. 빠지면 기동하지 않는다 |
 | `signature.keys` | `required`이면 1~2개, `none`이면 둘 수 없음 | 각 항목 `kid`(`[A-Za-z0-9][A-Za-z0-9._:-]{0,63}`)와 `secretVar`(`MAILO_JWS_SECRET_`로 시작하는 대문자·숫자·`_`). 값은 변수로 받는다 |
 | `sendQuota24h` | 아니오 | 1~10000000의 정수, 생략하면 무제한. 0은 허용하지 않는다(중지는 호출처를 빼서 표현) |
+| `accountId` | 아니오 | 이 호출처가 쓰는 SMTP 계정 ID(`MAILO_SMTP_ACCOUNTS_FILE`의 `id` 또는 환경 변수가 정의한 `default`). 생략하면 `default`다. 구성에 없는 ID이거나 `default` 계정이 없는데 생략하면 기동하지 않는다. 호출처에는 노출되지 않는다(아래) |
 | `allowedFrom` | 아니오 | 요청의 `from`으로 쓸 수 있는 발신 주소(addr-spec) 배열, 최대 20개, 생략하면 빈 목록. 형식이 틀리면 기동하지 않는다 |
 | `allowedRecipientDomains` | 아니오 | 호출처가 `to`·`cc`·`bcc`로 보낼 수 있는 수신 도메인 배열, 1~50개, 생략하면 제한 없음. 소문자 ASCII 도메인만 받는다(아래). 빈 배열·`null`은 기동하지 않는다 |
 | `jwe` | 아니오 | 코드가 읽기만 하고 쓰지 않는다. JWE는 호출처 항목이 아니라 Mailo 키 목록(`key-management.md`)으로 정한다 |
 
 - 서명 키(`signature.keys`)의 값은 호출처 사이·`kid` 사이·DB 본문 키·지문 키와 달라야 한다. 같은 바이트이면 기동하지 않는다(표기가 base64와 hex로 달라도 같다). `NODE_ENV`가 `development`·`test`가 아니면 같은 바이트가 반복된 키와 공개 샘플 키도 거부한다(ADR-0008 구현 중 확정 13). 오류에는 위치만 나오고 값은 나오지 않는다.
 - 알 수 없는 필드가 있으면 기동하지 않는다. 오류 메시지는 위치(`callers[0]`)와 고정 사유만 담는다.
-- 발신 주소(`allowedFrom`, ADR-0008 구현 중 확정 12): 호출처가 쓸 수 있는 `from`은 Mailo의 기본 발신 주소(`MAILO_SMTP_FROM`, 없으면 `MAILO_SMTP_USER`)와 이 목록이다. 비교는 대소문자를 무시한다. `from`을 생략하면 기본 발신 주소로 나간다. 집합 밖이면 REST는 400(`errors`의 `pointer: /from`, `code: FROM_NOT_ALLOWED`), 파일은 `VALIDATION_FAILED` 거부다. 새 호출처가 다른 발신 주소를 써야 하면 여기에 넣고 재시작한다.
-  - 배포 순서: 이미 `defaultFrom` 외의 `from`을 보내는 호출처가 있으면 Mailo를 올리기 전에 그 주소를 `allowedFrom`에 넣는다. 이미 큐에 등록된 작업은 검사하지 않고 그대로 나간다. 이미 등록된 `Idempotency-Key`의 재전송은 허용 여부와 무관하게 기존 작업을 돌려받는다.
+- SMTP 계정(`accountId`, RQ-054, ADR-0013 결정 2·6): 호출처 하나는 계정 하나를 쓴다. 호출처는 계정을 고르지도 알지도 못한다. 요청에 계정 필드를 보내면 `UNKNOWN_FIELD`로 거부되고, `Job`·`Event`·거부 기록·검증 오류에는 계정 필드와 계정 주소가 없다.
+  - 작업은 등록 때 계정을 고정한다. 이후 `accountId`를 바꿔도 이미 등록한 작업은 처음 계정으로 나간다. 계정 전환은 새 요청에만 적용된다. 같은 Key의 재전송은 기존 작업의 계정을 그대로 두고 200이나 409를 돌려받는다(계정은 지문에 들어가지 않는다).
+  - 계정이 열려 있거나 한도가 남아 있어도 다른 계정으로 자동 전환하지 않는다. 계정이 구성에서 빠지면 그 계정의 대기 작업은 점유되지 않고 만료 시각에 `EXPIRED`가 된다(`deployment.md` "SMTP 계정 도입 배포 순서").
+  - 배포 순서: 계정 파일과 비밀 변수가 모든 인스턴스에 배포된 뒤에 `accountId`를 넣고 재시작한다. 구버전은 이 필드를 몰라 기동하지 못한다("코드 먼저, 레지스트리 나중"). 구현 묶음 B 전에는 `default`가 아닌 계정을 지정하지 않는다.
+- 발신 주소(`allowedFrom`, ADR-0008 구현 중 확정 12, ADR-0013 결정 6): 호출처가 쓸 수 있는 `from`은 호출처 계정의 `from`(`default`는 `MAILO_SMTP_FROM`, 없으면 `MAILO_SMTP_USER`)과 이 목록이다. 다른 계정의 `from`은 허용되지 않는다. 비교는 대소문자를 무시한다. `from`을 생략하면 작업 계정의 `from`으로 나간다. `allowedFrom`이 다른 계정의 `from`과 같으면 기동 때 `allowed_from_other_account`(warn, `callerId`)가 남는다(별칭을 계정이 공유할 수 있어 거부하지 않는다). 집합 밖이면 REST는 400(`errors`의 `pointer: /from`, `code: FROM_NOT_ALLOWED`), 파일은 `VALIDATION_FAILED` 거부다. 새 호출처가 다른 발신 주소를 써야 하면 여기에 넣고 재시작한다.
+  - 배포 순서: 이미 계정 `from` 외의 `from`을 보내는 호출처가 있으면 Mailo를 올리기 전에 그 주소를 `allowedFrom`에 넣는다. 이미 큐에 등록된 작업은 검사하지 않고 그대로 나간다. 이미 등록된 `Idempotency-Key`의 재전송은 허용 여부와 무관하게 기존 작업을 돌려받는다.
   - `replyTo`는 제한하지 않는다. 위험은 회신을 다른 주소로 유도하는 피싱이다. SPF·DMARC는 `From`만 정렬 대상이라 `Reply-To`가 발신 사칭을 늘리지는 않는다.
   - Gmail 인증 모드: `allowedFrom` 주소를 Gmail "다른 주소에서 메일 보내기"(send-as) 별칭으로 등록해야 From이 유지된다. 등록하지 않으면 Gmail이 From을 계정 주소로 바꾼다. 이 동작은 확인하지 않았다(미검증). IP 허용 relay(인증 없음)에서는 relay 정책이 허용하는 주소여야 한다(미검증).
 - 수신 도메인(`allowedRecipientDomains`, RQ-046, ADR-0011 결정 8): API 키가 유출되거나 스테이징이 잘못 설정돼도 임의 수신자로 대량 발송되지 않게 하는 호출처별 제한이다. 수신자 주소의 `@` 뒤를 소문자로 바꿔 목록과 **정확히** 비교한다.
@@ -568,6 +573,7 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 - 실제 NAS 제품, bind mount, rootless Docker·`userns-remap`, ACL을 지원하지 않는 파일시스템에서의 권한 구성.
 - 호출처가 Linux가 아닌 환경에서의 파일 쓰기.
 - 실제 Gmail·Workspace SMTP.
+- 호출처의 `accountId` 전환(`default`에서 다른 계정으로)을 실제 Gmail 계정 둘로 실행하지 않았다. 계정별 송신은 로컬 SMTP 서버 둘(`test/e2e/multi-account.integration-spec.ts`)로만 확인했다.
 - 모르는 이벤트 종류·`Job.status`를 서버가 실제로 보낼 때의 샘플 동작. 서버가 아직 보내지 않아 샘플 단위 테스트의 대역으로만 확인했다(`samples/spring-boot-relay/README.md`).
 - 작업 취소 도입의 롤링 배포·롤백 실행. 구버전 인스턴스의 동작은 코드를 읽어 적었다. 이 저장소 밖 사용처가 모르는 값 규칙을 지키는지도 확인하지 않았다.
 - 요청별 만료 시간의 롤링 배포·롤백. 만료 동작은 통합 테스트(`test/e2e/job-ttl.integration-spec.ts`)로 확인했다.
