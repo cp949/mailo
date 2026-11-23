@@ -17,7 +17,7 @@
     "test:integration": "turbo run test:integration"
   },
   "devDependencies": {
-    "oxfmt": "0.77.0",
+    "oxfmt": "0.79.0",
     "turbo": "2.11.13"
   }
 }
