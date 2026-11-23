@@ -9,7 +9,7 @@
 구현 상태(2026-11-24): 묶음 A(계정 모델) 구현 완료(미검증 항목 있음). 묶음 B(계정 단위 점유), C(운영 표면), D(호출처 동시 상한)는 미착수다.
 
 - 묶음 A의 범위: 결정 1(계정 파일·`default` 출처·기동 검증), 결정 2(호출처 `accountId`, 등록 때 계정 고정, 구성 밖 계정의 작업), 결정 3 나의 차단기 키(계정 ID)와 기동 때 행 생성, 결정 4의 `0010`·`0011`, 결정 6(발신 주소 허용 집합). 요구사항은 RQ-053~056이다.
-- 묶음 A에서 구현하지 않은 것: 결정 3의 가·다·라·마·바·사·아(계정별 `claim`, 계정 정지, 24시간 할당, 슬롯 배분, 건수 쿼리), 결정 4의 `0012`~`0016`(인덱스 교체), 결정 5 전체. 둘째 계정은 묶음 B가 끝난 뒤에만 켠다.
+- 묶음 A에서 구현하지 않은 것: 결정 3의 가·다·라·마·바·사·아(계정별 `claim`, 계정 정지, 24시간 할당, 슬롯 배분, 건수 쿼리), 결정 4의 `0012`~`0016`(인덱스 교체), 결정 5 전체. `default`가 아닌 계정은 묶음 B가 끝나기 전까지 앱이 기동을 거부한다(구현 중 확정 2026-11-24 리뷰 반영).
 - 구현하면서 정한 내용은 "구현 중 확정" 절에 모았다. 남은 미검증 항목은 RQ-053~056의 수용 조건과 이 문서의 "확인하지 않은 것"을 따른다.
 
 검증 범위는 코드 읽기와 PostgreSQL 17.11(로컬 compose)의 임시 schema 측정이다(2026-11-24).
@@ -433,7 +433,7 @@
 
 1. **묶음 A의 점유 범위.** 구현 순서 표는 "점유는 `default`만"이라 적었다. 구현은 한 번의 `claim`이 구성한 모든 계정의 작업을 점유하게 했다(`ClaimOptions.accountIds`). 작업이 자기 계정의 SMTP로 나가는 것을 둘째 계정의 정지·한도 없이 검증하려는 선택이다.
    - 모드(closed·open·half_open)는 `deps.breaker.breakerKey`(`default`) 차단기 행 하나가 정한다. half_open 대표 작업은 차단기 계정의 작업(`j.account_id = b.breaker_key`)만 고른다. 다른 계정의 작업이 `default` 차단기를 닫거나 열지 못하게 한다.
-   - 한계: `default`가 아닌 계정의 차단기는 완료 경로가 갱신하지만 점유를 막지 못한다. 계정별 정지·할당·슬롯 상한도 없다. 한 계정의 장애가 다른 계정의 슬롯을 쥘 수 있다. 그래서 둘째 계정은 묶음 B 뒤에만 켠다. 이 규칙을 위해 계정이 둘 이상이면 기동 때 `accounts_not_isolated`(warn)를 남긴다.
+   - 한계: `default`가 아닌 계정의 차단기는 완료 경로가 갱신하지만 점유를 막지 못한다. 계정별 정지·할당·슬롯 상한도 없다. 한 계정의 장애가 다른 계정의 슬롯을 쥘 수 있다. 그래서 둘째 계정은 묶음 B 뒤에만 켠다. (이 경고와 운영 규칙은 아래 "리뷰 반영"의 기동 거부로 바뀌었다.)
    - `default` 계정이 없는 구성(파일에만 계정이 있음)에서는 `default` 차단기 행이 닫힌 채로 남아 모드가 항상 normal이다.
    - 묶음 B가 `claim(accountId)`로 바꾸면 `accountIds` 옵션과 이 한계가 사라진다.
 2. **한도 필드.** `sendQuota24h`·`concurrency`는 묶음 A에서 범위를 검증만 한다. 값을 쓰지 않는다는 사실을 기동 때 `account_limits_not_enforced`(warn, `accountId`)로 알린다. 한도를 설정했는데 조용히 무시하는 일을 막으려는 것이다. 거부하지 않은 이유는 묶음 B 전후로 파일 형식이 같아야 해서다.
@@ -445,6 +445,22 @@
 8. **구성 밖 계정 작업의 기동 점검.** `countOrphanAccountJobs`가 `PENDING`·`RETRY_WAIT`·`SENDING` 중 구성 밖 계정의 건수를 계정별로 센다. 계정 인덱스가 없어(묶음 B의 `0012`) 대기 건수에 비례한다. 기동 한 번뿐이다. 쿼리가 실패하면 기동을 막지 않고 `account_orphan_check_failed`(warn, `error` 이름)를 남긴다.
 9. **지표.** 묶음 A는 지표를 바꾸지 않는다. `account_id` 라벨 값은 상수 `default`이므로 `default`가 아닌 계정의 작업도 `default`로 센다. 묶음 C가 `createMetrics({ accountIds })`로 바꿀 때까지의 한계다.
 10. **Worker 조립.** `WorkerDeps`는 `accounts`(계정 ID → `{ sender, from }`)를 받는다. 기존 단일 계정 형태(`sender`+`defaultFrom`)는 `default` 계정 하나로 계속 받는다. 둘을 함께 주면 던진다. `toSenderConfig(config, trustedCa, accountId = "default")`가 계정별 발송기 설정을 만든다. 주입한 `sender`는 모든 계정에 쓰인다(테스트용).
-11. **로그 이벤트.** 새 이벤트는 `account_unused`(info), `allowed_from_other_account`·`account_limits_not_enforced`·`accounts_not_isolated`·`account_orphan_jobs`·`account_orphan_check_failed`(warn)이다. `smtp_plaintext_enabled`에 `accountId` 필드가 붙는다. 모두 계정 ID·호출처 ID·건수만 싣는다.
+11. **로그 이벤트.** 새 이벤트는 `account_unused`(info), `allowed_from_other_account`·`account_limits_not_enforced`·`account_orphan_jobs`·`account_orphan_check_failed`(warn)이다. `smtp_plaintext_enabled`에 `accountId` 필드가 붙는다. 모두 계정 ID·호출처 ID·건수만 싣는다.
 12. **마이그레이션.** 구현 순서 표의 대응대로 `0010`·`0011`이 묶음 A다. 두 파일 모두 트랜잭션 실행이다. `mail_attempts.account_id`는 묶음 B의 24시간 할당이 쓰지만 시도 기록이 묶음 A부터 값을 복사해 쓰도록 같이 넣었다.
 13. **검증하지 않은 것(묶음 A).** 읽기 전용 루트 컨테이너의 계정 파일 마운트와 `_FILE` 비밀 읽기, 롤링 배포·롤백, 동시 쓰기 부하의 `ACCESS EXCLUSIVE` 대기, 실제 Gmail·Workspace 계정 둘, 계정 발송기가 없는 점유 작업의 `internal` 종료(`claim`이 구성 계정만 점유해 자동 시험으로 만들 수 없다). 검증 계획의 "N=1에서 `claim`의 쿼리 수가 현행과 같다" 단언은 `claim`이 계정별로 나뉘는 묶음 B에서 한다.
+
+### 2026-11-24 묶음 A 리뷰 반영
+
+결정 문구는 바꾸지 않는다. 위 "묶음 A" 항목 1·11을 이 절이 정리한다.
+
+1. **비default 계정의 기동 거부.** 앱(`createApp`, `main.ts` 경로)은 구성에 `default`가 아닌 계정이 있으면 `ConfigError`로 기동을 거부한다. 메시지에는 계정 ID만 싣는다. 묶음 B 전까지만 유지하고 B에서 거부와 `allowNonDefaultAccounts` 옵션을 함께 지운다.
+   - 이유: 묶음 A의 한 번의 `claim`은 차단기 모드를 `default` 행 하나로 정한다. 비`default` 계정의 차단기는 `open`에서 닫히지 않는다. 계정 상태 오류의 재시도 시각(`resume = openUntil`)이 과거로 `next_attempt_at`에 기록되면 같은 작업을 즉시 다시 점유해 SMTP를 연속으로 부를 수 있다.
+   - 계정 파일 로더와 호출처 `accountId` 검증은 바꾸지 않는다. 로더는 비`default` 계정을 파싱·검증하고, `claim({ accountIds })`를 직접 지정하는 통합·e2e 테스트와 `account-report`의 점검 로그는 그대로 동작한다. 기동 거부만 앱 경계에 있다. `default`만 구성(환경 변수 또는 파일)한 배포는 기존대로 기동한다.
+   - 테스트 전용 옵션 `AppModuleOptions.allowNonDefaultAccounts`(기본 거부)로 e2e가 거부를 우회한다. `main.ts`가 이 옵션을 쓰지 않는다는 점은 정적 검사로 고정했다.
+2. **구현 순서 표와의 정리.** 표의 "계정별 발송기 조립(점유는 `default`만)"과 항목 1 첫 문단("한 번의 `claim`이 모든 계정을 점유")은 어긋나 보였다. 앱 경로에서는 위 거부 때문에 구성에 `default`만 남으므로 사실상 표와 같다. 항목 1이 말한 모든 계정의 점유는 `claim({ accountIds })`를 직접 지정하는 테스트에서만 일어난다.
+3. **경고 정리.** `accounts_not_isolated`는 계정이 둘 이상일 때만 나오므로 앱 경로에서 도달할 수 없어 제거했다. `account_limits_not_enforced`는 `default`를 파일로 정의하고 `sendQuota24h`·`concurrency`를 줄 수 있어 도달 가능하므로 유지한다. 둘 다 로더 단위 테스트와 무관한 로그다(로더는 값을 검증만 한다).
+4. **`(host, port, user)` 비교.** `auth.user`의 앞뒤 공백을 지우고 비교한다(공백만 다른 user는 같은 메일박스로 거부).
+5. **`smtp_plaintext_enabled`.** `message` 문구는 묶음 A 이전과 같다. 계정 구분은 `accountId` 필드가 한다.
+6. **같은 `from`.** 서로 다른 계정이 같은 `from`을 가져도 코드는 막지 않는다. 그 주소는 두 계정을 쓰는 호출처 모두의 허용 집합에 들어간다(`deployment.md`에 한 줄).
+7. **차단기 동작의 검증.** 비`default` 계정의 `open` 이후 점유·재시도 시각 동작은 현재 성립하지 않으므로 통과 테스트로 굳히지 않았다. RQ-054의 미완 항목으로 B에서 검증한다.
+

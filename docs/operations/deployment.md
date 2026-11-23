@@ -225,7 +225,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 4. 호출처 레지스트리에 `accountId`를 넣고 재시작한다. 모든 인스턴스가 3을 마친 뒤에만 한다. 구버전은 `accountId`를 모르는 필드로 거부해 기동하지 못하고, 새 버전도 계정 파일이 없으면 구성에 없는 계정이라 기동하지 못한다. 순서는 "코드 먼저, 레지스트리 나중"이다(ADR-0009 결정 10, ADR-0011 결정 10).
 5. 호출처별 전환은 레지스트리 항목 단위로 새 요청에만 적용된다. 이미 등록한 작업은 등록 때 계정으로 나간다. 같은 Key의 재전송은 기존 작업의 계정을 그대로 두고 200이나 409를 돌려준다.
 
-묶음 B 전에는 4에서 `default`가 아닌 계정을 호출처에 지정하지 않는다("SMTP 계정"의 한계).
+묶음 B 전에는 `default`가 아닌 계정을 구성할 수 없다("SMTP 계정"의 한계). 4에서 `accountId`를 `default`가 아닌 값으로 넣으려면 먼저 B를 배포한다.
 
 계정 구성에서 빠진 계정의 작업은 점유되지 않고 만료 sweep이 `EXPIRED`로 만든다(`JOB_EXPIRED` 이벤트). 다른 계정으로 옮기지 않는다. 기동 때 구성 밖 계정의 비종결 작업이 있으면 `account_orphan_jobs`(warn, `accountId`, `count`)를 남긴다.
 
@@ -385,12 +385,14 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 - 오류 메시지에는 위치(`accounts[2].auth.secretVar`)와 고정 사유만 담는다. host·user·from·비밀번호 값은 담지 않는다(RQ-027).
 - 변경은 재시작 뒤 반영된다. 핫 리로드는 없다.
 - 어느 호출처도 참조하지 않는 계정은 허용한다. 기동 로그 `account_unused`(info, `accountId`)를 남긴다.
+- 서로 다른 계정이 같은 `from`을 가질 수 있다. 그 주소는 두 계정을 쓰는 호출처 모두의 허용 발신 주소 집합에 들어간다(집합이 합쳐진다). 코드는 이를 막지 않는다.
 
 한계(구현 묶음 A):
 
-- 계정 `default`가 아닌 계정은 운영에서 켜지 않는다. 한 번의 점유 호출이 모든 계정의 작업을 함께 다룬다. 계정별 차단기가 점유를 막지 못하고(차단기 행은 완료 경로가 갱신한다), 계정 정지와 24시간 할당도 아직 없다. 한 계정의 장애가 다른 계정의 슬롯을 쥘 수 있다. 계정별 점유와 레거시 인덱스 삭제는 묶음 B이고 둘째 계정은 B 뒤에만 켠다(ADR-0013 구현 순서).
+- 묶음 B 전에는 `default`가 아닌 계정을 지원하지 않는다. 계정 파일에 `default`가 아닌 계정이 있으면 앱(`main`·`createApp`)이 기동을 거부한다(`ConfigError`, 메시지에는 계정 ID만 싣는다). 계정 파일 로더와 호출처 `accountId` 검증은 `default`가 아닌 계정도 받으므로 B에서 거부만 지우면 된다. `default`만 정의하면 파일이든 환경 변수든 기존대로 기동한다.
+  - 이유: 묶음 A의 한 번의 점유 호출은 모든 계정을 다루고 차단기 모드를 `default` 행 하나로 정한다. 비`default` 계정의 차단기는 open에서 닫히지 않고, 계정 상태 오류의 재시도 시각이 과거로 기록돼 같은 작업을 즉시 다시 점유해 SMTP를 연속 호출할 수 있다.
+  - 계정별 점유·정지·24시간 할당과 레거시 인덱스 삭제는 묶음 B다(ADR-0013 구현 순서).
 - `sendQuota24h`·`concurrency`를 설정하면 기동 때 `account_limits_not_enforced`(warn)가 남는다. 값은 검증만 하고 쓰지 않는다.
-- 계정이 둘 이상이면 기동 때 `accounts_not_isolated`(warn, `accountCount`)가 남는다.
 - `/metrics`의 `account_id` 라벨은 아직 모든 작업을 `default`로 센다. `/health/ready`와 `/ops`에는 계정 정보가 없다(묶음 C).
 
 #### 평문 SMTP 모드

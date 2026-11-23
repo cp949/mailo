@@ -451,7 +451,7 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 | `account_unused`(info, `accountId`) | 어느 호출처도 쓰지 않는 계정 | 의도한 것인지 확인한다. 거부하지 않는다 |
 | `allowed_from_other_account`(warn, `callerId`) | 그 호출처의 `allowedFrom`이 다른 계정의 `from`과 같다 | 의도한 별칭 공유인지 확인한다. 거부하지 않는다 |
 | `account_limits_not_enforced`(warn, `accountId`) | `sendQuota24h`·`concurrency`를 설정했지만 쓰지 않는다(구현 묶음 B 전) | 한도에 기대지 않는다. 계정별 한도는 B 이후다 |
-| `accounts_not_isolated`(warn, `accountCount`) | 계정이 둘 이상이다. 계정별 차단기·정지·할당이 다른 계정의 점유를 막지 않는다(묶음 B 전) | 둘째 계정을 운영에서 켜지 않는다 |
+| 기동 실패 `SMTP 계정 <ID>은 default가 아니라 이 버전에서 지원하지 않는다` | 계정 파일에 `default`가 아닌 계정이 있다. 묶음 B 전의 방어다 | 파일에서 `default`가 아닌 계정을 빼고 `default`만 정의한다. `callers.json`의 `accountId`도 `default`로 둔다 |
 | `job_internal_error`(error)가 계속된다 | 작업이 고정한 계정의 발송기가 없는 등 Mailo 내부 오류. 차단기를 건드리지 않고 같은 작업이 3번째 시도에서 `FAILED`가 된다 | 정상 경로에서는 일어나지 않는다. 계정 구성과 `mail_jobs.account_id`를 확인한다 |
 | `account_orphan_check_failed`(warn, `error`) | 기동 때 구성 밖 계정 작업을 세는 쿼리가 실패했다 | 기동은 막지 않는다. DB 연결을 본다 |
 
