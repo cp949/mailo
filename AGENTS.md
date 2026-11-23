@@ -67,3 +67,29 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 - compose는 DB 접속을 `MAILO_DB_*` 분리 변수로 준다(앱이 URL 인코딩해 조립). `MAILO_DATABASE_URL`과 `MAILO_DB_HOST`를 함께 주면 기동을 거부한다. 컨테이너 종료·중복 발송 검증은 `scripts/container/`(Docker 필요, 자동 테스트 아님)다.
 - 종료 순서는 Worker `pause()`(새 점유 중지, 진행 중 전송 계속) → HTTP 서버 닫기·파일 폴러 정지(진행 중 파일 완료) → Worker drain(`lease - 10초` 상한, `pause()` 시점부터 센다) → DB 풀 닫기다. `stop_grace_period`는 drain 상한 + 10초 이상이어야 한다. HTTP 요청·헤더 수신 시간제한은 30초이고 종료 때 이 시간이 지나면 남은 연결을 끊는다. drain 상한이 지나도 lease는 풀지 않는다(다음 claim이 만료로 회수).
 - 로컬 SMTP 서버 대상 검증은 STARTTLS 인증서가 필요하다. 컨테이너에는 `NODE_EXTRA_CA_CERTS`로 CA를 주고, 호스트는 IP로 지정한다(`/etc/hosts`에만 있는 이름은 nodemailer 조회에서 실패했다).
+
+## 브랜치
+
+- 작업 브랜치는 `dev`다. 새 작업 브랜치는 `dev`에서 분기한다. `dev`→`main` 병합과 push는 사용자가 지시한다.
+
+## Agent skills
+
+### Issue tracker
+
+이슈는 GitHub Issues(`cp949/mailo`)에 두고 `gh` CLI를 쓴다. 등록 기준, 쓰기 승인, 작업 완료 시 자동 종료 절차는 `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+표준 5개 역할(`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`)을 라벨 이름 그대로 쓴다. 다섯 라벨 모두 저장소에 있다. `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+single-context. 용어 기준은 `docs/requirements/mail-sending.md`의 "용어와 진행 상태" 절이고 `CONTEXT.md`는 없다. `docs/agents/domain.md`.
+
+### 문서·주석 작성
+
+소스·테스트 주석과 `docs/` 문서를 새로 쓰거나 고칠 때 `docs/agents/writing-styles.md`를 따른다.
+
+### 테스트와 검증
+
+테스트 작성 규칙, 검증 단계(L0~L3), 변경 영역별로 돌릴 컨테이너·NFS·샘플 검증은 `docs/agents/testing.md`.
