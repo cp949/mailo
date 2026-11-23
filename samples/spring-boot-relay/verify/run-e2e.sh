@@ -261,6 +261,39 @@ sleep 3
 check "S15 차단기를 닫은 뒤에도 취소한 작업은 발송되지 않음(a)" 0 "$(smtp_count cancel-a@example.com)"
 check "S15 차단기를 닫은 뒤에도 취소한 작업은 발송되지 않음(b)" 0 "$(smtp_count cancel-b@example.com)"
 
+log "S16 이벤트 피드 공백(RQ-045, ADR-0011 결정 9): 보존 삭제 뒤 실제 서버가 Mailo-Cursor-Gap 헤더를 내고 샘플이 등록됨 행을 확인 필요로 둔다"
+gap_header() { # 쿼리 문자열 → stdout: Mailo-Cursor-Gap 헤더 값(없으면 빈 문자열). MDow는 cursor 0:0이다(어떤 이벤트보다 앞)
+  curl -s -m 10 -o /dev/null -D - -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:$MAILO_PORT/events?$1" | tr -d '\r' | awk 'tolower($1)=="mailo-cursor-gap:" {print tolower($2)}'
+}
+events_http() { curl -s -m 10 -o "$WORK/events.json" -w '%{http_code}' -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:$MAILO_PORT/events?$1"; }
+check "S16 삭제 전 표지 행 수" 0 "$(mq "SELECT count(*) FROM mail_event_purges")"
+check "S16 삭제 전에는 헤더가 없다" "" "$(gap_header after=MDow)"
+# 종결 작업(S1·S3)의 종결 시각을 40일 전으로 당긴다(검증용 DB 조작). Mailo Worker의 정리 루프(2초 주기)가 지운다.
+mq "UPDATE mail_jobs SET finished_at = now() - interval '40 days' WHERE idempotency_key IN ('$OB1', '$OB3')" >/dev/null
+mq "UPDATE mail_circuit_breaker SET state='open', open_until=now() + interval '10 minutes', last_reason='AUTH_FAILED'" >/dev/null
+OB16="$(new_pending_order gap@example.com)"
+gone() { [ "$(mq "SELECT count(*) FROM mail_jobs WHERE idempotency_key IN ('$OB1', '$OB3')")" = 0 ]; }
+wait_until 30 gone
+check "S16 보존 삭제로 작업 행이 지워짐" 0 "$(mq "SELECT count(*) FROM mail_jobs WHERE idempotency_key IN ('$OB1', '$OB3')")"
+check "S16 삭제 표지 JOB_SENT" 1 "$(mq "SELECT count(*) FROM mail_event_purges WHERE caller_id='sample' AND type='JOB_SENT'")"
+check "S16 삭제 표지 JOB_FAILED" 1 "$(mq "SELECT count(*) FROM mail_event_purges WHERE caller_id='sample' AND type='JOB_FAILED'")"
+check "S16 after 뒤에서 삭제됐으면 헤더 true" true "$(gap_header after=MDow)"
+check "S16 응답 상태는 200" 200 "$(events_http after=MDow)"
+check "S16 삭제된 종류가 아닌 type 필터에는 헤더가 없다" "" "$(gap_header 'after=MDow&type=INTAKE_REJECTED')"
+check "S16 삭제된 종류의 type 필터에는 헤더가 있다" true "$(gap_header 'after=MDow&type=JOB_FAILED')"
+check "S16 onGap=error는 410" 410 "$(events_http 'after=MDow&onGap=error')"
+check "S16 410 type" "urn:mailo:problem:cursor-expired" "$(jq -r .type "$WORK/events.json")"
+check "S16 after 없는 읽기에는 헤더가 없다" "" "$(gap_header limit=1)"
+# 샘플의 cursor를 0:0으로 되돌려 삭제 지점 앞에서 읽게 한다. 샘플이 헤더를 받아 등록됨 행을 확인 필요로 두는지 앱 로그로 본다.
+sq "UPDATE mailo_event_cursor SET cursor='MDow'" >/dev/null
+wait_until 30 grep -q "event_cursor_gap action=check_delivered_jobs" "$WORK/app-rest.log"
+check "S16 샘플이 헤더를 받아 확인 필요 처리를 함(앱 로그 event_cursor_gap)" 1 "$(grep -c 'event_cursor_gap action=check_delivered_jobs' "$WORK/app-rest.log" | awk '{print ($1 >= 1) ? 1 : 0}')"
+check "S16 헤더 처리 뒤 샘플 로그에 410 처리 없음" 0 "$(grep -c 'event_cursor_expired' "$WORK/app-rest.log")"
+cancel_http "/jobs/cancel?idempotencyKey=$OB16" >/dev/null
+mq "UPDATE mail_circuit_breaker SET state='closed', open_until=NULL, last_reason=NULL" >/dev/null
+sleep 3
+check "S16 정리: 취소한 작업은 발송되지 않음" 0 "$(smtp_count gap@example.com)"
+
 log "S8 Mailo 중단 중 주문"
 stop_mailo
 T0=$SECONDS
