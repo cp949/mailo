@@ -8,6 +8,7 @@
 /** 늦게 점유하는 등급부터 나열한다. */
 export const PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
 
+/** 요청·응답·지문에서 사용하는 발송 우선순위 등급 이름이다(RQ-033·034·037). */
 export type Priority = (typeof PRIORITIES)[number];
 
 /** 요청이 우선순위를 생략했을 때의 등급. 도입 전 작업도 이 등급으로 읽힌다(DB DEFAULT). */

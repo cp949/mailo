@@ -62,6 +62,7 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-23 발송 우선순위 구현 리뷰 뒤): `turbo --force`로 단위 547건(31개 파일), 타입 검사·린트·빌드를 새로 실행해 통과했다. 단위 실패와 린트 경고·오류는 0건이다. 관련 통합 58건(5개 파일)은 실패 0건이다. 전체 통합은 333건 중 332건 통과·1건 실패했다. 실패는 `worker/worker-quota.integration-spec.ts`의 무제한 발송 대기에서 `waitFor 시간 초과`였다. 소스 변경 없이 실패 파일만 재실행해 3건 모두 통과했다. 최초 실패 원인은 미확정이며 전체 통합을 한 번에 통과한 결과로 기록하지 않는다. 포맷·diff 공백 검사도 통과했다. 롤백 전 미확인 Key 처리와 점유 지연 설명을 정적 검토로 보완했다. 성능 측정·실제 롤백·NFS·컨테이너·볼륨·샘플 e2e는 이번 리뷰에서 실행하지 않았다. 기존 성능 수치는 이전 수동 측정 기록이다.
 - 검증 수치(2026-11-23 4단계 발송 우선순위 반영 뒤): `pnpm test` 단위 547건(31개 파일), `pnpm test:integration` 통합 333건(22개 파일), 실패 0건. `pnpm lint` 경고·오류 0건, `pnpm typecheck` 통과. 이 묶음은 Dockerfile·compose·파일 채널 I/O·샘플을 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e를 실행하지 않았다(RQ-033~038 판정 근거).
 - 검증 수치(2026-11-23 코드 리뷰 운영·컨테이너·로그 묶음 반영 뒤, 같은 작업 트리의 다른 묶음 변경 포함): `pnpm test` 단위 505건(30개 파일), `pnpm test:integration` 통합 278건(19개 파일), 실패 0건. 읽기 전용 루트·`cap_drop`·digest 고정 이미지로 `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`와 `scripts/volume/verify-e2e.sh`(acl·group)를 실행해 모두 기대와 일치했다. `verify-permissions.sh`(acl·group, 각 28개), `verify-root-model.sh`(15개), `verify-atomic-rename.sh`(acl·group, 각 4개)도 같은 날 실행해 기대와 다름 0건이었다. 이 수치를 낸 시점에는 `nfs-kernel-server`가 없어 `pnpm test:nfs`와 `apps/mailo/scripts/nfs/verify-docker-volume.sh`를 실행하지 못했다. 같은 날 뒤에 로컬에 `nfs-kernel-server` 2.6.1을 설치해 `scripts/nfs/run.sh`(`pnpm test:nfs` 31건, 기본 NFSv4.1 클라이언트 1회, 통과)와 `verify-docker-volume.sh`(통과 13, 실패 0)를 실행했다(RQ-002 판정 근거).
 - 검증 수치(2026-11-23 코드 리뷰 1묶음 반영 뒤): `pnpm test` 단위 449건(25개 파일), `pnpm test:integration` 통합 242건(18개 파일), 실패 0건. 이 묶음 뒤 `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`를 각 1회 실행해 기대와 일치했다(`POSTGRES_PASSWORD` 필수화·`MAILO_STOP_GRACE_PERIOD` 반영 compose). `pnpm test:nfs`·`scripts/volume/`은 이 묶음에서 실행하지 않았다.
@@ -1145,7 +1146,7 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - 우선순위는 다음 점유에서 고를 작업에만 적용한다. 이미 `SENDING`인 작업의 전송을 중단하거나 점유를 빼앗지 않는다.
 - 여러 Worker의 동시 점유에서는 각 점유 시점에 잠금 없이 고를 수 있는 후보가 기준이다. 전역 SMTP 전송 시작 순서·완료 순서는 보장하지 않는다.
 - 긴급 작업 등록 뒤 시작하는 점유는 그 등록 커밋을 볼 수 있을 때부터 반영한다.
-- `URGENT` 작업의 점유 지연 하한은 "빈 슬롯이 생길 때까지 + Worker 폴링 간격"이다. 대기 순서 경로에 걸린 claim 동안에는 더 늦어질 수 있다. `URGENT`는 즉시 전송을 뜻하지 않는다.
+- `URGENT` 작업의 점유 시점은 빈 슬롯과 다음 점유 실행에 따라 달라진다. 슬롯이 비면 Worker가 polling 대기에서 일찍 깨어날 수 있다. 폴링 간격은 고정 지연 하한이 아니다. 대기 순서 경로에 걸린 claim 동안에는 더 늦어질 수 있다. `URGENT`는 즉시 전송을 뜻하지 않는다.
 
 **수용 조건:**
 
