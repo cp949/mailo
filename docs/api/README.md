@@ -103,7 +103,7 @@
 | `GET /ops/pauses` | 읽기 | 정지 목록 |
 | `PUT`·`DELETE /ops/pauses/all` | 관리 | 전체 정지·재개 |
 | `PUT`·`DELETE /ops/pauses/callers/{callerId}` | 관리 | 호출처 정지·재개 |
-| `GET /ops/jobs/{jobId}` | 읽기 | 작업 조회(모든 호출처, Key 없음, `callerId` 있음) |
+| `GET /ops/jobs/{jobId}` | 읽기 | 작업 조회(모든 호출처, Key·`rejectedRecipients` 없음, `callerId` 있음) |
 | `POST /ops/jobs/{jobId}/cancel` | 관리 | 작업 취소(`canceledBy: OPERATOR`) |
 | `GET /ops/audit` | 읽기 | 감사 목록(`limit`, `before`) |
 

@@ -73,10 +73,14 @@ export function presentJob(job: JobView) {
     jobId: job.id,
     idempotencyKey: job.idempotencyKey,
     ...presentJobFields(job),
+    rejectedRecipients:
+      job.status === "SENT"
+        ? presentRejectedRecipients(job.rejectedRecipients)
+        : [],
   };
 }
 
-/** `Job` 응답에서 호출처가 정한 Key를 뺀 나머지. 호출처 응답과 운영자 읽기가 같은 필드를 쓴다. */
+/** `Job` 응답에서 호출처가 정한 Key와 `rejectedRecipients`(수신자 주소가 든다)를 뺀 나머지. 호출처 응답과 운영자 읽기가 같은 필드를 쓴다. */
 function presentJobFields(job: JobView) {
   return {
     status: job.status,
@@ -105,16 +109,12 @@ function presentJobFields(job: JobView) {
     canceledBy:
       job.status === "CANCELED" ? canceledByOf(job.failureReason) : null,
     lastError: presentLastError(job.lastError),
-    rejectedRecipients:
-      job.status === "SENT"
-        ? presentRejectedRecipients(job.rejectedRecipients)
-        : [],
   };
 }
 
 /**
- * 운영자 읽기(`GET /ops/jobs/{jobId}`)의 작업 응답(ADR-0011 결정 7). `Job`에서 `idempotencyKey`를 빼고 `callerId`를 더한다.
- * 호출처가 정한 Key는 운영자 읽기에도 주지 않는다. 수신자와 본문은 `Job`에 없다.
+ * 운영자 읽기(`GET /ops/jobs/{jobId}`)의 작업 응답(ADR-0011 결정 7). `Job`에서 `idempotencyKey`와 `rejectedRecipients`를 빼고 `callerId`를 더한다.
+ * 호출처가 정한 Key와 거부된 수신자 주소는 운영자 읽기에도 주지 않는다(RQ-027). 수신자와 본문은 `Job`에 없다.
  */
 export function presentOperatorJob(job: JobView) {
   return {

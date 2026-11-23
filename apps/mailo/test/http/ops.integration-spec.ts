@@ -646,6 +646,63 @@ describe("REST 통합: 운영 REST /ops (RQ-042~044, ADR-0011)", () => {
       }
     });
 
+    it("거부된 수신자 주소가 있는 SENT 작업도 수신자 주소를 주지 않는다(rejectedRecipients 필드 없음)", async () => {
+      const id = await register("ops-sent-rejected");
+      const rejected = `${CANARY.recipient}-rejected@example.com`;
+      await db.pool.query(
+        "UPDATE mail_jobs SET status = 'SENT', finished_at = now() WHERE id = $1",
+        [id],
+      );
+      await db.pool.query(
+        `INSERT INTO mail_attempts (job_id, classification, counted, stage, started_at, rejected_recipients)
+         VALUES ($1, 'SENT', true, 'RCPT', now(), $2::jsonb)`,
+        [
+          id,
+          JSON.stringify([
+            { address: rejected, smtpCode: 550, enhancedCode: "5.1.1" },
+          ]),
+        ],
+      );
+
+      for (const auth of [READ, ONCALL]) {
+        const res = await call("GET", `/ops/jobs/${id}`, auth);
+        expect(res.status).toBe(200);
+        const text = await res.text();
+        const body = JSON.parse(text) as Json;
+        expect(body["status"]).toBe("SENT");
+        expect(body["rejectedRecipients"]).toBeUndefined();
+        expect(text).not.toContain(rejected);
+        expect(text).not.toContain(CANARY.recipient);
+      }
+      // 같은 작업을 호출처 응답(`GET /jobs/{jobId}`)은 자기 작업의 거부 수신자와 함께 계속 준다(기존 계약).
+      const own = await json(await getJson(app, `/jobs/${id}`));
+      expect(own["rejectedRecipients"]).toEqual([
+        { address: rejected, smtpCode: 550, enhancedCode: "5.1.1" },
+      ]);
+    });
+
+    it("정지 목록·감사·헬스·취소 응답에도 수신자 주소가 없다", async () => {
+      const recipient = `${CANARY.recipient}@example.com`;
+      const res = await postJob(app, {
+        key: "ops-no-recipient",
+        body: plainMail({ to: [recipient], cc: [`cc-${recipient}`] }),
+      });
+      const id = (await json(res))["jobId"];
+      const texts: string[] = [];
+      for (const [method, route, auth] of [
+        ["PUT", "/ops/pauses/callers/alpha", ONCALL],
+        ["GET", "/ops/pauses", READ],
+        ["POST", `/ops/jobs/${id}/cancel`, ONCALL],
+        ["GET", `/ops/jobs/${id}`, READ],
+        ["GET", "/ops/audit", READ],
+        ["GET", "/health/ready", READ],
+        ["GET", "/health/ready", ONCALL],
+      ] as const)
+        texts.push(await (await call(method, route, auth)).text());
+
+      for (const text of texts) expect(text).not.toContain(CANARY.recipient);
+    });
+
     it("없는 작업은 404, 형식이 틀리면 400이다", async () => {
       expect(
         (await call("GET", `/ops/jobs/${UNKNOWN_UUID}`, READ)).status,

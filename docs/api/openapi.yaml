@@ -414,7 +414,7 @@ paths:
       summary: 작업 조회(모든 호출처)
       description: |
         호출처 범위 없이 작업 ID로 조회한다(ADR-0011 결정 7). 읽기 토큰과 관리 토큰을 받는다.
-        `GET /jobs/{jobId}`의 `Job`에서 `idempotencyKey`를 빼고 `callerId`를 더했다. 호출처가 정한 Key는 운영자 읽기에도 주지 않는다. 수신자와 본문은 없다.
+        `GET /jobs/{jobId}`의 `Job`에서 `idempotencyKey`와 `rejectedRecipients`를 빼고 `callerId`를 더했다. 호출처가 정한 Key와 거부된 수신자 주소는 운영자 읽기에도 주지 않는다. 수신자와 본문은 없다.
         없거나 보존 기간이 지나 삭제된 작업은 404다.
       security:
         - opsReadAuth: []
@@ -1727,8 +1727,8 @@ components:
     OpsJob:
       type: object
       description: |
-        운영자 읽기의 작업. `Job`에서 `idempotencyKey`를 빼고 `callerId`를 더했다. 나머지 필드는 `Job`의 같은 이름 필드와 같다.
-        호출처가 정한 Key는 운영자 읽기에도 주지 않는다. 본문과 수신자는 없다.
+        운영자 읽기의 작업. `Job`에서 `idempotencyKey`와 `rejectedRecipients`를 빼고 `callerId`를 더했다. 나머지 필드는 `Job`의 같은 이름 필드와 같다.
+        호출처가 정한 Key와 거부된 수신자 주소(`rejectedRecipients`)는 운영자 읽기에도 주지 않는다. 본문과 수신자는 없다.
       required:
         - jobId
         - callerId
@@ -1743,7 +1743,6 @@ components:
         - canceledAt
         - canceledBy
         - lastError
-        - rejectedRecipients
       additionalProperties: false
       properties:
         callerId:
@@ -1773,8 +1772,6 @@ components:
           $ref: '#/components/schemas/Job/properties/canceledBy'
         lastError:
           $ref: '#/components/schemas/Job/properties/lastError'
-        rejectedRecipients:
-          $ref: '#/components/schemas/Job/properties/rejectedRecipients'
     AuditEntry:
       type: object
       required: [id, at, actor, action]
