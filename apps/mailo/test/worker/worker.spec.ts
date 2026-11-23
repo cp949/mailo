@@ -1,10 +1,13 @@
 import { describe, expect, it } from "@jest/globals";
+import type pg from "pg";
 import { loadConfig } from "../../src/config/index.js";
+import { createJsonLogger } from "../../src/logging/index.js";
+import type { BodyCipher } from "../../src/queue/index.js";
 import {
   defaultBreakerConfig,
   defaultRetryPolicy,
 } from "../../src/queue/index.js";
-import { testEnv } from "../support/rest-app.js";
+import { CANARY, testEnv } from "../support/rest-app.js";
 import {
   createBodyCipher,
   createKeyRing,
@@ -12,10 +15,12 @@ import {
 } from "../../src/crypto/index.js";
 import {
   WorkerOptionsError,
+  createWorkerRunner,
   decodeBodyContent,
   defaultWorkerOptions,
   encodeBodyContent,
   toOutcome,
+  toSenderConfig,
   toWorkerOptions,
   validateWorkerOptions,
 } from "../../src/worker/index.js";
@@ -285,4 +290,65 @@ describe("호출처 할당과 보존 기간 (RQ-032)", () => {
       }),
     ).not.toThrow();
   });
+});
+
+/**
+ * 설정 → 발송기 연결 방식 변환과 평문 모드 기동 경고(RQ-005, RQ-027).
+ * 환경: 없음. Worker는 만들기만 하고 시작하지 않는다(DB·SMTP에 접속하지 않는다).
+ */
+describe("SMTP 연결 방식 조립과 평문 모드 경고 (RQ-005, RQ-027)", () => {
+  const configOf = (security?: string) =>
+    loadConfig(
+      testEnv({
+        MAILO_CALLERS_FILE: "/unused/callers.json",
+        ...(security !== undefined && { MAILO_SMTP_SECURITY: security }),
+      }),
+    );
+
+  it.each([
+    [undefined, "STARTTLS"],
+    ["starttls", "STARTTLS"],
+    ["tls", "IMPLICIT"],
+    ["none", "NONE"],
+  ] as const)(
+    "MAILO_SMTP_SECURITY=%s는 발송기 tlsMode %s가 된다",
+    (security, tlsMode) => {
+      expect(toSenderConfig(configOf(security)).tlsMode).toBe(tlsMode);
+    },
+  );
+
+  function startupLines(security: string): string[] {
+    const lines: string[] = [];
+    createWorkerRunner({
+      // 만들기만 하고 start()를 부르지 않으므로 풀과 암호기는 쓰이지 않는다.
+      pool: {} as pg.Pool,
+      config: configOf(security),
+      bodyCipher: {} as BodyCipher,
+      logger: createJsonLogger((line) => void lines.push(line)),
+    });
+    return lines;
+  }
+
+  it("평문 모드로 Worker를 만들면 warn 로그 smtp_plaintext_enabled가 한 줄 남고 SMTP 인증 정보가 없다", () => {
+    const lines = startupLines("none");
+    expect(lines).toHaveLength(1);
+    const line = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(line).toMatchObject({
+      level: "warn",
+      event: "smtp_plaintext_enabled",
+      auth: true,
+    });
+    expect(line["message"]).toContain("암호화 없이");
+    // testEnv의 SMTP 비밀번호는 canary다. 사용자 이름과 호스트도 싣지 않는다.
+    expect(lines[0]).not.toContain(CANARY.smtpPassword);
+    expect(lines[0]).not.toContain("fake-user@example.invalid");
+    expect(lines[0]).not.toContain("smtp.example.invalid");
+  });
+
+  it.each(["starttls", "tls"])(
+    "%s 모드로 Worker를 만들면 평문 경고를 남기지 않는다",
+    (security) => {
+      expect(startupLines(security)).toEqual([]);
+    },
+  );
 });

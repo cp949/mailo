@@ -141,6 +141,55 @@ describe("연결 방식 (RQ-005)", () => {
     expect(implicit.messages).toHaveLength(0);
   });
 
+  describe("평문 모드 NONE (RQ-005)", () => {
+    // fake SMTP는 STARTTLS를 광고한다. 평문 세션 AUTH를 받도록 allowInsecureAuth를 켠다.
+    let plain: FakeSmtp;
+    let noStarttls: FakeSmtp;
+    beforeAll(async () => {
+      plain = await startFakeSmtp({ allowInsecureAuth: true });
+      noStarttls = await startFakeSmtp({
+        allowInsecureAuth: true,
+        disableStarttls: true,
+      });
+    });
+    afterAll(async () => {
+      await plain.close();
+      await noStarttls.close();
+    });
+
+    it("서버가 STARTTLS를 광고해도 TLS로 올리지 않고 평문으로 인증·발송한다", async () => {
+      const { trustedCa: _ca, ...withoutCa } = config(plain, {
+        tlsMode: "NONE",
+      });
+      const result = await createSmtpSender(withoutCa).send(MESSAGE);
+      expect(result).toEqual({ kind: "SENT", rejectedRecipients: [] });
+      expect(plain.messages).toHaveLength(1);
+      expect(plain.messages[0]!.secure).toBe(false);
+      // 인증 정보도 평문 세션으로 전달된다.
+      expect(plain.lastAuth).toEqual({
+        user: "user@example.com",
+        password: "fake-password",
+      });
+    });
+
+    it("STARTTLS를 지원하지 않는 서버에도 평문으로 발송한다", async () => {
+      const result = await createSmtpSender(
+        config(noStarttls, { tlsMode: "NONE" }),
+      ).send(MESSAGE);
+      expect(result.kind).toBe("SENT");
+      expect(noStarttls.messages).toHaveLength(1);
+      expect(noStarttls.messages[0]!.secure).toBe(false);
+    });
+
+    it("implicit TLS 포트에 붙으면 TLS로 대체하지 않고 실패한다", async () => {
+      const result = await createSmtpSender(
+        config(implicit, { tlsMode: "NONE" }),
+      ).send(MESSAGE);
+      expect(result.kind).toBe("ACCOUNT");
+      expect(implicit.messages).toHaveLength(0);
+    });
+  });
+
   it("인증 정보가 없으면 인증 없이 발송한다(IP 허용 relay)", async () => {
     const { auth: _auth, ...withoutAuth } = config(fake);
     const result = await createSmtpSender(withoutAuth).send(MESSAGE);

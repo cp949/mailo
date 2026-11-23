@@ -200,12 +200,27 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | 변수 | 기본값 | 범위·형식 | 설명 |
 | ---- | ------ | --------- | ---- |
 | `MAILO_SMTP_HOST` | 없음(필수) | 호스트 이름 | |
-| `MAILO_SMTP_SECURITY` | `starttls` | `starttls`, `tls` | `starttls`는 587 + STARTTLS 필수, `tls`는 465 implicit TLS. 평문과 인증서 검증 해제는 없다 |
-| `MAILO_SMTP_PORT` | 587 (`tls`면 465) | 1~65535 | |
+| `MAILO_SMTP_SECURITY` | `starttls` | `starttls`, `tls`, `none` | `starttls`는 587 + STARTTLS 필수, `tls`는 465 implicit TLS, `none`은 TLS 없는 평문 연결(아래 "평문 SMTP 모드"). 인증서 검증 해제는 없다 |
+| `MAILO_SMTP_PORT` | 587 (`tls`면 465) | 1~65535 | `none`도 기본 587이다 |
 | `MAILO_SMTP_USER` | 없음 | 문자열 | `MAILO_SMTP_PASSWORD`와 함께 설정하거나 둘 다 비운다(IP 허용 릴레이) |
 | `MAILO_SMTP_PASSWORD` | 없음 | 시크릿(`_FILE` 지원) | |
 | `MAILO_SMTP_FROM` | `MAILO_SMTP_USER` | 주소 하나 | 요청이 `from`을 생략할 때의 발신 주소이자 모든 호출처가 쓸 수 있는 발신 주소. 그 밖의 `from`은 호출처의 `allowedFrom`(`callers.json`)에 있어야 하고 없으면 400 `FROM_NOT_ALLOWED`다(ADR-0008 구현 중 확정 12). USER도 없으면 필수 |
 | `MAILO_SMTP_TIMEOUT_SECONDS` | 30 | 1~3600, `MAILO_LEASE_SECONDS` 미만. 기동 조건은 더 엄격하다(아래 표) | 소켓 무응답 상한. 연결·greeting·DNS는 이 값과 10초 중 작은 값, 한 건 전체 마감은 `min(이 값×3, lease−10초)` |
+
+#### 평문 SMTP 모드
+
+```txt
+위험도: 높음
+롤백: MAILO_SMTP_SECURITY를 starttls 또는 tls로 바꾸고 재시작한다
+```
+
+- `MAILO_SMTP_SECURITY=none`이면 SMTP 인증 정보와 메일(본문·제목·수신자)이 암호화 없이 전송된다. 사용 판단은 운영자 책임이다.
+- 모든 `NODE_ENV`에서 받는다. 기본값은 `starttls`이고, `none`은 명시해야만 쓰인다.
+- 서버가 STARTTLS를 광고해도 TLS로 올리지 않는다(nodemailer `ignoreTLS: true`).
+- `MAILO_SMTP_USER`·`MAILO_SMTP_PASSWORD`가 있으면 평문으로 인증한다. 평문으로 보낸 인증 정보는 노출된 것으로 보고, 운영 계정에 쓰지 않는다. 썼다면 교체한다.
+- 기동 때 Worker가 warn 로그 `smtp_plaintext_enabled`를 한 줄 남긴다. 필드는 `auth`(인증 정보 사용 여부)와 고정 문구 `message`뿐이고 호스트·사용자·비밀번호는 없다.
+- implicit TLS 포트(465)에 `none`으로 붙으면 TLS로 대체하지 않고 실패한다.
+- 규칙 고정 테스트: `config/load-config.spec.ts`, `smtp/sender.spec.ts`, `worker/worker.spec.ts`, `e2e/smtp-plaintext.integration-spec.ts`.
 
 ### 키·봉투(ADR-0005 결정 3, ADR-0008)
 

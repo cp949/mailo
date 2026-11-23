@@ -51,6 +51,8 @@ export interface FakeSmtpOptions {
   secure?: boolean;
   /** STARTTLS를 광고·허용하지 않는다. */
   disableStarttls?: boolean;
+  /** TLS 없는 세션에서도 AUTH를 받는다. 평문 모드(`MAILO_SMTP_SECURITY=none`) 검증용이다. smtp-server 기본값은 거부다. */
+  allowInsecureAuth?: boolean;
   /** 서버가 허용하는 TLS 범위. 구버전 협상 실패를 만들 때 쓴다. */
   tlsServer?: {
     minVersion?: SecureVersion;
@@ -144,6 +146,7 @@ export async function startFakeSmtp(
     authOptional: true,
     banner: "fake smtp",
     ...(options.disableStarttls && { disabledCommands: ["STARTTLS"] }),
+    ...(options.allowInsecureAuth && { allowInsecureAuth: true }),
     ...options.tlsServer,
     onConnect(_session, callback) {
       const reply = behavior.connect?.(counts.connects++);

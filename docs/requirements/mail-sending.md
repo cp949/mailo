@@ -62,6 +62,7 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-23 평문 SMTP 모드 반영 뒤): `pnpm test` 단위 563건(31개 파일), 실패 0건. 관련 통합 `e2e/smtp-plaintext.integration-spec.ts`·`e2e/mail-flow.integration-spec.ts` 9건(2개 파일), 실패 0건. `pnpm format:check`·`pnpm typecheck` 통과, `pnpm lint` 경고·오류 0건. 전체 통합·컨테이너·볼륨·NFS·샘플 e2e는 실행하지 않았다(RQ-005 판정 근거).
 - 검증 수치(2026-11-23 발송 우선순위 구현 리뷰 뒤, 다음 줄의 실행보다 나중): 다음 줄(4단계 반영 뒤) 실행과 코드 동작이 같고 문서·주석만 바뀐 상태에서 다시 실행한 결과다. 같은 코드의 앞선 전체 통합 실행은 실패 0건이었으므로 아래 1건은 간헐 실패로 본다(원인 미확정). `turbo --force`로 단위 547건(31개 파일), 타입 검사·린트·빌드를 새로 실행해 통과했다. 단위 실패와 린트 경고·오류는 0건이다. 관련 통합 58건(5개 파일)은 실패 0건이다. 전체 통합은 333건 중 332건 통과·1건 실패했다. 실패는 `worker/worker-quota.integration-spec.ts`의 무제한 발송 대기에서 `waitFor 시간 초과`였다. 소스 변경 없이 실패 파일만 재실행해 3건 모두 통과했다. 최초 실패 원인은 미확정이며 전체 통합을 한 번에 통과한 결과로 기록하지 않는다. 포맷·diff 공백 검사도 통과했다. 롤백 전 미확인 Key 처리와 점유 지연 설명을 정적 검토로 보완했다. 성능 측정·실제 롤백·NFS·컨테이너·볼륨·샘플 e2e는 이번 리뷰에서 실행하지 않았다. 기존 성능 수치는 이전 수동 측정 기록이다.
 - 검증 수치(2026-11-23 4단계 발송 우선순위 반영 뒤): `pnpm test` 단위 547건(31개 파일), `pnpm test:integration` 통합 333건(22개 파일), 실패 0건. `pnpm lint` 경고·오류 0건, `pnpm typecheck` 통과. 이 묶음은 Dockerfile·compose·파일 채널 I/O·샘플을 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e를 실행하지 않았다(RQ-033~038 판정 근거).
 - 검증 수치(2026-11-23 코드 리뷰 운영·컨테이너·로그 묶음 반영 뒤, 같은 작업 트리의 다른 묶음 변경 포함): `pnpm test` 단위 505건(30개 파일), `pnpm test:integration` 통합 278건(19개 파일), 실패 0건. 읽기 전용 루트·`cap_drop`·digest 고정 이미지로 `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`와 `scripts/volume/verify-e2e.sh`(acl·group)를 실행해 모두 기대와 일치했다. `verify-permissions.sh`(acl·group, 각 28개), `verify-root-model.sh`(15개), `verify-atomic-rename.sh`(acl·group, 각 4개)도 같은 날 실행해 기대와 다름 0건이었다. 이 수치를 낸 시점에는 `nfs-kernel-server`가 없어 `pnpm test:nfs`와 `apps/mailo/scripts/nfs/verify-docker-volume.sh`를 실행하지 못했다. 같은 날 뒤에 로컬에 `nfs-kernel-server` 2.6.1을 설치해 `scripts/nfs/run.sh`(`pnpm test:nfs` 31건, 기본 NFSv4.1 클라이언트 1회, 통과)와 `verify-docker-volume.sh`(통과 13, 실패 0)를 실행했다(RQ-002 판정 근거).
@@ -256,9 +257,13 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - 운영 환경은 Google Workspace 계정을 쓴다.
   - Workspace SMTP Relay 또는 인증 SMTP를 쓴다.
 - 환경 설정으로 SMTP 서버를 전환할 수 있어야 한다.
-- 기본 연결은 587 포트와 STARTTLS 필수다. 465 포트 implicit TLS는 설정으로 선택한다.
-- 인증서 검증을 끄지 않는다. TLS 1.2 이상만 허용한다. 평문 연결은 금지한다.
-- SMTP 라이브러리는 nodemailer다(10.6.1). 구현이 쓰는 옵션은 587에서 `secure: false`와 `requireTLS: true`, 465에서 `secure: true`, `tls.minVersion: "TLSv1.2"`다. `rejectUnauthorized`는 지정하지 않아 인증서 검증이 켜져 있다. 로컬 SMTP 서버 대상 테스트로 확인했고 실제 Gmail 서버로는 확인하지 않았다.
+- 연결 보안 방식(`MAILO_SMTP_SECURITY`)은 운영자 설정이다.
+  - 기본값은 `starttls`다. 587 포트와 STARTTLS 필수다.
+  - `tls`는 465 포트 implicit TLS다.
+  - `none`은 TLS 없는 평문 연결이다. 명시해야만 쓰이고 `NODE_ENV`와 무관하게 받는다.
+- 평문 연결(`none`)에서는 SMTP 인증 정보와 메일이 암호화 없이 전송된다. 사용 판단은 운영자 책임이다. Mailo는 기동 때 warn 로그 한 줄로 알린다.
+- 인증서 검증을 끄지 않는다. TLS를 쓰는 연결은 TLS 1.2 이상만 허용한다.
+- SMTP 라이브러리는 nodemailer다(10.6.1). 구현이 쓰는 옵션은 `starttls`에서 `secure: false`와 `requireTLS: true`, `tls`에서 `secure: true`, `none`에서 `secure: false`와 `ignoreTLS: true`, 공통으로 `tls.minVersion: "TLSv1.2"`다. `ignoreTLS`가 없으면 nodemailer가 서버가 광고한 STARTTLS로 올라가므로 평문을 유지하려고 켠다. `rejectUnauthorized`는 지정하지 않아 인증서 검증이 켜져 있다. 로컬 SMTP 서버 대상 테스트로 확인했고 실제 Gmail 서버로는 확인하지 않았다.
 
 **수용 조건:**
 
@@ -266,14 +271,20 @@ ADR-0001~0009는 모두 승인됐다(2026-11-23).
 - [x] 기본 설정에서 587 포트의 STARTTLS 연결로 발송된다.
 - [x] 설정으로 465 포트 implicit TLS 연결을 선택하면 그 연결로 발송된다.
 - [x] 인증서 검증을 끄는 설정이 없다. TLS 1.2 미만 연결은 실패한다.
-- [x] TLS를 쓸 수 없는 서버에는 평문으로 발송하지 않고 실패한다.
+- [x] `starttls`·`tls` 설정에서 TLS를 쓸 수 없는 서버에는 평문으로 발송하지 않고 실패한다.
 - [x] SMTP 인증 정보는 설정 파일 평문이 아닌 환경 변수 또는 시크릿으로 받을 수 있다.
+- [x] `MAILO_SMTP_SECURITY`를 설정하지 않으면 `starttls`다. `none`은 모든 `NODE_ENV`(production 포함)에서 받는다. 알 수 없는 값은 기동을 거부하고 오류에 값이 없다.
+- [x] `none` 설정이면 서버가 STARTTLS를 광고해도 TLS로 올리지 않고 평문으로 인증·발송한다.
+- [x] `none` 설정으로 기동하면 warn 로그 `smtp_plaintext_enabled`가 한 줄 남고 SMTP 인증 정보·본문·제목·수신자가 로그에 없다(canary 검사).
 
 **판정 근거:**
 
 - `smtp/sender.spec.ts`: STARTTLS 발송, implicit TLS 발송, STARTTLS 설정으로 implicit 포트 접속 실패. 로컬 `smtp-server` 3.21.7 대상이다.
 - `smtp/nodemailer-errors.spec.ts`: STARTTLS 미지원 서버에 평문 발송하지 않음, 신뢰하지 않는 인증서 실패, TLS 1.1 서버 협상 실패, implicit TLS 설정으로 평문 서버 접속 실패.
-- `config/load-config.spec.ts`: SMTP 사용자·비밀번호 쌍 검증, 시크릿 `_FILE`이 환경 변수보다 우선(키링 테스트), 오류에 값이 남지 않음.
+- `config/load-config.spec.ts`: SMTP 사용자·비밀번호 쌍 검증, 시크릿 `_FILE`이 환경 변수보다 우선(키링 테스트), 오류에 값이 남지 않음. `MAILO_SMTP_SECURITY` 기본값 `starttls`, `none`의 포트 기본값 587과 production 포함 수락, 알 수 없는 값(`NONE`, `plaintext` 등) 거부.
+- `smtp/sender.spec.ts` "평문 모드 NONE": STARTTLS를 광고하는 서버에 평문(`secure: false`)으로 인증·발송, STARTTLS 미지원 서버에 평문 발송, implicit TLS 포트 접속 실패.
+- `worker/worker.spec.ts`: 설정 값과 발송기 `tlsMode` 대응, `none`일 때만 warn 로그 한 줄과 canary 비밀번호 부재.
+- `e2e/smtp-plaintext.integration-spec.ts`: 앱 전체 경로(등록, 설정으로 만든 Worker, nodemailer)가 STARTTLS를 광고하는 로컬 서버에 평문으로 인증·발송해 `SENT`가 되고, 로그에 warn 한 줄과 canary 부재(2026-11-23).
 - 앱 전체 경로(등록, Worker, SMTP)의 종단 테스트 `e2e/mail-flow.integration-spec.ts` 7건은 1단계 마무리 통합 테스트 실행에서 통과했다.
 - 한계: 실제 Gmail·Workspace SMTP는 확인하지 않았다.
 

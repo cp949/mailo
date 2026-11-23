@@ -2,8 +2,8 @@
  * nodemailer 기반 SMTP 발송기(ADR-0007 결정 8·9, ADR-0002 결정 11, RQ-005·006·013·016).
  *
  * 이 파일이 하는 일
- * - 연결 옵션을 만든다. 587 STARTTLS 필수가 기본이고 465 implicit TLS는 설정으로 고른다.
- *   인증서 검증을 끄는 옵션, 평문 허용 옵션, TLS 1.2 미만 허용 옵션이 없다(RQ-005).
+ * - 연결 옵션을 만든다. 587 STARTTLS 필수가 기본이고 465 implicit TLS와 평문(NONE)은 설정으로 고른다.
+ *   평문은 운영자가 명시해야만 쓴다. 인증서 검증을 끄는 옵션과 TLS 1.2 미만 허용 옵션은 없다(RQ-005).
  * - 타임아웃을 명시한다. nodemailer 기본값(연결 2분, greeting 30초, 소켓 10분)에 의존하지 않는다.
  *   소켓 타임아웃은 "무응답 시간"이라 서버가 조금씩 응답하면 합이 늘어날 수 있으므로,
  *   발송 한 건에 AbortSignal 전체 마감(`totalMs`)을 따로 건다. lease는 이 마감보다 길어야 한다
@@ -43,7 +43,8 @@ import {
 import { maskEmailLike } from "./email-pattern.js";
 import { buildMessageId } from "./message-id.js";
 
-export type TlsMode = "STARTTLS" | "IMPLICIT";
+/** `STARTTLS`: STARTTLS 필수. `IMPLICIT`: 연결 즉시 TLS. `NONE`: TLS를 쓰지 않는 평문 연결(RQ-005). */
+export type TlsMode = "STARTTLS" | "IMPLICIT" | "NONE";
 
 export interface SmtpTimeouts {
   /** TCP 연결 수립 대기. */
@@ -115,7 +116,7 @@ export function checkSmtpTimeouts(
 export interface SmtpSenderConfig {
   host: string;
   port: number;
-  /** 기본은 STARTTLS(587). IMPLICIT는 465 implicit TLS다. */
+  /** 기본은 STARTTLS(587). IMPLICIT는 465 implicit TLS, NONE은 평문 연결이다. */
   tlsMode: TlsMode;
   auth?: { user: string; pass: string };
   timeouts: SmtpTimeouts;
@@ -316,8 +317,11 @@ function buildTransportOptions(
     port: config.port,
     // 587: secure:false + requireTLS:true는 STARTTLS를 강제하고 지원하지 않는 서버에서 평문으로 내려가지 않는다.
     // 465: secure:true는 연결 즉시 TLS다.
+    // NONE: ignoreTLS:true가 없으면 nodemailer는 서버가 광고한 STARTTLS로 올라간다. 평문을 유지하려고 끈다.
+    // 이때 AUTH와 본문은 암호화 없이 전송된다(RQ-005).
     secure: config.tlsMode === "IMPLICIT",
     requireTLS: config.tlsMode === "STARTTLS",
+    ignoreTLS: config.tlsMode === "NONE",
     // 이 객체에 rejectUnauthorized를 넣지 않는다. 기본값(검증 켜짐)을 유지한다.
     tls: {
       minVersion: "TLSv1.2",
