@@ -49,6 +49,14 @@ export interface ClaimOptions {
    */
   order?: ClaimOrder;
   /**
+   * 점유할 수 있는 SMTP 계정 ID(RQ-054, ADR-0013 결정 2). 작업의 `account_id`가 이 목록에 있을 때만 점유한다.
+   * 구성에서 빠진 계정의 작업은 점유하지 않고 그대로 두어 만료 sweep이 `EXPIRED`로 만든다. 다른 계정으로 옮기지 않는다.
+   * 생략하면 계정으로 거르지 않는다(테스트용). 앱은 항상 구성한 계정 목록을 넘긴다.
+   * 묶음 A의 한 번의 `claim`은 모든 계정의 작업을 함께 다룬다. 모드(closed/open/half_open)는 `deps.breaker.breakerKey`의
+   * 차단기 행 하나가 정하고, half_open 대표 작업은 그 차단기 계정의 작업만 고른다. 계정별 `claim` 분리는 묶음 B다.
+   */
+  accountIds?: readonly string[];
+  /**
    * 호출처별 24시간 rolling 발송 할당(RQ-032, ADR-0007 결정 10). 키는 호출처 ID, 값은 양의 정수다.
    * 여기 없는 호출처는 무제한이다. 비어 있거나 생략하면 할당을 확인하지 않는다.
    */
@@ -78,6 +86,7 @@ export interface QuotaBlock {
 interface JobRow {
   id: string;
   caller_id: string;
+  account_id: string;
   idempotency_key: string;
   lease_token: string;
   lease_until: Date;
@@ -91,7 +100,7 @@ interface JobRow {
   body_key_version: number | null;
 }
 
-const RETURNING = `mail_jobs.id, mail_jobs.caller_id, idempotency_key, lease_token, lease_until, attempts,
+const RETURNING = `mail_jobs.id, mail_jobs.caller_id, mail_jobs.account_id, idempotency_key, lease_token, lease_until, attempts,
   account_trips, expires_at, recipients, envelope, body_ciphertext, body_nonce, body_key_version`;
 
 function toClaimed(row: JobRow, isProbe: boolean): ClaimedJob {
@@ -106,6 +115,7 @@ function toClaimed(row: JobRow, isProbe: boolean): ClaimedJob {
   return {
     id: row.id,
     callerId: row.caller_id,
+    accountId: row.account_id,
     idempotencyKey: row.idempotency_key,
     leaseToken: row.lease_token,
     leaseUntil: row.lease_until,
@@ -306,6 +316,7 @@ export async function claim(
             WHERE status IN ('PENDING', 'RETRY_WAIT')
               AND next_attempt_at <= now() AND expires_at > now()
               AND caller_id <> ALL($3::text[])
+              AND ($6::text[] IS NULL OR account_id = ANY($6::text[]))
             ORDER BY ${order.bare}
             LIMIT $2
             FOR UPDATE SKIP LOCKED
@@ -331,6 +342,7 @@ export async function claim(
           quota.blocked,
           quota.remainingIds,
           quota.remainingCounts,
+          options.accountIds ? [...options.accountIds] : null,
         ],
       );
       return rows.map((r) => toClaimed(r, false));
@@ -343,6 +355,7 @@ export async function claim(
           AND j.status IN ('PENDING', 'RETRY_WAIT')
           AND j.next_attempt_at <= now() AND j.expires_at > now()
           AND j.caller_id <> ALL($2::text[])
+          AND j.account_id = b.breaker_key
         ORDER BY (j.id IS NOT DISTINCT FROM b.last_trip_job_id), ${order.job}
         LIMIT 1
         FOR UPDATE OF j SKIP LOCKED`,

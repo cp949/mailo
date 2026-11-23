@@ -54,9 +54,9 @@ export async function register(
             `INSERT INTO mail_jobs
                (id, caller_id, idempotency_key, fingerprint, fingerprint_key_version,
                 recipients, envelope, body_ciphertext, body_nonce, body_key_version, expires_at,
-                priority)
+                priority, account_id)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10,
-                     now() + make_interval(secs => $11::double precision), $12)
+                     now() + make_interval(secs => $11::double precision), $12, $13)
              ON CONFLICT (caller_id, idempotency_key) DO NOTHING
              RETURNING id`,
             [
@@ -72,6 +72,7 @@ export async function register(
               body.keyVersion,
               input.expiresInSeconds,
               PRIORITY_RANK[input.priority ?? DEFAULT_PRIORITY],
+              input.accountId,
             ],
           );
           if (inserted.rowCount === 1) return { kind: "created", jobId };

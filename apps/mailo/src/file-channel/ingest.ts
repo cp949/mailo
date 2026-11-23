@@ -55,8 +55,11 @@ export interface IngestDeps {
   maxFileBytes: number;
   /** 요청이 `ttlSeconds`를 생략했을 때의 만료 TTL 초(`MAILO_JOB_EXPIRY_SECONDS`, RQ-039). */
   jobExpirySeconds: number;
-  /** 기본 발신 주소(`config.smtp.defaultFrom`). 모든 호출처가 쓸 수 있는 발신 주소다. */
-  defaultFrom: string;
+  /**
+   * 계정 ID별 기본 발신 주소(`SmtpAccount.from`). 호출처의 허용 발신 주소 집합은 이 호출처 계정의 값에
+   * 호출처의 `allowedFrom`을 더한 것이다(ADR-0013 결정 6).
+   */
+  accountFroms: ReadonlyMap<string, string>;
   logger: AppLogger;
   /** 등록·거부 기록 커밋 뒤, 원본 삭제 전에 부른다. 테스트가 이 시점의 종료·파일 교체를 흉내 낸다. */
   beforeDelete?: (info: {
@@ -194,11 +197,13 @@ export async function ingestFile(
     { cipher: deps.cipher, fingerprinter: deps.fingerprinter },
     toRegisterInput(opened, {
       callerId: caller.id,
+      accountId: caller.accountId,
       idempotencyKey: key,
       defaultExpiresInSeconds: deps.jobExpirySeconds,
       denyNew:
         checkRequestPolicy(opened.request, {
-          defaultFrom: deps.defaultFrom,
+          // 계정이 구성에 없으면 기동 때 레지스트리가 거부하므로 여기서는 항상 찾는다. 못 찾으면 빈 문자열이라 기본 주소가 허용되지 않는다(fail closed).
+          defaultFrom: deps.accountFroms.get(caller.accountId) ?? "",
           allowedFrom: caller.allowedFrom,
           allowedRecipientDomains: caller.allowedRecipientDomains,
         }).length > 0,

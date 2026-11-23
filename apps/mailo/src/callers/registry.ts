@@ -14,9 +14,11 @@
  *   ]
  * }
  * ```
+ * 선택 필드 `accountId`: 이 호출처의 SMTP 계정 ID(ADR-0013 결정 2, 생략하면 `default`). 구성에 없는 계정이면 기동을 거부한다.
+ * 작업은 등록 때 이 값으로 계정을 고정한다. 호출처는 계정을 고르지 못하고 요청에는 계정 필드가 없다.
  * 선택 필드 `allowedFrom`: 이 호출처가 요청의 `from`으로 쓸 수 있는 발신 주소 목록(addr-spec, 생략하면 빈 목록).
- * 허용 집합은 `MAILO_SMTP_FROM`(또는 `MAILO_SMTP_USER`)의 기본 발신 주소에 이 목록을 더한 것이다.
- * 집합 밖의 `from`을 보낸 요청은 400 validation-failed(`FROM_NOT_ALLOWED`)다. `from`을 생략하면 기본 발신 주소를 쓴다. `replyTo`는 제한하지 않는다.
+ * 허용 집합은 호출처 계정의 `from`(기본 발신 주소)에 이 목록을 더한 것이다(ADR-0013 결정 6).
+ * 집합 밖의 `from`을 보낸 요청은 400 validation-failed(`FROM_NOT_ALLOWED`)다. `from`을 생략하면 계정의 `from`을 쓴다. `replyTo`는 제한하지 않는다.
  * 선택 필드 `allowedRecipientDomains`: 이 호출처가 `to`·`cc`·`bcc`로 보낼 수 있는 수신 도메인 목록(1~50개, 생략하면 제한 없음, RQ-046).
  * 값은 소문자 ASCII(국제화 도메인은 A-label `xn--`)이고 `@` 뒤를 소문자로 바꿔 정확히 비교한다. 하위 도메인은 따로 적는다.
  * 대문자, U-label, 끝 점, `*`, 선행 점, 목록 안의 중복, 빈 배열, null은 기동을 거부한다. 모두 거부하려면 정지나 키 폐기를 쓴다.
@@ -43,9 +45,11 @@
  */
 import { readFileSync } from "node:fs";
 import {
+  DEFAULT_SMTP_ACCOUNT_ID,
   EnvReader,
   Secret,
   decodeKey,
+  isAccountId,
   isPublicOrWeakKey,
 } from "../config/index.js";
 import { verifyApiKeyAgainstAny } from "../crypto/index.js";
@@ -76,7 +80,12 @@ export interface CallerEntry {
    * 단위는 메시지 시도 수이며 수신자 수로 가중하지 않는다. 할당을 넘기면 작업은 점유되지 않고 대기한다.
    */
   sendQuota24h: number | null;
-  /** 요청의 `from`으로 쓸 수 있는 발신 주소(기본 발신 주소 외, 입력 표기 그대로). 비교는 대소문자를 무시한다. */
+  /**
+   * 이 호출처가 쓰는 SMTP 계정 ID(RQ-054, ADR-0013 결정 2). 레지스트리에서 생략하면 `default`다.
+   * 새 작업은 등록 때 이 값으로 `mail_jobs.account_id`를 고정한다. 이후 이 값을 바꿔도 이미 등록한 작업은 그대로다.
+   */
+  accountId: string;
+  /** 요청의 `from`으로 쓸 수 있는 발신 주소(계정 기본 발신 주소 외, 입력 표기 그대로). 비교는 대소문자를 무시한다. */
   allowedFrom: readonly string[];
   /**
    * 수신 도메인 허용 목록(RQ-046, ADR-0011 결정 8). 소문자 ASCII 도메인이다. null이면 수신자를 제한하지 않는다(기본).
@@ -118,6 +127,7 @@ const ENTRY_FIELDS = new Set([
   "signature",
   "jwe",
   "sendQuota24h",
+  "accountId",
   "allowedFrom",
   "allowedRecipientDomains",
 ]);
@@ -136,6 +146,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export interface RegistryOptions {
   env?: NodeJS.ProcessEnv;
+  /**
+   * 구성한 SMTP 계정 ID(ADR-0013 결정 2). 있으면 호출처의 `accountId`가 이 목록에 있어야 하고, 없으면 존재를 검사하지 않는다.
+   * 오류에는 계정 목록을 싣지 않는다. 계정 구성이 오류 메시지로 새지 않게 한다.
+   */
+  accountIds?: readonly string[];
   /** 서명 키와 겹치면 안 되는 다른 키링의 키 바이트. `label`은 오류 메시지에 쓴다. */
   otherKeys?: ReadonlyArray<{ label: string; keys: Iterable<Uint8Array> }>;
 }
@@ -269,6 +284,12 @@ export function parseCallerRegistry(
       );
     }
 
+    const accountId = parseAccountId(
+      raw["accountId"],
+      where,
+      issues,
+      options.accountIds,
+    );
     const allowedFrom = parseAllowedFrom(raw["allowedFrom"], where, issues);
     const allowedRecipientDomains = parseAllowedRecipientDomains(
       raw["allowedRecipientDomains"],
@@ -284,6 +305,7 @@ export function parseCallerRegistry(
         signature: { mode, keys },
         jwe: isRecord(jwe) ? jwe : null,
         sendQuota24h: typeof sendQuota === "number" ? sendQuota : null,
+        accountId,
         allowedFrom,
         allowedRecipientDomains,
       });
@@ -304,6 +326,38 @@ export function parseCallerRegistry(
       return found;
     },
   };
+}
+
+/**
+ * `accountId`를 읽는다. 생략하면 `default`다. 형식은 계정 ID 규칙(`isAccountId`)이고 null은 거부한다.
+ * 구성한 계정 목록을 받았으면 목록에 없는 ID(생략해서 `default`가 된 경우 포함)를 거부한다(ADR-0013 결정 2).
+ */
+function parseAccountId(
+  raw: unknown,
+  where: string,
+  issues: string[],
+  configured: readonly string[] | undefined,
+): string {
+  const at = `${where}.accountId`;
+  if (raw === undefined) {
+    if (
+      configured !== undefined &&
+      !configured.includes(DEFAULT_SMTP_ACCOUNT_ID)
+    )
+      issues.push(
+        `${at}를 생략하면 default 계정을 쓰는데 구성에 default 계정이 없다`,
+      );
+    return DEFAULT_SMTP_ACCOUNT_ID;
+  }
+  if (typeof raw !== "string" || !isAccountId(raw)) {
+    issues.push(
+      `${at}는 소문자 영숫자로 시작하는 1~32자(영숫자·_·-)의 계정 ID여야 한다`,
+    );
+    return DEFAULT_SMTP_ACCOUNT_ID;
+  }
+  if (configured !== undefined && !configured.includes(raw))
+    issues.push(`${at}가 구성에 없는 SMTP 계정을 가리킨다`);
+  return raw;
 }
 
 /** `allowedFrom`을 읽는다. 생략하면 빈 목록이다. 주소 형식은 요청의 `from`과 같은 규칙(`checkAddress`)이다. */

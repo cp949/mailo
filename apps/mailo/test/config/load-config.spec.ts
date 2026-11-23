@@ -8,6 +8,7 @@ import { inspect } from "node:util";
 import {
   ConfigError,
   loadConfig,
+  type AppConfig,
   loadDatabaseUrlOnly,
   type WorkerConfig,
 } from "../../src/config/index.js";
@@ -18,6 +19,11 @@ const KEY_B = Buffer.alloc(32, 2).toString("base64");
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return testEnv({ MAILO_CALLERS_FILE: "/etc/mailo/callers.json", ...extra });
+}
+
+/** 환경 변수가 정의한 `default` 계정(ADR-0013 결정 1). 단일 계정 설정에서는 목록의 유일한 항목이다. */
+function smtpOf(config: AppConfig) {
+  return config.smtpAccounts.find((a) => a.id === "default")!;
 }
 
 function issuesOf(extra: NodeJS.ProcessEnv): string {
@@ -92,7 +98,7 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
       maxAddressChars: 254,
       maxContentBytes: 1024 * 1024,
     });
-    expect(config.smtp).toMatchObject({
+    expect(smtpOf(config)).toMatchObject({
       host: "smtp.example.invalid",
       port: 587,
       security: "starttls",
@@ -101,13 +107,18 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
   });
 
   it("MAILO_SMTP_SECURITY=tls이면 포트 기본값이 465가 되고 명시한 포트를 우선한다(RQ-005)", () => {
-    expect(loadConfig(env({ MAILO_SMTP_SECURITY: "tls" })).smtp).toMatchObject({
+    expect(
+      smtpOf(loadConfig(env({ MAILO_SMTP_SECURITY: "tls" }))),
+    ).toMatchObject({
       port: 465,
       security: "tls",
     });
     expect(
-      loadConfig(env({ MAILO_SMTP_SECURITY: "tls", MAILO_SMTP_PORT: "2465" }))
-        .smtp.port,
+      smtpOf(
+        loadConfig(
+          env({ MAILO_SMTP_SECURITY: "tls", MAILO_SMTP_PORT: "2465" }),
+        ),
+      ).port,
     ).toBe(2465);
     expect(issuesOf({ MAILO_SMTP_SECURITY: "plain" })).toContain(
       "MAILO_SMTP_SECURITY",
@@ -115,13 +126,15 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
   });
 
   it("MAILO_SMTP_SECURITY=none은 평문 연결을 고르고 포트 기본값은 587이며 명시한 포트를 우선한다(RQ-005)", () => {
-    expect(loadConfig(env({ MAILO_SMTP_SECURITY: "none" })).smtp).toMatchObject(
-      { port: 587, security: "none" },
-    );
     expect(
-      loadConfig(
-        env({ MAILO_SMTP_SECURITY: " none ", MAILO_SMTP_PORT: "1025" }),
-      ).smtp,
+      smtpOf(loadConfig(env({ MAILO_SMTP_SECURITY: "none" }))),
+    ).toMatchObject({ port: 587, security: "none" });
+    expect(
+      smtpOf(
+        loadConfig(
+          env({ MAILO_SMTP_SECURITY: " none ", MAILO_SMTP_PORT: "1025" }),
+        ),
+      ),
     ).toMatchObject({ port: 1025, security: "none" });
   });
 
@@ -138,11 +151,12 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
       }),
     );
     expect(production.env).toBe("production");
-    expect(production.smtp.security).toBe("none");
+    expect(smtpOf(production).security).toBe("none");
     for (const nodeEnv of ["development", "test"]) {
       expect(
-        loadConfig(env({ NODE_ENV: nodeEnv, MAILO_SMTP_SECURITY: "none" })).smtp
-          .security,
+        smtpOf(
+          loadConfig(env({ NODE_ENV: nodeEnv, MAILO_SMTP_SECURITY: "none" })),
+        ).security,
       ).toBe("none");
     }
   });
@@ -182,7 +196,7 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
       env({ MAILO_SMTP_PORT: "", MAILO_RETRY_MODE: "", MAILO_SMTP_FROM: "" }),
     );
 
-    expect(config.smtp.port).toBe(587);
+    expect(smtpOf(config).port).toBe(587);
     expect(config.worker.retry.mode).toBe("exponential");
   });
 
@@ -250,8 +264,8 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
         MAILO_SMTP_FROM: "no-reply@example.com",
       }),
     );
-    expect(relay.smtp.auth).toBeNull();
-    expect(relay.smtp.defaultFrom).toBe("no-reply@example.com");
+    expect(smtpOf(relay).auth).toBeNull();
+    expect(smtpOf(relay).from).toBe("no-reply@example.com");
   });
 
   it("SMTP 타임아웃이 lease 이상이면 거부한다(전송 중 lease 만료로 중복 발송 방지)", () => {
@@ -544,7 +558,7 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
     const config = loadConfig({ ...parsed, NODE_ENV: "development" });
 
     expect(config.callersFile).toBe("./callers.json");
-    expect(config.smtp.security).toBe("starttls");
+    expect(smtpOf(config).security).toBe("starttls");
     expect(config.worker.lease.seconds).toBe(120);
   });
 

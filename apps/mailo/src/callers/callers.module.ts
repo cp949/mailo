@@ -53,6 +53,8 @@ function assertOpsTokensDistinctFromCallerKeys(
       useFactory: (config: AppConfig, env: NodeJS.ProcessEnv) => {
         const registry = loadCallerRegistryFile(config.callersFile, {
           env,
+          // 호출처가 가리키는 계정이 구성에 있는지 기동 때 확인한다(ADR-0013 결정 2).
+          accountIds: config.smtpAccounts.map((a) => a.id),
           // JWS 서명 키는 DB 본문 키·지문 키와 달라야 한다(한 키가 여러 용도로 쓰이면 한 곳의 유출이 모두에 번진다).
           otherKeys: [
             {

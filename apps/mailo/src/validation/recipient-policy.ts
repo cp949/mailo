@@ -39,7 +39,7 @@ export function findDisallowedRecipients(
 
 /** 호출처 하나의 요청 정책. REST와 파일 채널이 같은 값으로 `checkRequestPolicy`를 부른다. */
 export interface RequestPolicy {
-  /** `config.smtp.defaultFrom`. 모든 호출처가 쓸 수 있는 발신 주소다. */
+  /** 호출처 계정의 `from`(`SmtpAccount.from`). 이 호출처가 쓸 수 있는 기본 발신 주소다(ADR-0013 결정 6). */
   defaultFrom: string;
   /** 호출처의 `allowedFrom`. */
   allowedFrom: readonly string[];

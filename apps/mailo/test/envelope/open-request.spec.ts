@@ -1239,6 +1239,7 @@ describe("openRequest: 요청별 만료 시간 (RQ-039, ADR-0010)", () => {
   it("등록 입력의 만료 TTL은 지정한 ttlSeconds이고 생략하면 호출자의 기본값이다", async () => {
     const args = {
       callerId: "alpha",
+      accountId: "default",
       idempotencyKey: "k-1",
       defaultExpiresInSeconds: 86_400,
     };

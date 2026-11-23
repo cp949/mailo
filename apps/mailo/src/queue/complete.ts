@@ -34,6 +34,7 @@ export interface CompleteDeps {
 interface LockedJob {
   id: string;
   caller_id: string;
+  account_id: string;
   idempotency_key: string;
   attempts: number;
   account_trips: number;
@@ -59,7 +60,7 @@ const EVENT_TYPE: Record<"SENT" | "FAILED" | "EXPIRED", JobEventType> = {
   EXPIRED: "JOB_EXPIRED",
 };
 
-const JOB_COLUMNS = `id, caller_id, idempotency_key, attempts, account_trips,
+const JOB_COLUMNS = `id, caller_id, account_id, idempotency_key, attempts, account_trips,
   last_account_response, expires_at, recipients, leased_at, now() AS db_now`;
 
 /**
@@ -117,11 +118,16 @@ async function applyOutcome(
   job: LockedJob,
   leaseToken: string,
   outcome: InternalOutcome,
-  deps: CompleteDeps,
+  baseDeps: CompleteDeps,
   /** 시도를 기록하는 인스턴스. lease 회수는 점유한 인스턴스를 알 수 없어 null이다. */
   instance: string | null = null,
 ): Promise<Extract<CompleteResult, { applied: true }>> {
   const dbNow = job.db_now;
+  // 차단기 행은 작업이 등록 때 고정한 계정의 것이다(ADR-0013 결정 3 나). 요청·호출처 매핑을 다시 읽지 않는다.
+  const deps = {
+    ...baseDeps,
+    breaker: { ...baseDeps.breaker, breakerKey: job.account_id },
+  };
   // 계정 상태 오류는 아래에서 차단기 상태를 본 뒤에 시도 횟수에 넣을지 정한다.
   let counted = outcome.classification !== "ACCOUNT";
   let attemptsAfter = job.attempts + (counted ? 1 : 0);
@@ -263,8 +269,8 @@ async function applyOutcome(
   await client.query(
     `INSERT INTO mail_attempts
        (job_id, classification, counted, stage, response_code, enhanced_code,
-        response_text, rejected_recipients, started_at, caller_id, instance)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, COALESCE($9::timestamptz, now()), $10, $11)`,
+        response_text, rejected_recipients, started_at, caller_id, instance, account_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, COALESCE($9::timestamptz, now()), $10, $11, $12)`,
     [
       job.id,
       outcome.classification,
@@ -281,6 +287,8 @@ async function applyOutcome(
       job.caller_id,
       // 로그의 `instance`와 행을 잇는다(migrations/0003). 수신자·본문 정보가 아니다.
       instance,
+      // 계정 24시간 할당(묶음 B)이 조인 없이 세기 위한 복사본이다(migrations/0011).
+      job.account_id,
     ],
   );
 

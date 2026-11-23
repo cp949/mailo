@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runMigrations } from "../../src/db/migrator.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
-import { createJob } from "../support/queue-fixtures.js";
+import { createLegacyJob } from "../support/queue-fixtures.js";
 
 const MIGRATIONS = fileURLToPath(new URL("../../migrations", import.meta.url));
 
@@ -35,7 +35,7 @@ describe("PostgreSQL 통합: 마이그레이션 0009 이벤트 삭제 표지 (RQ
   it("0001~0008 위에서 0009만 추가로 적용되고 기존 작업 행을 바꾸지 않는다", async () => {
     const first = await runMigrations(db.pool, dir);
     expect(first.at(-1)).toBe("0008_ops_controls.sql");
-    await createJob(db.pool);
+    await createLegacyJob(db.pool);
     const before = await db.pool.query("SELECT * FROM mail_jobs");
 
     await copyFile(
@@ -73,11 +73,14 @@ describe("PostgreSQL 통합: 마이그레이션 0009 이벤트 삭제 표지 (RQ
     expect(rows[0].stamped).toBe(true);
   });
 
-  it("실제 migrations 폴더 전체를 새 schema에 적용하면 0009가 마지막이다", async () => {
+  it("실제 migrations 폴더 전체를 새 schema에 적용하면 0008 바로 뒤에 0009가 적용된다", async () => {
     const other = await createTestDatabase();
     try {
       const applied = await runMigrations(other.pool, MIGRATIONS);
-      expect(applied.at(-1)).toBe("0009_event_purges.sql");
+      // 이후 마이그레이션(0010~)이 이어지므로 "마지막"이 아니라 0008 바로 다음 순서를 고정한다.
+      expect(applied[applied.indexOf("0008_ops_controls.sql") + 1]).toBe(
+        "0009_event_purges.sql",
+      );
       const { rows } = await other.pool.query(
         "SELECT to_regclass('mail_event_purges') IS NOT NULL AS exists",
       );

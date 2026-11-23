@@ -11,7 +11,6 @@ export {
   type FileChannelConfig,
   type OpsAdminToken,
   type OpsConfig,
-  type SmtpConfig,
 } from "./load-config.js";
 export {
   interpretDatabaseUrl,
@@ -30,3 +29,11 @@ export type {
 } from "./worker-options.js";
 export { EnvReader } from "./env-reader.js";
 export { decodeKey, isPublicOrWeakKey } from "./key-loader.js";
+export {
+  DEFAULT_SMTP_ACCOUNT_ID,
+  MAX_SMTP_ACCOUNTS,
+  RESERVED_ACCOUNT_ID,
+  isAccountId,
+  loadSmtpAccounts,
+  type SmtpAccount,
+} from "./smtp-accounts.js";

@@ -102,6 +102,7 @@ export function jobInput(
     body: Buffer.from("제목과 본문"),
     canonicalRequest: `canonical:${key}`,
     expiresInSeconds: 86_400,
+    accountId: "default",
     ...overrides,
   };
 }
@@ -114,6 +115,22 @@ export async function createJob(
   const result = await register(pool, registerDeps, jobInput(overrides));
   if (result.kind !== "created") throw new Error("신규 등록이 아니다");
   return result.jobId;
+}
+
+/**
+ * `account_id` 컬럼이 없는 옛 스키마(0001~0009)에 작업 행을 넣는다. 구버전 인스턴스가 쓰던 INSERT와 같은 형태다.
+ * 마이그레이션 일부만 적용한 schema에서 "기존 행을 바꾸지 않는다"를 확인하는 테스트가 쓴다. 현재 `register`는 `account_id`를 쓰므로 이 schema에서 못 쓴다.
+ */
+export async function createLegacyJob(pool: pg.Pool): Promise<string> {
+  const input = jobInput();
+  const { rows } = await pool.query<{ id: string }>(
+    `INSERT INTO mail_jobs
+       (id, caller_id, idempotency_key, fingerprint, fingerprint_key_version, recipients, expires_at)
+     VALUES (gen_random_uuid(), $1, $2, '\\x00', 1, '{"to":["x@example.invalid"]}', now() + interval '1 day')
+     RETURNING id`,
+    [input.callerId, input.idempotencyKey],
+  );
+  return rows[0]!.id;
 }
 
 /** 시간 경과를 흉내 내기 위해 작업 시각을 과거로 당긴다. */

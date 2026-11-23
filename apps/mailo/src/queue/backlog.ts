@@ -127,3 +127,22 @@ export async function getQueueDepth(db: Queryable): Promise<QueueDepth> {
     backlog,
   };
 }
+
+/**
+ * 구성한 계정에 없는 계정의 비종결 작업(`PENDING`·`RETRY_WAIT`·`SENDING`) 수를 계정별로 센다(ADR-0013 결정 2).
+ * 기동 때 한 번 부르는 점검용이다. 이 작업은 점유되지 않고 만료 sweep이 `EXPIRED`로 만든다.
+ * 계정 ID와 건수만 읽는다. 계정 ID가 인덱스에 없어 대기 건수에 비례하는 비용이 든다(묶음 B의 인덱스 전에는 기동 한 번뿐이다).
+ */
+export async function countOrphanAccountJobs(
+  db: Queryable,
+  configuredAccountIds: readonly string[],
+): Promise<Array<{ accountId: string; count: number }>> {
+  const { rows } = await db.query<{ account_id: string; n: number }>(
+    `SELECT account_id, count(*)::int AS n FROM mail_jobs
+      WHERE status IN ('PENDING', 'RETRY_WAIT', 'SENDING')
+        AND account_id <> ALL($1::text[])
+      GROUP BY account_id ORDER BY account_id`,
+    [[...configuredAccountIds]],
+  );
+  return rows.map((r) => ({ accountId: r.account_id, count: r.n }));
+}

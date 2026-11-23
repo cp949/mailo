@@ -41,6 +41,7 @@ import {
   type SmtpMessage,
   type SmtpSendResult,
 } from "../smtp/index.js";
+import { DEFAULT_SMTP_ACCOUNT_ID } from "../config/index.js";
 import { decodeBodyContent } from "./body-content.js";
 import { systemClock, type Clock } from "./clock.js";
 import {
@@ -52,12 +53,26 @@ import { noopMetrics, type AppMetrics } from "../metrics/index.js";
 import { countAttempt, countRecovered, countSwept } from "./metrics.js";
 import { validateWorkerOptions, type WorkerOptions } from "./options.js";
 
+/** 작업이 고정한 SMTP 계정 하나의 발송기와 기본 발신 주소(ADR-0013 결정 2). */
+export interface WorkerAccount {
+  sender: MailSender;
+  /** 작업의 `envelope.from`이 null일 때 쓰는 이 계정의 발신 주소(`SmtpAccount.from`). */
+  from: string;
+}
+
 export interface WorkerDeps {
   pool: pg.Pool;
-  sender: MailSender;
   bodyCipher: BodyCipher;
-  /** 작업의 `envelope.from`이 null일 때 쓰는 발신 주소(`config.smtp.defaultFrom`). */
-  defaultFrom: string;
+  /**
+   * 계정 ID별 발송기와 기본 발신 주소. 이 목록에 있는 계정의 작업만 점유한다(`claim`의 `accountIds`).
+   * 점유한 작업은 자기 `account_id`의 발송기와 발신 주소로 전송한다. 이 인스턴스는 호출처 매핑을 읽지 않는다.
+   * `sender`·`defaultFrom`과 함께 쓸 수 없다.
+   */
+  accounts?: ReadonlyMap<string, WorkerAccount>;
+  /** `accounts`를 생략한 단일 계정 형태의 발송기. `default` 계정 하나가 된다. */
+  sender?: MailSender;
+  /** `accounts`를 생략한 단일 계정 형태의 발신 주소. `sender`와 함께 준다. */
+  defaultFrom?: string;
   /** 생략하면 시스템 시계다. */
   clock?: Clock;
   /** [0, 1) 난수. 재시도 jitter와 폴링 간격에 쓴다. 생략하면 Math.random이다. */
@@ -125,11 +140,28 @@ class JobDataError extends Error {
     readonly code:
       | "BODY_MISSING"
       | "RECIPIENTS_MALFORMED"
-      | "ENVELOPE_MALFORMED",
+      | "ENVELOPE_MALFORMED"
+      | "ACCOUNT_UNAVAILABLE",
   ) {
     super(`job data is unusable (code=${code})`);
     this.name = "JobDataError";
   }
+}
+
+/** `accounts` 또는 단일 계정 형태(`sender`+`defaultFrom`)를 계정 맵으로 바꾼다. 둘을 함께 주거나 둘 다 없으면 던진다. */
+function resolveAccounts(deps: WorkerDeps): ReadonlyMap<string, WorkerAccount> {
+  const single = deps.sender !== undefined || deps.defaultFrom !== undefined;
+  if (deps.accounts !== undefined) {
+    if (single)
+      throw new Error("accounts와 sender·defaultFrom은 함께 쓸 수 없다");
+    if (deps.accounts.size === 0) throw new Error("accounts가 비어 있다");
+    return deps.accounts;
+  }
+  if (deps.sender === undefined || deps.defaultFrom === undefined)
+    throw new Error("accounts 또는 sender와 defaultFrom이 필요하다");
+  return new Map([
+    [DEFAULT_SMTP_ACCOUNT_ID, { sender: deps.sender, from: deps.defaultFrom }],
+  ]);
 }
 
 export function createWorker(
@@ -137,7 +169,9 @@ export function createWorker(
   options: WorkerOptions,
 ): WorkerHandle {
   validateWorkerOptions(options);
-  const { pool, sender, bodyCipher, defaultFrom } = deps;
+  const { pool, bodyCipher } = deps;
+  const accounts = resolveAccounts(deps);
+  const accountIds = [...accounts.keys()];
   const clock = deps.clock ?? systemClock;
   const random = deps.random ?? Math.random;
   const claimRandom = deps.claimRandom ?? Math.random;
@@ -264,6 +298,8 @@ export function createWorker(
           leaseSeconds: options.leaseSeconds,
           limit: free,
           deps: completeDeps,
+          // 구성에서 빠진 계정의 작업은 점유하지 않는다. 만료 sweep이 EXPIRED로 만든다(ADR-0013 결정 2).
+          accountIds,
           // [0, 1) 난수라 비율 0이면 항상 우선순위 경로, 1이면 항상 대기 순서 경로다.
           order: claimRandom() < options.claimFifoRatio ? "fifo" : "priority",
           onSendControls: reportSendControls,
@@ -314,8 +350,11 @@ export function createWorker(
   ): Promise<void> {
     let outcome: AttemptOutcome;
     try {
-      const message = await buildMessage(job);
-      const result = await sender.send(message, {
+      // `claim`이 구성한 계정만 점유하므로 정상 경로에서는 항상 찾는다. 못 찾으면 내부 오류로 끝낸다(차단기는 건드리지 않는다).
+      const account = accounts.get(job.accountId);
+      if (account === undefined) throw new JobDataError("ACCOUNT_UNAVAILABLE");
+      const message = await buildMessage(job, account.from);
+      const result = await account.sender.send(message, {
         signal: sendController.signal,
       });
       outcome = toOutcome(result);
@@ -335,7 +374,10 @@ export function createWorker(
     await record(job, outcome, claimStartedAt);
   }
 
-  async function buildMessage(job: ClaimedJob): Promise<SmtpMessage> {
+  async function buildMessage(
+    job: ClaimedJob,
+    defaultFrom: string,
+  ): Promise<SmtpMessage> {
     if (job.body === null) throw new JobDataError("BODY_MISSING");
     const plaintext = await bodyCipher.decrypt(job.id, job.body);
     const content = decodeBodyContent(plaintext);
@@ -347,7 +389,7 @@ export function createWorker(
       throw new JobDataError("RECIPIENTS_MALFORMED");
     }
     const envelope = asRecord(job.envelope);
-    // 요청이 from을 생략하면 등록 때 null로 저장된다. 발신 계정 기본 주소로 채운다.
+    // 요청이 from을 생략하면 등록 때 null로 저장된다. 작업 계정의 기본 발신 주소로 채운다(ADR-0013 결정 6).
     const from = envelope?.["from"] ?? defaultFrom;
     const replyTo = envelope?.["replyTo"];
     if (

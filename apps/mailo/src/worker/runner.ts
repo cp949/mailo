@@ -3,10 +3,18 @@
  * `createWorker`는 순수 의존성만 받는다. 이 파일이 환경 변수에서 읽은 값을 Worker 옵션·SMTP 발송기 설정으로 바꾼다.
  */
 import type pg from "pg";
-import type { AppConfig } from "../config/index.js";
-import type { AppLogger } from "../logging/index.js";
+import {
+  DEFAULT_SMTP_ACCOUNT_ID,
+  type AppConfig,
+  type SmtpAccount,
+} from "../config/index.js";
+import { describeError, type AppLogger } from "../logging/index.js";
 import type { AppMetrics } from "../metrics/index.js";
-import type { BodyCipher } from "../queue/index.js";
+import {
+  countOrphanAccountJobs,
+  ensureBreakerRows,
+  type BodyCipher,
+} from "../queue/index.js";
 import {
   checkSmtpTimeouts,
   createSmtpSender,
@@ -17,7 +25,12 @@ import {
 } from "../smtp/index.js";
 import type { Clock } from "./clock.js";
 import { workerOptionsFromConfig, type WorkerOptions } from "./options.js";
-import { createWorker, type WorkerDeps, type WorkerHandle } from "./worker.js";
+import {
+  createWorker,
+  type WorkerAccount,
+  type WorkerDeps,
+  type WorkerHandle,
+} from "./worker.js";
 
 export interface WorkerRunnerDeps {
   pool: pg.Pool;
@@ -38,8 +51,8 @@ export interface WorkerRunnerDeps {
   onFatal?: WorkerDeps["onFatal"];
 }
 
-/** `MAILO_SMTP_SECURITY` 값과 발송기 연결 방식의 대응(RQ-005). */
-const TLS_MODE: Record<AppConfig["smtp"]["security"], TlsMode> = {
+/** 계정의 `security` 값과 발송기 연결 방식의 대응(RQ-005). */
+const TLS_MODE: Record<SmtpAccount["security"], TlsMode> = {
   starttls: "STARTTLS",
   tls: "IMPLICIT",
   none: "NONE",
@@ -47,7 +60,7 @@ const TLS_MODE: Record<AppConfig["smtp"]["security"], TlsMode> = {
 
 /** 평문 모드 경고의 고정 문구. 설정 값과 인증 정보는 넣지 않는다(RQ-027). */
 const PLAINTEXT_WARNING =
-  "평문 SMTP 모드(MAILO_SMTP_SECURITY=none)다. SMTP 인증 정보와 본문이 암호화 없이 전송된다. 사용 판단은 운영자 책임이다";
+  "평문 SMTP 모드(security=none, default 계정은 MAILO_SMTP_SECURITY=none)다. SMTP 인증 정보와 본문이 암호화 없이 전송된다. 사용 판단은 운영자 책임이다";
 
 /** 설정 값을 Worker 옵션으로 바꾼다(`workerOptionsFromConfig`). */
 export function toWorkerOptions(
@@ -63,19 +76,30 @@ export function toWorkerOptions(
 }
 
 /**
- * SMTP 설정을 발송기 설정으로 바꾸고 lease 안에 들어가는지 확인한다(ADR-0002 결정 11).
- * `MAILO_SMTP_TIMEOUT_SECONDS`는 소켓 무응답 상한이다. 연결·greeting·DNS는 그 값과 10초 중 작은 값이고,
+ * 계정의 SMTP 설정을 발송기 설정으로 바꾸고 lease 안에 들어가는지 확인한다(ADR-0002 결정 11).
+ * 계정의 `timeoutSeconds`는 소켓 무응답 상한이다. 연결·greeting·DNS는 그 값과 10초 중 작은 값이고,
  * 한 건 전체 마감은 소켓 값의 3배와 `lease - 여유` 중 작은 값이다.
  * 어긋나면 `SmtpConfigError`로 기동이 실패한다.
+ * `accountId`를 생략하면 `default` 계정이다. 계정이 구성에 없으면 던진다.
  */
 export function toSenderConfig(
   config: AppConfig,
   trustedCa?: string,
+  accountId: string = DEFAULT_SMTP_ACCOUNT_ID,
 ): SmtpSenderConfig {
-  const { smtp, worker } = config;
-  const socketMs = smtp.timeoutSeconds * 1000;
+  const account = config.smtpAccounts.find((a) => a.id === accountId);
+  if (account === undefined) throw new Error("SMTP 계정이 구성에 없다");
+  return accountSenderConfig(account, config.worker.lease.seconds, trustedCa);
+}
+
+function accountSenderConfig(
+  account: SmtpAccount,
+  leaseSeconds: number,
+  trustedCa?: string,
+): SmtpSenderConfig {
+  const socketMs = account.timeoutSeconds * 1000;
   const phaseMs = Math.min(socketMs, 10_000);
-  const leaseMs = worker.lease.seconds * 1000;
+  const leaseMs = leaseSeconds * 1000;
   const timeouts = {
     connectionMs: phaseMs,
     greetingMs: phaseMs,
@@ -83,38 +107,51 @@ export function toSenderConfig(
     dnsMs: phaseMs,
     totalMs: Math.min(socketMs * 3, leaseMs - DEFAULT_LEASE_MARGIN_MS),
   };
-  checkSmtpTimeouts(timeouts, worker.lease.seconds);
+  checkSmtpTimeouts(timeouts, leaseSeconds);
   return {
-    host: smtp.host,
-    port: smtp.port,
-    tlsMode: TLS_MODE[smtp.security],
-    ...(smtp.auth && {
-      auth: { user: smtp.auth.user, pass: smtp.auth.password.reveal() },
+    host: account.host,
+    port: account.port,
+    tlsMode: TLS_MODE[account.security],
+    ...(account.auth && {
+      auth: { user: account.auth.user, pass: account.auth.password.reveal() },
     }),
     timeouts,
     ...(trustedCa !== undefined && { trustedCa }),
-    // Message-ID 도메인은 발신 계정 주소로 고정한다(ADR-0007 결정 8).
-    accountAddress: smtp.defaultFrom,
+    // Message-ID 도메인은 작업 계정의 발신 주소로 고정한다(ADR-0007 결정 8, ADR-0013 결정 2).
+    accountAddress: account.from,
   };
 }
 
 export function createWorkerRunner(deps: WorkerRunnerDeps): WorkerHandle {
   const { config } = deps;
-  // 설정으로 발송기를 만들 때만 평문 경고를 남긴다. 주입한 발송기는 이 설정을 쓰지 않는다.
+  // 계정마다 발송기를 만든다. 설정으로 발송기를 만들 때만 평문 경고를 남긴다. 주입한 발송기는 이 설정을 쓰지 않는다.
   // `auth`는 인증 정보가 평문으로 나가는지만 알린다(값은 싣지 않는다, RQ-005·027).
-  if (deps.sender === undefined && config.smtp.security === "none")
-    deps.logger.warn("smtp_plaintext_enabled", {
-      auth: config.smtp.auth !== null,
-      message: PLAINTEXT_WARNING,
+  const accounts = new Map<string, WorkerAccount>();
+  for (const account of config.smtpAccounts) {
+    if (deps.sender === undefined && account.security === "none")
+      deps.logger.warn("smtp_plaintext_enabled", {
+        accountId: account.id,
+        auth: account.auth !== null,
+        message: PLAINTEXT_WARNING,
+      });
+    accounts.set(account.id, {
+      sender:
+        deps.sender ??
+        createSmtpSender(
+          accountSenderConfig(
+            account,
+            config.worker.lease.seconds,
+            deps.trustedCa,
+          ),
+        ),
+      from: account.from,
     });
-  const sender =
-    deps.sender ?? createSmtpSender(toSenderConfig(config, deps.trustedCa));
-  return createWorker(
+  }
+  const inner = createWorker(
     {
       pool: deps.pool,
-      sender,
+      accounts,
       bodyCipher: deps.bodyCipher,
-      defaultFrom: config.smtp.defaultFrom,
       ...(deps.clock && { clock: deps.clock }),
       ...(deps.onFatal && { onFatal: deps.onFatal }),
       logger: deps.logger,
@@ -123,4 +160,34 @@ export function createWorkerRunner(deps: WorkerRunnerDeps): WorkerHandle {
     },
     toWorkerOptions(config, deps.callerQuotas),
   );
+  const accountIds = [...accounts.keys()];
+  return {
+    ...inner,
+    async start() {
+      // 계정마다 차단기 행이 있어야 완료 경로가 갱신할 수 있다. 실패하면 Worker를 시작하지 않는다(fail-closed, ADR-0013 결정 3 나).
+      await ensureBreakerRows(deps.pool, accountIds);
+      await reportOrphanJobs(deps.pool, deps.logger, accountIds);
+      await inner.start();
+    },
+  };
+}
+
+/**
+ * 구성 밖 계정의 비종결 작업을 알린다(ADR-0013 결정 2). 이 작업은 점유되지 않고 만료 sweep이 EXPIRED로 만든다.
+ * 계정 ID와 건수만 담는다. 확인 쿼리가 실패해도 기동을 막지 않고 오류 이름만 남긴다.
+ */
+async function reportOrphanJobs(
+  pool: pg.Pool,
+  logger: AppLogger,
+  accountIds: readonly string[],
+): Promise<void> {
+  try {
+    for (const orphan of await countOrphanAccountJobs(pool, accountIds))
+      logger.warn("account_orphan_jobs", {
+        accountId: orphan.accountId,
+        count: orphan.count,
+      });
+  } catch (error) {
+    logger.warn("account_orphan_check_failed", { error: describeError(error) });
+  }
 }

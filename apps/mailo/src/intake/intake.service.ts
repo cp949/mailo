@@ -72,16 +72,27 @@ export class IntakeService {
   ): Promise<CreateJobResult> {
     // 호출처 정책(발신 주소·수신 도메인)을 어기면 새 작업을 만들지 않는다. 파일 채널과 같은 판정이다.
     const caller = this.registry.callers.find((c) => c.id === callerId);
+    // 호출처는 인증을 통과했으므로 레지스트리에 있다. 계정은 기동 때 구성에 있음을 확인했다(ADR-0013 결정 2).
+    if (caller === undefined)
+      throw new Error("인증한 호출처가 레지스트리에 없다");
+    const account = this.config.smtpAccounts.find(
+      (a) => a.id === caller.accountId,
+    );
+    if (account === undefined)
+      throw new Error("호출처의 SMTP 계정이 구성에 없다");
     const violations = checkRequestPolicy(opened.request, {
-      defaultFrom: this.config.smtp.defaultFrom,
-      allowedFrom: caller?.allowedFrom ?? [],
-      allowedRecipientDomains: caller?.allowedRecipientDomains ?? null,
+      // 허용 발신 주소 집합은 {호출처 계정의 from} ∪ allowedFrom이다(ADR-0013 결정 6).
+      defaultFrom: account.from,
+      allowedFrom: caller.allowedFrom,
+      allowedRecipientDomains: caller.allowedRecipientDomains,
     });
     const result = await register(
       this.pool,
       { cipher: this.cipher, fingerprinter: this.fingerprinter },
       toRegisterInput(opened, {
         callerId,
+        // 새 작업은 등록 때 호출처의 계정을 고정한다. 같은 Key의 기존 작업은 계정을 바꾸지 않는다(ADR-0013 결정 2).
+        accountId: account.id,
         idempotencyKey,
         defaultExpiresInSeconds: this.config.queue.jobExpirySeconds,
         denyNew: violations.length > 0,

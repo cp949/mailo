@@ -36,7 +36,7 @@ import {
 import { OpsModule } from "./ops/index.js";
 import { QueueModule } from "./queue/index.js";
 import { SmtpModule, type MailSender } from "./smtp/index.js";
-import { createWorkerRunner } from "./worker/index.js";
+import { createWorkerRunner, reportAccountConfig } from "./worker/index.js";
 import {
   NoopWorkerRunner,
   WORKER_RUNNER,
@@ -154,6 +154,8 @@ export class AppModule {
           ): WorkerRunner => {
             if (options.workerRunner) return options.workerRunner;
             if (!options.worker) return new NoopWorkerRunner();
+            // 계정 구성 점검(미참조 계정, 별칭 공유, 아직 쓰지 않는 한도). 계정 ID와 호출처 ID만 로그에 싣는다.
+            reportAccountConfig(logger, config.smtpAccounts, registry.callers);
             return createWorkerRunner({
               pool,
               config,
@@ -216,7 +218,9 @@ export class AppModule {
               fingerprinter,
               config: { ...fileChannel, root: fileChannel.root },
               jobExpirySeconds: config.queue.jobExpirySeconds,
-              defaultFrom: config.smtp.defaultFrom,
+              accountFroms: new Map(
+                config.smtpAccounts.map((a) => [a.id, a.from]),
+              ),
               logger,
               metrics,
             });

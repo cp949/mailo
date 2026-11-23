@@ -10,6 +10,7 @@ export {
 } from "./cancel.js";
 export {
   BACKLOG_COUNT_LIMIT,
+  countOrphanAccountJobs,
   getQueueBacklog,
   getQueueDepth,
   type QueueBacklog,
@@ -54,6 +55,7 @@ export {
   type RetentionResult,
 } from "./maintenance.js";
 export {
+  ensureBreakerRows,
   getBreakerState,
   recordAccountFailure,
   recordAccountOk,

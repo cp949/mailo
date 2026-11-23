@@ -11,7 +11,6 @@ import type { IatPolicy } from "../envelope/index.js";
 import type { AccountErrorReason } from "../queue/index.js";
 import {
   DEFAULT_MAIL_REQUEST_LIMITS,
-  checkAddress,
   type MailRequestLimits,
 } from "../validation/index.js";
 import { loadDatabaseSsl, type DatabaseSsl } from "./database-ssl.js";
@@ -20,26 +19,15 @@ import { loadInstanceId } from "./instance-id.js";
 import { assertDisjointKeyRings, loadKeyRing } from "./key-loader.js";
 import { Secret } from "./secret.js";
 import {
+  HOSTNAME,
+  loadSmtpAccounts,
+  type SmtpAccount,
+} from "./smtp-accounts.js";
+import {
   SHUTDOWN_MARGIN_MS,
   workerDrainTimeoutMs,
   type WorkerConfig,
 } from "./worker-options.js";
-
-export interface SmtpConfig {
-  host: string;
-  port: number;
-  /**
-   * `starttls`: 587 + STARTTLS 필수(기본). `tls`: 465 implicit TLS. `none`: TLS 없는 평문 연결.
-   * 연결 보안 방식은 운영자 설정이다. `none`은 NODE_ENV와 무관하게 받고 기동 때 warn 로그를 남긴다(RQ-005).
-   */
-  security: "starttls" | "tls" | "none";
-  /** 인증이 없는 릴레이(IP 허용)는 null이다. */
-  auth: { user: string; password: Secret<string> } | null;
-  /** 요청이 `from`을 생략했을 때 쓰는 발신 주소. */
-  defaultFrom: string;
-  /** 연결·응답 대기 초. lease보다 작아야 한다(추정). */
-  timeoutSeconds: number;
-}
 
 /**
  * 파일 채널 설정(ADR-0004 결정 3·4·5, RQ-002). `root`가 없으면 파일 채널은 꺼져 있다(기본).
@@ -129,7 +117,11 @@ export interface AppConfig {
    * 앱이 오케스트레이터 설정을 알 수 없는 환경이 있기 때문이다.
    */
   stopGracePeriodMs: number | null;
-  smtp: SmtpConfig;
+  /**
+   * SMTP 계정 목록(RQ-053, ADR-0013 결정 1). 환경 변수 `MAILO_SMTP_*`가 정의한 `default`가 있으면 맨 앞이고
+   * 계정 파일(`MAILO_SMTP_ACCOUNTS_FILE`)의 계정이 뒤따른다. 하나 이상이다. `default` 계정이 없을 수 있다.
+   */
+  smtpAccounts: readonly SmtpAccount[];
   keys: {
     /** DB 본문 암호화 키링(ADR-0008 결정 6). */
     dbEncryption: Secret<KeyRingInput>;
@@ -181,7 +173,6 @@ const REASON_WAIT: Record<
   AUTH: { variable: "MAILO_BREAKER_WAIT_AUTH_SECONDS", fallback: 60 },
   OTHER: { variable: "MAILO_BREAKER_WAIT_OTHER_SECONDS", fallback: 60 },
 };
-const HOSTNAME = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 
 /**
  * `MAILO_DB_HOST`를 URL의 호스트 부분으로 바꾼다. 호스트 이름, IPv4, 대괄호 IPv6(`[::1]`)만 받는다.
@@ -295,75 +286,6 @@ export function loadDatabaseOnly(env: NodeJS.ProcessEnv = process.env): {
   const ssl = loadDatabaseSsl(reader, url);
   reader.finish();
   return { url: new Secret(url as string), ssl };
-}
-
-function loadSmtp(
-  reader: EnvReader,
-  leaseSeconds: number,
-): SmtpConfig | undefined {
-  const host = reader.requiredString("MAILO_SMTP_HOST");
-  if (host !== undefined && !HOSTNAME.test(host.trim())) {
-    reader.issue("MAILO_SMTP_HOST는 호스트 이름이어야 한다");
-  }
-  const security = reader.oneOf(
-    "MAILO_SMTP_SECURITY",
-    ["starttls", "tls", "none"] as const,
-    "starttls",
-  );
-  const port = reader.int("MAILO_SMTP_PORT", security === "tls" ? 465 : 587, {
-    min: 1,
-    max: 65535,
-  });
-  const timeoutSeconds = reader.int("MAILO_SMTP_TIMEOUT_SECONDS", 30, {
-    min: 1,
-    max: 3600,
-  });
-  // 전송이 lease보다 오래 걸리면 다른 Worker가 같은 작업을 다시 잡아 중복 발송한다(ADR-0002).
-  if (timeoutSeconds >= leaseSeconds) {
-    reader.issue(
-      "MAILO_SMTP_TIMEOUT_SECONDS는 MAILO_LEASE_SECONDS보다 작아야 한다",
-    );
-  }
-
-  const user = reader.raw("MAILO_SMTP_USER");
-  const password = reader.secret("MAILO_SMTP_PASSWORD");
-  if ((user === undefined) !== (password === undefined)) {
-    reader.issue(
-      "MAILO_SMTP_USER와 MAILO_SMTP_PASSWORD(또는 _FILE)는 함께 설정해야 한다",
-    );
-  }
-
-  const fromRaw = reader.raw("MAILO_SMTP_FROM") ?? user;
-  let defaultFrom: string | undefined;
-  if (fromRaw === undefined) {
-    reader.issue(
-      "MAILO_SMTP_FROM이 필요하다(MAILO_SMTP_USER가 없으면 기본 발신 주소를 정할 수 없다)",
-    );
-  } else if (
-    checkAddress(
-      fromRaw.trim(),
-      DEFAULT_MAIL_REQUEST_LIMITS.maxAddressChars,
-    ) !== undefined
-  ) {
-    reader.issue(
-      "MAILO_SMTP_FROM(없으면 MAILO_SMTP_USER)은 주소 하나여야 한다",
-    );
-  } else {
-    defaultFrom = fromRaw.trim();
-  }
-
-  if (host === undefined || defaultFrom === undefined) return undefined;
-  return {
-    host: host.trim(),
-    port,
-    security,
-    auth:
-      user !== undefined && password !== undefined
-        ? { user, password: new Secret(password) }
-        : null,
-    defaultFrom,
-    timeoutSeconds,
-  };
 }
 
 function loadWorkerConfig(
@@ -763,7 +685,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
   const worker = loadWorkerConfig(reader, jobExpiryMaxSeconds);
-  const smtp = loadSmtp(reader, worker.lease.seconds);
+  const smtpAccounts = loadSmtpAccounts(reader, {
+    leaseSeconds: worker.lease.seconds,
+    workerConcurrency: worker.concurrency,
+  });
 
   const maxRequestBytes = reader.int("MAILO_MAX_REQUEST_BYTES", 2 * MIB, {
     min: 1024,
@@ -850,7 +775,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     queue: { jobExpirySeconds, jobExpiryMaxSeconds },
     worker,
     stopGracePeriodMs,
-    smtp: smtp as SmtpConfig,
+    smtpAccounts,
     keys: {
       dbEncryption: new Secret(dbEncryption as KeyRingInput),
       fingerprint: new Secret(fingerprint as KeyRingInput),

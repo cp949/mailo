@@ -1,5 +1,10 @@
 export { createWorker } from "./worker.js";
-export type { WorkerDeps, WorkerHandle, WorkerStatus } from "./worker.js";
+export type {
+  WorkerAccount,
+  WorkerDeps,
+  WorkerHandle,
+  WorkerStatus,
+} from "./worker.js";
 export { toOutcome } from "./worker.js";
 export {
   WorkerOptionsError,
@@ -21,3 +26,5 @@ export {
   toWorkerOptions,
 } from "./runner.js";
 export type { WorkerRunnerDeps } from "./runner.js";
+export { reportAccountConfig } from "./account-report.js";
+export type { AccountReportCaller } from "./account-report.js";

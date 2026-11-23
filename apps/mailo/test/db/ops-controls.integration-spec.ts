@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runMigrations } from "../../src/db/migrator.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
-import { createJob } from "../support/queue-fixtures.js";
+import { createLegacyJob } from "../support/queue-fixtures.js";
 
 const MIGRATIONS = fileURLToPath(new URL("../../migrations", import.meta.url));
 
@@ -49,7 +49,7 @@ describe("PostgreSQL 통합: 마이그레이션 0008 운영 제어 (RQ-043·044,
   it("0001~0007 위에서 0008만 추가로 적용되고 기존 작업 행을 바꾸지 않는다", async () => {
     const first = await runMigrations(db.pool, dir);
     expect(first.at(-1)).toBe("0007_event_type_canceled.sql");
-    existingJobId = await createJob(db.pool);
+    existingJobId = await createLegacyJob(db.pool);
     const before = await db.pool.query("SELECT * FROM mail_jobs");
 
     await copyFile(

@@ -33,6 +33,24 @@ function toSnapshot(row: BreakerRow): BreakerSnapshot {
   };
 }
 
+/**
+ * 계정마다 차단기 행이 있게 한다(ADR-0013 결정 3 나). 행 키는 계정 ID다. 없는 행만 `INSERT ... ON CONFLICT DO NOTHING`으로 만들고
+ * 있는 행은 건드리지 않는다. `default` 행은 0001이 만든다. 구성에서 빠진 계정의 행은 지우지 않는다.
+ * 앱이 기동 때 부르고, 실패하면 그 인스턴스의 Worker를 시작하지 않는다(fail-closed).
+ */
+export async function ensureBreakerRows(
+  db: Queryable,
+  accountIds: readonly string[],
+): Promise<void> {
+  if (accountIds.length === 0) return;
+  await db.query(
+    `INSERT INTO mail_circuit_breaker (breaker_key)
+       SELECT unnest($1::text[]) ORDER BY 1
+     ON CONFLICT (breaker_key) DO NOTHING`,
+    [[...accountIds]],
+  );
+}
+
 /** 차단기 현재 상태. 헬스 응답(RQ-031)과 claim 사전 확인이 쓴다. */
 export async function getBreakerState(
   db: Queryable,

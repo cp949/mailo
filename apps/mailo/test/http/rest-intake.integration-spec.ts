@@ -1215,7 +1215,7 @@ describe("REST 통합: 등록·조회·이벤트·헬스 (RQ-001, 011, 015, 017,
 
     it("기동 설정의 SMTP 비밀번호 canary가 로그와 설정 직렬화에 나오지 않는다", async () => {
       expect(JSON.stringify(app.config)).not.toContain(CANARY.smtpPassword);
-      expect(String(app.config.smtp.auth?.password)).not.toContain(
+      expect(String(app.config.smtpAccounts[0]!.auth?.password)).not.toContain(
         CANARY.smtpPassword,
       );
       expect(app.logs.lines.join("\n")).not.toContain(CANARY.smtpPassword);

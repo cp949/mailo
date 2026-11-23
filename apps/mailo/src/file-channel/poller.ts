@@ -41,8 +41,8 @@ export interface FilePollerDeps {
   config: FileChannelConfig & { root: string };
   /** `IngestDeps.jobExpirySeconds`와 같다. */
   jobExpirySeconds: number;
-  /** `IngestDeps.defaultFrom`과 같다. */
-  defaultFrom: string;
+  /** `IngestDeps.accountFroms`와 같다. */
+  accountFroms: ReadonlyMap<string, string>;
   logger?: AppLogger;
   /** counter 증가 대상(RQ-049, ADR-0012 결정 4). 생략하면 세지 않는다. */
   metrics?: AppMetrics;
@@ -192,7 +192,7 @@ export function createFilePoller(deps: FilePollerDeps): FilePoller {
     fingerprinter: deps.fingerprinter,
     maxFileBytes: config.maxFileBytes,
     jobExpirySeconds: deps.jobExpirySeconds,
-    defaultFrom: deps.defaultFrom,
+    accountFroms: deps.accountFroms,
     logger: log,
     ...(deps.beforeDelete && { beforeDelete: deps.beforeDelete }),
   };

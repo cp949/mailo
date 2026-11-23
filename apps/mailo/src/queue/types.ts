@@ -61,6 +61,11 @@ export type AccountErrorReason =
 export interface RegisterInput {
   callerId: string;
   idempotencyKey: string;
+  /**
+   * 이 작업의 SMTP 계정 ID(RQ-054, ADR-0013 결정 2). 호출처 레지스트리의 `accountId`이고 등록 때 고정된다.
+   * 같은 Key의 기존 행이 있으면 기존 작업의 계정을 바꾸지 않는다. 지문에 포함하지 않는다.
+   */
+  accountId: string;
   /** 수신자(평문). 큐는 내용을 해석하지 않고 이벤트에 복사한다. */
   recipients: JsonValue;
   /** 복호화 없이 필요한 평문 발송 필드(from, replyTo 등). */
@@ -105,6 +110,8 @@ export type RegisterResult =
 export interface ClaimedJob {
   id: string;
   callerId: string;
+  /** 등록 때 고정된 SMTP 계정 ID(RQ-054). Worker가 이 계정의 발송기와 발신 주소로 전송한다. */
+  accountId: string;
   idempotencyKey: string;
   leaseToken: string;
   leaseUntil: Date;

@@ -165,7 +165,7 @@ export function createFileHarness(
         })),
       ],
     },
-    { env },
+    { env, accountIds: config.smtpAccounts.map((a) => a.id) },
   );
   const fingerprinter = createQueueFingerprinter(
     createKeyRing(config.keys.fingerprint.reveal()),
@@ -223,7 +223,7 @@ export function createFileHarness(
         fingerprinter,
         config: fileChannel,
         jobExpirySeconds: config.queue.jobExpirySeconds,
-        defaultFrom: config.smtp.defaultFrom,
+        accountFroms: new Map(config.smtpAccounts.map((a) => [a.id, a.from])),
         logger,
         ...overrides,
       });
