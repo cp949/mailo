@@ -13,6 +13,7 @@ import sample.relay.RelayProperties;
 import sample.relay.mailo.MailoClient;
 import sample.relay.outbox.OutboxRepository;
 import sample.relay.outbox.OutboxStatus;
+import sample.relay.relay.JobStatusMapping;
 
 /**
  * 이벤트 피드({@code GET /events}) 소비(RQ-017, ADR-0006).
@@ -22,6 +23,7 @@ import sample.relay.outbox.OutboxStatus;
  *   <li>같은 이벤트가 다시 와도 결과가 같다. 기록은 event_id로, outbox 전이는 상태 조건으로 멱등하다.
  *   <li>type 필터를 쓰지 않는다. 모든 종류를 받아 cursor를 하나만 둔다.
  *   <li>모르는 이벤트 종류는 경고만 하고 넘기지 않는다. 기록하고 해당 행을 {@code NEEDS_CHECK}로 둔다(ADR-0011 구현 순서 1.2).
+ *   <li>{@code JOB_CANCELED}는 취소 종결이다. {@code canceledBy}를 사유로 남긴다(RQ-040, ADR-0011 구현 순서 1.7).
  *   <li>공백 신호(헤더 {@code Mailo-Cursor-Gap} 또는 410)를 받으면 등록됨 행을 {@code NEEDS_CHECK}로 둔다(ADR-0011 결정 9).
  * </ul>
  */
@@ -134,6 +136,12 @@ public class EventFeedPoller {
             case "JOB_EXPIRED" -> {
                 transition(outboxId, OutboxStatus.EXPIRED, "EXPIRED");
                 record(eventId, type, outboxId, "EXPIRED", event, occurredAt);
+            }
+            case "JOB_CANCELED" -> {
+                // 호출처가 직접 취소해도 온다. outbox를 이벤트로 닫는 이 샘플은 취소를 종결로 처리한다(실패가 아니다).
+                String reason = JobStatusMapping.canceledReason(event.path("canceledBy").asText(null));
+                transition(outboxId, OutboxStatus.CANCELED, reason);
+                record(eventId, type, outboxId, reason, event, occurredAt);
             }
             case "INTAKE_REJECTED" -> {
                 String reason = event.path("reasonCode").asText("UNKNOWN");

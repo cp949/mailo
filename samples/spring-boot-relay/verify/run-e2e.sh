@@ -207,6 +207,60 @@ wait_until 60 status_is "$OB7" EXPIRED
 check "S7 outbox 최종 상태" EXPIRED "$(sq "SELECT status FROM mail_outbox WHERE id='$OB7'")"
 check "S7 이벤트 기록 type" JOB_EXPIRED "$(sq "SELECT type FROM mailo_event_log WHERE outbox_id='$OB7'")"
 
+log "S15 작업 취소(RQ-040, ADR-0011 결정 4): 대기 중인 작업을 호출처 키로 취소 -> JOB_CANCELED"
+cancel_http() { # 경로와 쿼리. 응답 본문은 $WORK/cancel.json, 상태 코드를 stdout으로 낸다
+  curl -s -m 10 -o "$WORK/cancel.json" -w '%{http_code}' -X POST -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:$MAILO_PORT$1"
+}
+# 차단기를 열어(계정 장애 모사, 검증용 DB 조작) 새 작업이 PENDING으로 남게 한다. 낮은 TTL(15초)에서는 일시 오류가 곧바로 EXPIRED라 RETRY_WAIT를 만들 수 없다.
+mq "UPDATE mail_circuit_breaker SET state='open', open_until=now() + interval '10 minutes', last_reason='AUTH_FAILED'" >/dev/null
+new_pending_order() { # 이메일 → stdout: outbox ID. Mailo에 등록돼 PENDING이 될 때까지 기다린다
+  local out id seen="" i
+  out="$(place_order "$1" SKU-OK)"; id="$(jq -r .outboxId <<<"$out")"
+  for i in $(seq 1 40); do
+    seen="$(mq "SELECT status FROM mail_jobs WHERE idempotency_key='$id'" </dev/null)"
+    [ "$seen" = PENDING ] && break
+    sleep 0.5
+  done
+  [ "$seen" = PENDING ] || echo "PENDING 대기 실패(마지막 상태: $seen)" >&2
+  printf '%s' "$id"
+}
+OB15A="$(new_pending_order cancel-a@example.com)"
+JOB15A="$(mq "SELECT id FROM mail_jobs WHERE idempotency_key='$OB15A'")"
+check "S15 취소 전 mail_jobs 상태" PENDING "$(mq "SELECT status FROM mail_jobs WHERE idempotency_key='$OB15A'")"
+check "S15 취소 응답 코드(작업 ID)" 200 "$(cancel_http "/jobs/$JOB15A/cancel")"
+check "S15 취소 응답 status" CANCELED "$(jq -r .status "$WORK/cancel.json")"
+check "S15 취소 응답 canceledBy" CALLER "$(jq -r .canceledBy "$WORK/cancel.json")"
+check "S15 mail_jobs 상태" CANCELED "$(mq "SELECT status FROM mail_jobs WHERE idempotency_key='$OB15A'")"
+check "S15 본문 즉시 삭제" 0 "$(mq "SELECT count(*) FROM mail_jobs WHERE idempotency_key='$OB15A' AND body_ciphertext IS NOT NULL")"
+check "S15 같은 취소 재요청은 200(멱등)" 200 "$(cancel_http "/jobs/$JOB15A/cancel")"
+check "S15 JOB_CANCELED 이벤트는 1건" 1 "$(mq "SELECT count(*) FROM mail_events WHERE job_id='$JOB15A' AND type='JOB_CANCELED'")"
+wait_until 20 status_is "$OB15A" CANCELED
+check "S15 outbox 최종 상태(실패가 아닌 취소 종결)" CANCELED "$(sq "SELECT status FROM mail_outbox WHERE id='$OB15A'")"
+check "S15 outbox 사유" CANCELED_BY_CALLER "$(sq "SELECT last_error FROM mail_outbox WHERE id='$OB15A'")"
+check "S15 이벤트 기록 type" JOB_CANCELED "$(sq "SELECT type FROM mailo_event_log WHERE outbox_id='$OB15A'")"
+check "S15 완료된 작업(S1)의 취소는 409" 409 "$(cancel_http "/jobs/$(mq "SELECT id FROM mail_jobs WHERE idempotency_key='$OB1'")/cancel")"
+check "S15 409 type" "urn:mailo:problem:job-not-cancelable" "$(jq -r .type "$WORK/cancel.json")"
+check "S15 409 jobStatus" SENT "$(jq -r .jobStatus "$WORK/cancel.json")"
+check "S15 없는 Key의 취소는 404" 404 "$(cancel_http "/jobs/cancel?idempotencyKey=$(cat /proc/sys/kernel/random/uuid)")"
+
+log "S15b Key로 취소하고, 확인 필요 행이 GET /jobs로 CANCELED가 된다"
+OB15B="$(new_pending_order cancel-b@example.com)"
+check "S15b Key로 취소 응답 코드" 200 "$(cancel_http "/jobs/cancel?idempotencyKey=$OB15B")"
+wait_until 20 status_is "$OB15B" CANCELED
+sq "UPDATE mail_outbox SET status='NEEDS_CHECK', last_error='UNKNOWN_EVENT_TYPE' WHERE id='$OB15B'" >/dev/null
+wait_until 20 status_is "$OB15B" CANCELED
+check "S15b 확인 필요 -> 취소 종결 반영" CANCELED "$(sq "SELECT status FROM mail_outbox WHERE id='$OB15B'")"
+check "S15b 사유" CANCELED_BY_CALLER "$(sq "SELECT last_error FROM mail_outbox WHERE id='$OB15B'")"
+resend "$OB15B"
+wait_until 20 attempts_ge "$OB15B" 2; sleep 3
+check "S15b 같은 Key 재전송 응답 코드(취소된 작업이 돌아온다)" 200 "$(sq "SELECT last_http_status FROM mail_outbox WHERE id='$OB15B'")"
+check "S15b 재전송 뒤 outbox 상태(200의 Job 상태 CANCELED 반영)" CANCELED "$(sq "SELECT status FROM mail_outbox WHERE id='$OB15B'")"
+check "S15b 취소된 Key의 mail_jobs 행 수(새 작업 없음)" 1 "$(mq "SELECT count(*) FROM mail_jobs WHERE idempotency_key='$OB15B'")"
+mq "UPDATE mail_circuit_breaker SET state='closed', open_until=NULL, last_reason=NULL" >/dev/null
+sleep 3
+check "S15 차단기를 닫은 뒤에도 취소한 작업은 발송되지 않음(a)" 0 "$(smtp_count cancel-a@example.com)"
+check "S15 차단기를 닫은 뒤에도 취소한 작업은 발송되지 않음(b)" 0 "$(smtp_count cancel-b@example.com)"
+
 log "S8 Mailo 중단 중 주문"
 stop_mailo
 T0=$SECONDS

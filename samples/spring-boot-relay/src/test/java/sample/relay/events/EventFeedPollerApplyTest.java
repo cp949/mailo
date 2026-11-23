@@ -22,7 +22,7 @@ import sample.relay.outbox.OutboxStatus;
 import static sample.relay.FakeMailoClient.response;
 
 /**
- * 이벤트 피드 소비의 "모르는 값" 처리(ADR-0011 구현 순서 1.2·1.4, docs/api/README.md).
+ * 이벤트 피드 소비의 "모르는 값" 처리(ADR-0011 구현 순서 1.2·1.4·1.7, docs/api/README.md).
  * DB와 Mailo 없이 대역으로 확인한다. 상태 전이 SQL의 조건은 실행 검증(verify/run-e2e.sh)이 맡는다.
  */
 class EventFeedPollerApplyTest {
@@ -53,7 +53,7 @@ class EventFeedPollerApplyTest {
 
     @Test
     void 모르는_이벤트_종류는_해당_행을_확인_필요로_두고_기록한다() throws Exception {
-        client.eventResponses.add(response(200, page(event("JOB_CANCELED", "e1", ID.toString()), "c1", false)));
+        client.eventResponses.add(response(200, page(event("JOB_PAUSED", "e1", ID.toString()), "c1", false)));
 
         boolean more = poller.pollOnce();
 
@@ -62,13 +62,13 @@ class EventFeedPollerApplyTest {
         assertEquals(ID, outbox.calls.get(0).id());
         assertEquals("UNKNOWN_EVENT_TYPE", outbox.calls.get(0).reason());
         assertEquals(1, events.logged.size());
-        assertEquals("JOB_CANCELED", events.logged.get(0).type());
+        assertEquals("JOB_PAUSED", events.logged.get(0).type());
         assertEquals("c1", events.cursor);
     }
 
     @Test
     void 모르는_이벤트_종류의_Key가_이_사용처_행이_아니면_상태를_바꾸지_않고_기록만_한다() throws Exception {
-        client.eventResponses.add(response(200, page(event("JOB_CANCELED", "e1", "outbox-8841"), "c1", false)));
+        client.eventResponses.add(response(200, page(event("JOB_PAUSED", "e1", "outbox-8841"), "c1", false)));
 
         poller.pollOnce();
 
@@ -85,6 +85,36 @@ class EventFeedPollerApplyTest {
         poller.pollOnce();
 
         assertEquals("", events.logged.get(0).type());
+    }
+
+    @Test
+    void JOB_CANCELED는_취소_종결로_반영하고_취소_주체를_사유로_기록한다() throws Exception {
+        client.eventResponses.add(response(200, page(
+                event("JOB_CANCELED", "e1", ID.toString()).replace("}", ",\"canceledBy\":\"OPERATOR\"}"), "c1", false)));
+
+        poller.pollOnce();
+
+        assertEquals(List.of("applyFeedResult"), outbox.methods());
+        assertEquals(OutboxStatus.CANCELED, outbox.calls.get(0).status());
+        assertEquals("CANCELED_BY_OPERATOR", outbox.calls.get(0).reason());
+        // 모르는 이벤트 종류가 아니므로 확인 필요로 바꾸지 않는다.
+        assertEquals("JOB_CANCELED", events.logged.get(0).type());
+        assertEquals("CANCELED_BY_OPERATOR", events.logged.get(0).reason());
+        assertEquals("c1", events.cursor);
+    }
+
+    @Test
+    void JOB_CANCELED의_canceledBy가_없거나_모르는_값이면_취소_사유만_남긴다() throws Exception {
+        client.eventResponses.add(response(200, page(event("JOB_CANCELED", "e1", ID.toString()), "c1", false)));
+        client.eventResponses.add(response(200, page(
+                event("JOB_CANCELED", "e2", ID.toString()).replace("}", ",\"canceledBy\":\"x-1\"}"), "c2", false)));
+
+        poller.pollOnce();
+        poller.pollOnce();
+
+        assertEquals("CANCELED", outbox.calls.get(0).reason());
+        // 서버가 보낸 값은 대문자와 밑줄만 남긴다. 걸러내고 남는 것이 없으면 취소 사유만 둔다.
+        assertEquals("CANCELED", outbox.calls.get(1).reason());
     }
 
     @Test

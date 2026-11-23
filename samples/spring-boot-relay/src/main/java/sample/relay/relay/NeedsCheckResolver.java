@@ -15,7 +15,7 @@ import sample.relay.outbox.OutboxStatus;
  * {@code NEEDS_CHECK} 행을 {@code GET /jobs?idempotencyKey=}로 확인한다(ADR-0011 구현 순서 1.1·1.5).
  *
  * <ul>
- *   <li>종결 상태(SENT, FAILED, EXPIRED)면 그 상태로 닫는다.
+ *   <li>종결 상태(SENT, FAILED, EXPIRED, CANCELED)면 그 상태로 닫는다.
  *   <li>비종결 상태면 등록됨(DELIVERED)으로 되돌린다. 이후 종결 이벤트를 기다린다.
  *   <li>모르는 상태나 404면 확인 필요로 남긴다. 운영자가 정한다(404는 보존 기간 30일이 지난 경우를 포함한다).
  *   <li>HTTP 호출은 트랜잭션 밖이다. 반영 SQL이 NEEDS_CHECK 조건을 걸어 같은 결과를 반복해도 안전하다.
@@ -86,6 +86,7 @@ public class NeedsCheckResolver {
         String reason = switch (next) {
             case OutboxStatus.FAILED -> job.path("failureReason").asText("UNKNOWN").replaceAll("[^A-Z_]", "");
             case OutboxStatus.EXPIRED -> "EXPIRED";
+            case OutboxStatus.CANCELED -> JobStatusMapping.canceledReason(job.path("canceledBy").asText(null));
             default -> null;
         };
         outbox.applyCheckResult(id, next, reason);

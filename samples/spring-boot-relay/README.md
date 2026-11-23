@@ -125,10 +125,10 @@ CREATE TABLE mail_outbox (
   last_error       text                              -- 고정 사유 코드만. 본문·수신자는 넣지 않는다
 );
 ALTER TABLE mail_outbox ADD CONSTRAINT mail_outbox_status_check
-  CHECK (status IN ('PENDING','DELIVERED','SENT','FAILED','EXPIRED','DEAD','REJECTED','QUARANTINED','NEEDS_CHECK'));
+  CHECK (status IN ('PENDING','DELIVERED','SENT','FAILED','EXPIRED','DEAD','REJECTED','QUARANTINED','NEEDS_CHECK','CANCELED'));
 CREATE INDEX mail_outbox_due_idx ON mail_outbox (next_attempt_at) WHERE status = 'PENDING';
 CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text NOT NULL);  -- 행 하나
-CREATE TABLE mailo_event_log (                                                 -- FAILED·EXPIRED·INTAKE_REJECTED·모르는 이벤트 종류 기록
+CREATE TABLE mailo_event_log (                                                 -- FAILED·EXPIRED·CANCELED·INTAKE_REJECTED·모르는 이벤트 종류 기록
   event_id text PRIMARY KEY, type text NOT NULL, outbox_id uuid, reason text,
   payload jsonb NOT NULL, occurred_at timestamptz NOT NULL, received_at timestamptz NOT NULL DEFAULT now()
 );
@@ -140,22 +140,23 @@ CREATE TABLE mailo_event_log (                                                 -
 
 행마다 짧은 트랜잭션에서 `SELECT ... WHERE status='PENDING' AND next_attempt_at <= now() ... FOR UPDATE SKIP LOCKED LIMIT 1`로 잠그고 전송한 뒤 같은 트랜잭션에서 결과를 쓴다.
 
-| 결과                                             | outbox 상태                                                          | 동작                                                                |
-| ------------------------------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 202, 200                                         | `DELIVERED`. 200 본문의 Job 상태가 `SENT`·`FAILED`·`EXPIRED`면 그 값. 모르는 Job 상태면 `NEEDS_CHECK` | 등록 완료. 발송 완료가 아니다. `PENDING`·`SENDING`·`RETRY_WAIT`는 `DELIVERED`다 |
-| 네트워크 오류, 타임아웃, 5xx, 429                | `PENDING` 유지, `next_attempt_at` 미룸                               | 같은 Key·같은 본문으로 backoff 재시도                               |
-| 409                                              | `QUARANTINED`                                                        | 재시도하지 않는다. 같은 Key에 다른 내용이다. 호출처 버그를 의심한다 |
-| 401                                              | `REJECTED`                                                           | relay를 멈춘다(프로세스 재시작 전까지). API 키를 고친 뒤 재시작한다 |
-| 400, 413, 415, 그 밖의 4xx·3xx                   | `REJECTED`                                                           | 재시도하지 않는다. 요청을 고친 뒤 `PENDING`으로 되돌려야 한다       |
-| `created_at` 기준 7일 초과                       | `DEAD`                                                               | 전송하지 않고 종결한다. 알림 대상이다                               |
-| 이벤트 `JOB_SENT` / `JOB_FAILED` / `JOB_EXPIRED` | `SENT` / `FAILED` / `EXPIRED`                                        | `PENDING`·`DELIVERED` 행만 바꾼다(멱등)                             |
-| 이벤트 `INTAKE_REJECTED`                         | `REJECTED` (`FINGERPRINT_MISMATCH`는 `QUARANTINED`)                  | Key가 null이면 `fileName`(`<id>.json`)으로 행을 찾는다              |
-| 모르는 이벤트 종류                               | `NEEDS_CHECK`(`PENDING`·`DELIVERED` 행만)                            | `mailo_event_log`에 기록하고 `GET /jobs`로 확인한다. 건너뛰지 않는다 |
-| 이벤트 공백 신호(헤더·410)                       | `DELIVERED` 행 전부 `NEEDS_CHECK`                                    | 놓친 이벤트의 행을 알 수 없어 등록됨 행을 모두 `GET /jobs`로 확인한다 |
+| 결과                                             | outbox 상태                                                                                                      | 동작                                                                                                       |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 202, 200                                         | `DELIVERED`. 200 본문의 Job 상태가 `SENT`·`FAILED`·`EXPIRED`·`CANCELED`면 그 값. 모르는 Job 상태면 `NEEDS_CHECK` | 등록 완료. 발송 완료가 아니다. `PENDING`·`SENDING`·`RETRY_WAIT`는 `DELIVERED`다                            |
+| 네트워크 오류, 타임아웃, 5xx, 429                | `PENDING` 유지, `next_attempt_at` 미룸                                                                           | 같은 Key·같은 본문으로 backoff 재시도                                                                      |
+| 409                                              | `QUARANTINED`                                                                                                    | 재시도하지 않는다. 같은 Key에 다른 내용이다. 호출처 버그를 의심한다                                        |
+| 401                                              | `REJECTED`                                                                                                       | relay를 멈춘다(프로세스 재시작 전까지). API 키를 고친 뒤 재시작한다                                        |
+| 400, 413, 415, 그 밖의 4xx·3xx                   | `REJECTED`                                                                                                       | 재시도하지 않는다. 요청을 고친 뒤 `PENDING`으로 되돌려야 한다                                              |
+| `created_at` 기준 7일 초과                       | `DEAD`                                                                                                           | 전송하지 않고 종결한다. 알림 대상이다                                                                      |
+| 이벤트 `JOB_SENT` / `JOB_FAILED` / `JOB_EXPIRED` | `SENT` / `FAILED` / `EXPIRED`                                                                                    | `PENDING`·`DELIVERED` 행만 바꾼다(멱등)                                                                    |
+| 이벤트 `JOB_CANCELED`                            | `CANCELED`, 사유 `CANCELED_BY_CALLER`·`CANCELED_BY_OPERATOR`                                                     | 실패가 아닌 취소 종결이다. 같은 행만 바꾸고 `mailo_event_log`에 기록한다. 새 메일은 새 Key(새 행)로 보낸다 |
+| 이벤트 `INTAKE_REJECTED`                         | `REJECTED` (`FINGERPRINT_MISMATCH`는 `QUARANTINED`)                                                              | Key가 null이면 `fileName`(`<id>.json`)으로 행을 찾는다                                                     |
+| 모르는 이벤트 종류                               | `NEEDS_CHECK`(`PENDING`·`DELIVERED` 행만)                                                                        | `mailo_event_log`에 기록하고 `GET /jobs`로 확인한다. 건너뛰지 않는다                                       |
+| 이벤트 공백 신호(헤더·410)                       | `DELIVERED` 행 전부 `NEEDS_CHECK`                                                                                | 놓친 이벤트의 행을 알 수 없어 등록됨 행을 모두 `GET /jobs`로 확인한다                                      |
 
 - 429는 Mailo가 쓰지 않는다(등록 단계에 쿼터가 없다). 앞단 프록시를 대비한 재시도다.
 - `NEEDS_CHECK`는 종결이 아니다. `NeedsCheckResolver`가 `GET /jobs?idempotencyKey=<행 ID>`로 확인한다.
-  - `SENT`·`FAILED`·`EXPIRED`면 그 상태로 닫는다. `FAILED`의 사유는 `failureReason`이다.
+  - `SENT`·`FAILED`·`EXPIRED`·`CANCELED`면 그 상태로 닫는다. `FAILED`의 사유는 `failureReason`, `CANCELED`의 사유는 `canceledBy`(`CANCELED_BY_<주체>`)다.
   - `PENDING`·`SENDING`·`RETRY_WAIT`면 `DELIVERED`로 되돌리고 이후 종결 이벤트를 기다린다.
   - 모르는 상태와 404(보존 기간이 지났거나 등록된 적 없음)는 `NEEDS_CHECK`로 남긴다. 운영 알림 대상이고 처리는 사용처가 정한다. 로그는 `needs_check_unresolved`, `needs_check_not_found`다.
   - 401은 이번 주기의 나머지 확인을 멈춘다. 5xx·429도 멈추고 다음 주기에 다시 한다.
@@ -187,26 +188,28 @@ CREATE TABLE mailo_event_log (                                                 -
 
 `verify/run-e2e.sh` 한 번 실행. 판정은 스크립트의 `check`(기대값과 실제값 비교)다.
 
-실행 조합별 결과(79 항목 통과, 실패 0). "SMTP 수신"은 로컬 SMTP 서버가 받은 메일 수, "Message-ID"는 그 수신 메일의 고유 Message-ID 수다.
+실행 조합별 결과(102 항목 통과, 실패 0). "SMTP 수신"은 로컬 SMTP 서버가 받은 메일 수, "Message-ID"는 그 수신 메일의 고유 Message-ID 수다.
 
-| 시나리오                 | 조합                      | 관찰값                                                                                                                                             | 판정 |
-| ------------------------ | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| S1 평문 REST 발송        | REST                      | 주문 201, 등록 202, outbox `SENT`, Mailo `mail_jobs` 1행 `SENT`, SMTP 수신 1통, Message-ID 1개, 본문 디코딩 일치                                   | 통과 |
-| S2 같은 outbox 행 재전송 | REST                      | 응답 200, outbox `SENT`(200의 Job 상태 반영), `mail_jobs` 1행 유지, SMTP 수신 1통 유지                                                             | 통과 |
-| S3 수신자 영구 거부(550) | REST                      | outbox `FAILED`, 사유 `PERMANENT_ERROR`, `mailo_event_log`에 `JOB_FAILED`와 `lastError.smtpCode` 550, SMTP 수신 0통                                | 통과 |
-| S3a 확인 필요 행 확인    | REST                      | `NEEDS_CHECK`로 바꾼 `FAILED` 작업의 행이 `GET /jobs` 확인으로 `FAILED`·`PERMANENT_ERROR`가 되고, Mailo에 없는 Key(404)의 행은 `NEEDS_CHECK`로 남음 | 통과 |
-| S4 같은 Key에 다른 내용  | REST                      | 409, outbox `QUARANTINED`, 사유 `HTTP_409 idempotency-conflict`, SMTP 수신 1통 유지                                                                | 통과 |
-| S5 잘못된 수신자 주소    | REST                      | 400, outbox `REJECTED`, 사유 `HTTP_400 validation-failed INVALID_FORMAT`, 시도 1회(재시도 없음)                                                    | 통과 |
-| S6 재고 부족 롤백        | REST                      | 주문 409, `mail_outbox` 행 수 변화 0, `orders` 0행, SMTP 수신 0통                                                                                  | 통과 |
-| S7 일시 오류(450)로 만료 | REST, Mailo 만료 TTL 15초 | outbox `EXPIRED`, `mailo_event_log`에 `JOB_EXPIRED`                                                                                                | 통과 |
-| S8 Mailo 중단 중 주문    | REST                      | 중단 중 주문 201(3초 이내), `orders` 1행, outbox `PENDING`·사유 `NETWORK_ERROR`·시도 3회 이상, Mailo 재기동 뒤 `SENT`, SMTP 수신 1통, cursor 저장  | 통과 |
-| S9 JWE 발송              | REST + JWE                | 202, outbox에 본문 평문 0건·`content` 있음, `SENT`, SMTP 수신 1통(복호화된 제목·본문 일치), 같은 암호문 재전송 200·수신 1통 유지                   | 통과 |
-| S10 알 수 없는 `kid`     | REST + JWE                | 400 `KID_UNKNOWN`, outbox `REJECTED`                                                                                                               | 통과 |
-| S11 JWS 파일 발송        | FILE + JWS                | outbox `SENT`, `mail_jobs` 1행, SMTP 수신 1통, 수집 거부 0건, 새 `iat`로 재전송해도 `mail_jobs` 1행·수신 1통·거부 0건, inbox 잔여 파일 0           | 통과 |
-| S12 JWS + JWE 파일 발송  | FILE + JWS + JWE          | outbox `SENT`, SMTP 수신 1통, Message-ID 1개, 복호화된 본문 일치                                                                                   | 통과 |
-| S13 잘못된 JWS 비밀키    | FILE + JWS                | Mailo 거부 기록 1건, 이벤트 `INTAKE_REJECTED`(`idempotencyKey` null, `fileName`으로 행 식별), outbox `REJECTED`·`SIGNATURE_INVALID`, SMTP 수신 0통 | 통과 |
-| S14 잘못된 API 키        | REST                      | 401, outbox `REJECTED`, relay 중지 뒤 다음 행 시도 0회                                                                                             | 통과 |
-| 로그 점검                | 전체                      | 샘플 앱 로그 7개에서 수신자 주소·본문·`Bearer` 0건, Mailo 로그에서 본문·수신자 주소 0건, 수신 메일 5통의 Message-ID가 모두 다름                    | 통과 |
+| 시나리오                 | 조합                      | 관찰값                                                                                                                                                                                                                                                                                                                         | 판정 |
+| ------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- |
+| S1 평문 REST 발송        | REST                      | 주문 201, 등록 202, outbox `SENT`, Mailo `mail_jobs` 1행 `SENT`, SMTP 수신 1통, Message-ID 1개, 본문 디코딩 일치                                                                                                                                                                                                               | 통과 |
+| S2 같은 outbox 행 재전송 | REST                      | 응답 200, outbox `SENT`(200의 Job 상태 반영), `mail_jobs` 1행 유지, SMTP 수신 1통 유지                                                                                                                                                                                                                                         | 통과 |
+| S3 수신자 영구 거부(550) | REST                      | outbox `FAILED`, 사유 `PERMANENT_ERROR`, `mailo_event_log`에 `JOB_FAILED`와 `lastError.smtpCode` 550, SMTP 수신 0통                                                                                                                                                                                                            | 통과 |
+| S3a 확인 필요 행 확인    | REST                      | `NEEDS_CHECK`로 바꾼 `FAILED` 작업의 행이 `GET /jobs` 확인으로 `FAILED`·`PERMANENT_ERROR`가 되고, Mailo에 없는 Key(404)의 행은 `NEEDS_CHECK`로 남음                                                                                                                                                                            | 통과 |
+| S4 같은 Key에 다른 내용  | REST                      | 409, outbox `QUARANTINED`, 사유 `HTTP_409 idempotency-conflict`, SMTP 수신 1통 유지                                                                                                                                                                                                                                            | 통과 |
+| S5 잘못된 수신자 주소    | REST                      | 400, outbox `REJECTED`, 사유 `HTTP_400 validation-failed INVALID_FORMAT`, 시도 1회(재시도 없음)                                                                                                                                                                                                                                | 통과 |
+| S6 재고 부족 롤백        | REST                      | 주문 409, `mail_outbox` 행 수 변화 0, `orders` 0행, SMTP 수신 0통                                                                                                                                                                                                                                                              | 통과 |
+| S7 일시 오류(450)로 만료 | REST, Mailo 만료 TTL 15초 | outbox `EXPIRED`, `mailo_event_log`에 `JOB_EXPIRED`                                                                                                                                                                                                                                                                            | 통과 |
+| S8 Mailo 중단 중 주문    | REST                      | 중단 중 주문 201(3초 이내), `orders` 1행, outbox `PENDING`·사유 `NETWORK_ERROR`·시도 3회 이상, Mailo 재기동 뒤 `SENT`, SMTP 수신 1통, cursor 저장                                                                                                                                                                              | 통과 |
+| S9 JWE 발송              | REST + JWE                | 202, outbox에 본문 평문 0건·`content` 있음, `SENT`, SMTP 수신 1통(복호화된 제목·본문 일치), 같은 암호문 재전송 200·수신 1통 유지                                                                                                                                                                                               | 통과 |
+| S10 알 수 없는 `kid`     | REST + JWE                | 400 `KID_UNKNOWN`, outbox `REJECTED`                                                                                                                                                                                                                                                                                           | 통과 |
+| S11 JWS 파일 발송        | FILE + JWS                | outbox `SENT`, `mail_jobs` 1행, SMTP 수신 1통, 수집 거부 0건, 새 `iat`로 재전송해도 `mail_jobs` 1행·수신 1통·거부 0건, inbox 잔여 파일 0                                                                                                                                                                                       | 통과 |
+| S12 JWS + JWE 파일 발송  | FILE + JWS + JWE          | outbox `SENT`, SMTP 수신 1통, Message-ID 1개, 복호화된 본문 일치                                                                                                                                                                                                                                                               | 통과 |
+| S13 잘못된 JWS 비밀키    | FILE + JWS                | Mailo 거부 기록 1건, 이벤트 `INTAKE_REJECTED`(`idempotencyKey` null, `fileName`으로 행 식별), outbox `REJECTED`·`SIGNATURE_INVALID`, SMTP 수신 0통                                                                                                                                                                             | 통과 |
+| S14 잘못된 API 키        | REST                      | 401, outbox `REJECTED`, relay 중지 뒤 다음 행 시도 0회                                                                                                                                                                                                                                                                         | 통과 |
+| S15 작업 취소            | REST                      | 차단기를 열어(DB 조작) `PENDING`으로 둔 작업을 `POST /jobs/{jobId}/cancel`로 취소: 200·`CANCELED`·`canceledBy` `CALLER`, 본문 삭제, 재요청 200(이벤트 1건), outbox `CANCELED`·사유 `CANCELED_BY_CALLER`, `mailo_event_log`에 `JOB_CANCELED`. 완료된 작업의 취소는 409 `job-not-cancelable`(`jobStatus` `SENT`), 없는 Key는 404 | 통과 |
+| S15b Key로 취소          | REST                      | `POST /jobs/cancel?idempotencyKey=` 200, `NEEDS_CHECK`로 바꾼 행이 `GET /jobs` 확인으로 `CANCELED`·`CANCELED_BY_CALLER`, 같은 Key 재전송 200(취소된 작업, `mail_jobs` 1행), 차단기를 닫은 뒤에도 SMTP 수신 0통                                                                                                                 | 통과 |
+| 로그 점검                | 전체                      | 샘플 앱 로그 7개에서 수신자 주소·본문·`Bearer` 0건, Mailo 로그에서 본문·수신자 주소 0건, 수신 메일 5통의 Message-ID가 모두 다름                                                                                                                                                                                                | 통과 |
 
 확인하지 못한 것: 앞의 "확인하지 않은 조합", Mailo가 모르는 이벤트 종류·`Mailo-Cursor-Gap` 헤더·410을 실제로 보내는 경우(서버가 아직 보내지 않아 단위 테스트의 대역으로만 확인했다), 모르는 `Job.status`를 돌려주는 서버(같은 이유), Mailo가 실제로 돌려주는 5xx·413·415 응답에 대한 relay 동작(`SendDecision` 단위 테스트로 판정만 확인했다), 실제 Gmail, 여러 relay 인스턴스의 동시 실행(`SKIP LOCKED` 경합), relay 프로세스를 전송 도중 강제 종료한 경우, 7일 `DEAD` 전이(코드는 있고 시각 경과는 재현하지 않았다), 이벤트 피드의 `hasMore` 연속 조회(실행 중 한 페이지에 모두 담겼다), 큰 본문.
 
@@ -233,7 +236,7 @@ CREATE TABLE mailo_event_log (                                                 -
 - **401 처리.** 401은 행 하나를 `REJECTED`로 두고 relay를 프로세스가 재시작할 때까지 멈춘다. 이미 `REJECTED`가 된 행은 수동으로 `PENDING`으로 되돌려야 한다.
 - **JWE 키 교체.** 암호화를 outbox 쓰기 시점에 하므로 행에는 그때의 `kid`가 고정된다. Mailo는 이전 개인키를 Key 보존 기간 이상 보관해야 한다(`key-management.md`).
 - **이벤트 보존.** Mailo는 이벤트를 30일 보존한다. 폴러가 그보다 오래 멈추면 이벤트를 놓친다. 공백 헤더를 받는 서버에서는 `NEEDS_CHECK`로 확인한다(헤더를 아직 보내지 않는 서버에서는 신호가 없다).
-- **취소 상태.** 이 샘플은 `CANCELED`·`JOB_CANCELED`를 종결로 알지 못한다. 모르는 값이므로 `NEEDS_CHECK`로 남고 사용처가 처리한다. 종결 상태로 추가하는 변경은 취소 기능 구현 때 한다(ADR-0011 구현 순서 1.7).
+- **취소 호출 없음.** 이 샘플은 `CANCELED`·`JOB_CANCELED`를 종결로 처리하지만 취소 API(`POST /jobs/{jobId}/cancel`)를 부르는 코드는 없다. 사용처가 필요할 때 `MailoClient`에 더한다. 검증 스크립트는 `curl`로 호출한다.
 - **`NEEDS_CHECK` 해소.** 모르는 상태와 404는 자동으로 풀리지 않는다. 같은 행을 주기마다 다시 확인하고 경고를 남긴다.
 - **스키마 관리.** 샘플은 `schema.sql`을 기동 때 실행한다. 운영 마이그레이션 도구는 포함하지 않는다.
 - **인증·권한.** `POST /orders`에는 인증이 없다. 샘플의 흐름을 보이기 위한 엔드포인트다.

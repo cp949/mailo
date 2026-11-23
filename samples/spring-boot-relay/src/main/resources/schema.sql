@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS mail_outbox (
 -- NEEDS_CHECK는 모르는 이벤트·상태를 만나 GET /jobs로 확인하는 중이라는 뜻이다(ADR-0011 구현 순서 1).
 ALTER TABLE mail_outbox DROP CONSTRAINT IF EXISTS mail_outbox_status_check;
 ALTER TABLE mail_outbox ADD CONSTRAINT mail_outbox_status_check
-  CHECK (status IN ('PENDING','DELIVERED','SENT','FAILED','EXPIRED','DEAD','REJECTED','QUARANTINED','NEEDS_CHECK'));
+  CHECK (status IN ('PENDING','DELIVERED','SENT','FAILED','EXPIRED','DEAD','REJECTED','QUARANTINED','NEEDS_CHECK','CANCELED'));
 CREATE INDEX IF NOT EXISTS mail_outbox_due_idx ON mail_outbox (next_attempt_at) WHERE status = 'PENDING';
 
 -- 이벤트 피드 cursor(행 하나). 필터를 쓰면 필터 조합마다 name을 나눈다.

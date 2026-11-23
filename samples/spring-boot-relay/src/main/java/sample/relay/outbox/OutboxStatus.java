@@ -13,6 +13,11 @@ public final class OutboxStatus {
     public static final String FAILED = "FAILED";
     /** Mailo가 JOB_EXPIRED로 알린 만료. */
     public static final String EXPIRED = "EXPIRED";
+    /**
+     * Mailo가 JOB_CANCELED로 알린 취소(호출처나 운영자가 나가기 전에 취소했다). 실패가 아닌 종결이고 재시도하지 않는다.
+     * 같은 Key로 다시 보내도 취소된 작업이 돌아오므로 새 메일은 새 Key(새 outbox 행)로 보낸다(RQ-040).
+     */
+    public static final String CANCELED = "CANCELED";
     /** relay 최대 재시도 기간(기본 7일)을 넘겼다. 운영 알림 대상이다. */
     public static final String DEAD = "DEAD";
     /** 재시도해도 같은 결과인 요청 오류(400·401·413·415 등)나 파일 수집 거부. 고친 뒤 PENDING으로 되돌려야 한다. */

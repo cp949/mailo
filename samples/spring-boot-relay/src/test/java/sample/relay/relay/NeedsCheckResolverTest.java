@@ -63,8 +63,19 @@ class NeedsCheckResolverTest {
     }
 
     @Test
+    void 취소된_작업이면_취소_종결로_닫고_취소_주체를_사유로_남긴다() {
+        client.jobResponses.add(response(200, "{\"status\":\"CANCELED\",\"canceledBy\":\"CALLER\"}"));
+
+        resolver.resolve();
+
+        assertEquals(List.of("applyCheckResult"), outbox.methods());
+        assertEquals(OutboxStatus.CANCELED, outbox.calls.get(0).status());
+        assertEquals("CANCELED_BY_CALLER", outbox.calls.get(0).reason());
+    }
+
+    @Test
     void 조회_결과도_모르는_상태면_확인_필요로_남긴다() {
-        client.jobResponses.add(response(200, "{\"status\":\"CANCELED\"}"));
+        client.jobResponses.add(response(200, "{\"status\":\"SOMETHING_NEW\"}"));
 
         resolver.resolve();
 
