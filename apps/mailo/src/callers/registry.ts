@@ -238,7 +238,8 @@ export function parseCallerRegistry(
     if (jwe !== undefined && jwe !== null && !isRecord(jwe))
       issues.push(`${where}.jwe는 객체여야 한다`);
 
-    // 생략·null은 무제한이다. 0은 허용하지 않는다(발송 중지는 호출처를 빼서 표현한다).
+    // 생략·null은 무제한이다. 0은 허용하지 않는다. 호출처만 멈추려면 `PUT /ops/pauses/callers/{callerId}`를 쓴다(ADR-0011 결정 3).
+    // 레지스트리에서 호출처를 빼도 큐에 이미 있는 작업은 계속 발송된다(`claim`이 레지스트리를 읽지 않는다).
     const sendQuota = raw["sendQuota24h"] ?? null;
     if (
       sendQuota !== null &&

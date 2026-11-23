@@ -32,6 +32,7 @@ import {
   type BodyCipher,
   type ClaimedJob,
   type CompleteDeps,
+  type SendControls,
 } from "../queue/index.js";
 import {
   SmtpAbortedError,
@@ -153,6 +154,9 @@ export function createWorker(
   const inFlight = new Set<Promise<void>>();
   // 할당 초과 호출처. 상태가 바뀔 때만 로그를 남겨 폴링마다 반복되지 않게 한다(RQ-032).
   let quotaBlocked = new Set<string>();
+  // 마지막으로 관찰한 발송 정지 상태. 바뀔 때만 로그를 남긴다(RQ-043). 처음 관찰이 정지면 `send_paused`를 한 번 남긴다.
+  let observedAllPaused = false;
+  let observedPausedCallers = new Set<string>();
   let wakeUp: (() => void) | undefined;
   let pollLoop: Promise<void> | undefined;
   let lastPollMono: number | undefined;
@@ -200,6 +204,25 @@ export function createWorker(
     quotaBlocked = next;
   }
 
+  /** 발송 정지 상태가 바뀐 경우에만 로그를 남긴다. 범위와 호출처 ID만 담는다(ADR-0011 결정 2). */
+  function reportSendControls(controls: SendControls): void {
+    if (controls.allPaused !== observedAllPaused) {
+      if (controls.allPaused) log.warn("send_paused", { scope: "all" });
+      else log.info("send_resumed", { scope: "all" });
+      observedAllPaused = controls.allPaused;
+    }
+    const next = new Set(controls.pausedCallerIds);
+    for (const id of next) {
+      if (!observedPausedCallers.has(id))
+        log.warn("send_paused", { scope: "caller", callerId: id });
+    }
+    for (const id of observedPausedCallers) {
+      if (!next.has(id))
+        log.info("send_resumed", { scope: "caller", callerId: id });
+    }
+    observedPausedCallers = next;
+  }
+
   async function waitForWork(delayMs: number): Promise<void> {
     // 이미 중단된 신호에는 abort 이벤트가 다시 오지 않는다.
     if (pauseController.signal.aborted) return;
@@ -238,6 +261,7 @@ export function createWorker(
           deps: completeDeps,
           // [0, 1) 난수라 비율 0이면 항상 우선순위 경로, 1이면 항상 대기 순서 경로다.
           order: claimRandom() < options.claimFifoRatio ? "fifo" : "priority",
+          onSendControls: reportSendControls,
           ...(options.callerQuotas && {
             callerQuotas: options.callerQuotas,
             onQuotaBlocked: reportQuotaBlocked,

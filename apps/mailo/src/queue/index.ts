@@ -18,6 +18,17 @@ export {
   type QuotaBlock,
 } from "./claim.js";
 export {
+  clearPause,
+  getCallerPauseSummary,
+  getSendControlsSummary,
+  listPauses,
+  readSendControls,
+  setPause,
+  type PauseRecord,
+  type SendControls,
+  type SendScope,
+} from "./send-controls.js";
+export {
   DEFAULT_PRIORITY,
   PRIORITIES,
   PRIORITY_RANK,

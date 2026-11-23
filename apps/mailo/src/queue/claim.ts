@@ -2,6 +2,7 @@ import type pg from "pg";
 import { withTransaction } from "../db/index.js";
 import type { JsonValue } from "../events/index.js";
 import { recoverExpiredLeases, type CompleteDeps } from "./complete.js";
+import { readSendControls, type SendControls } from "./send-controls.js";
 import type { ClaimedJob, EncryptedBody } from "./types.js";
 
 /**
@@ -56,6 +57,11 @@ export interface ClaimOptions {
    * 로그용이며 Worker가 상태가 바뀔 때만 기록한다. 다른 인스턴스가 점유 중이라 이번에 건너뛴 호출처는 넣지 않는다.
    */
   onQuotaBlocked?: (blocked: ReadonlyArray<QuotaBlock>) => void;
+  /**
+   * 점유할 때마다 이번 트랜잭션이 읽은 발송 정지 상태를 알린다(RQ-043). 차단기가 열려 점유하지 않는 호출에도 알린다.
+   * Worker가 상태가 바뀔 때만 `send_paused`·`send_resumed`를 기록한다. 호출처 ID만 담는다.
+   */
+  onSendControls?: (controls: SendControls) => void;
 }
 
 export interface QuotaBlock {
@@ -128,6 +134,15 @@ const NO_QUOTA: QuotaPlan = {
   remainingIds: [],
   remainingCounts: [],
 };
+
+/** 정지한 호출처를 할당 맵에서 뺀다. 뺄 것이 없으면 같은 맵을 돌려준다. */
+function withoutPaused(
+  quotas: ReadonlyMap<string, number> | undefined,
+  paused: ReadonlySet<string>,
+): ReadonlyMap<string, number> | undefined {
+  if (!quotas || paused.size === 0) return quotas;
+  return new Map([...quotas].filter(([id]) => !paused.has(id)));
+}
 
 // advisory lock의 앞 정수(키 공간 구분). 마이그레이터는 1-인자 bigint 형식이라 겹치지 않는다.
 const QUOTA_LOCK_CLASS = 7_364_222;
@@ -212,8 +227,9 @@ async function planQuotas(
  * 점유 트랜잭션은 SMTP 전송 전에 커밋한다. 전송과 결과 기록은 호출자가 따로 한다(ADR-0002 결정 9).
  *
  * 순서:
- * 1. lease가 지난 SENDING 작업을 복구한다(별도 트랜잭션).
- * 2. 차단기를 읽어 모드를 정한다.
+ * 1. lease가 지난 SENDING 작업을 복구한다(별도 트랜잭션). 발송 정지 중에도 한다.
+ * 2. 차단기를 읽고 발송 정지(`mail_send_controls`)를 읽어 모드를 정한다. 전체 정지면 아래 모드 모두 점유하지 않는다.
+ *    정지한 호출처는 할당 계산 전에 점유 대상에서 뺀다(RQ-043, ADR-0011 결정 2).
  *    - closed: 점유 대상 중 `limit`건을 `FOR UPDATE SKIP LOCKED`로 잡는다.
  *    - open이고 `open_until` 전: 점유하지 않는다.
  *    - open이고 `open_until` 이후, 또는 half_open이고 `probe_until` 이후: 대표 작업 1건을 점유한다.
@@ -252,18 +268,33 @@ export async function claim(
     const b = state.rows[0];
     if (!b) throw new Error("차단기 행이 없다. 마이그레이션을 확인한다");
 
+    // 정지는 차단기 행을 읽은 뒤에 읽고 잠그지 않는다. 잠금 순서(작업 행 → 차단기 행)를 바꾸지 않는다(ADR-0011 결정 2).
+    const controls = await readSendControls(client);
+    options.onSendControls?.(controls);
+
     let mode: Mode;
-    if (b.state === "closed") mode = "normal";
+    if (controls.allPaused) mode = "none";
+    else if (b.state === "closed") mode = "normal";
     else if (b.state === "open") mode = b.open_due ? "probe" : "none";
     else mode = b.probe_due ? "probe" : "none";
 
     if (mode === "none") return [];
     // 할당 판정은 작업 행을 잠그기 전에 한다. advisory lock은 기다리지 않으므로 잠금 순서에 영향이 없다.
-    const quota = await planQuotas(
+    // 정지한 호출처는 할당 계산 전에 맵에서 뺀다. 남겨 두면 쓸모없는 advisory lock과 사용량 쿼리를 쓴다(ADR-0011 결정 2).
+    const paused = new Set(controls.pausedCallerIds);
+    const planned = await planQuotas(
       client,
-      options.callerQuotas,
+      withoutPaused(options.callerQuotas, paused),
       options.onQuotaBlocked,
     );
+    // 뺀 호출처와 할당이 없는 정지 호출처는 `blocked`에 합친다. 일반 점유와 대표 점유의 `caller_id <> ALL` 필터가 같은 목록을 쓴다.
+    const quota: QuotaPlan =
+      paused.size === 0
+        ? planned
+        : {
+            ...planned,
+            blocked: [...new Set([...planned.blocked, ...paused])],
+          };
     if (mode === "normal") {
       // 할당 초과 호출처는 `caller_id <> ALL`로 뺀다. 할당이 남은 호출처는 이번 배치에서 남은 건수까지만 점유한다.
       // 순위(rn)는 이미 잠근 최대 `limit`건 안에서만 매기므로 큐 길이에 영향받지 않는다.
