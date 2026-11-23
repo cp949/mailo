@@ -23,6 +23,7 @@ import {
   findJobByKey,
   findJobIdByKey,
   findLastErrors,
+  findOutcomeUncertain,
   register,
   type JobView,
 } from "../queue/index.js";
@@ -203,14 +204,17 @@ export class IntakeService {
     const rejectionIds = page.events.flatMap((e) =>
       e.rejectionId !== null ? [e.rejectionId] : [],
     );
-    const [lastErrors, rejections] = await Promise.all([
+    const [lastErrors, rejections, uncertainJobIds] = await Promise.all([
       findLastErrors(this.pool, jobIds),
       findRejections(this.pool, callerId, rejectionIds),
+      findOutcomeUncertain(this.pool, jobIds),
     ]);
 
     return {
       body: {
-        events: page.events.map((e) => presentEvent(e, lastErrors, rejections)),
+        events: page.events.map((e) =>
+          presentEvent(e, lastErrors, rejections, uncertainJobIds),
+        ),
         nextCursor: page.nextCursor,
         hasMore,
       },

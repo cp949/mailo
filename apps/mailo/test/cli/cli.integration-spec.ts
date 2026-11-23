@@ -203,6 +203,32 @@ describe("운영 CLI 통합 (RQ-047, ADR-0011 결정 7)", () => {
     expect(missing.err).toContain("HTTP 404");
   });
 
+  it("jobs show: 결과 불명 실패(DATA 뒤 연결 끊김)는 outcomeUncertain true로 보이고 수신자·Key·응답 텍스트는 없다 (RQ-048)", async () => {
+    const created = await postJob(app, { key: "cli-uncertain" });
+    const jobId = ((await created.json()) as { jobId: string }).jobId;
+    await db.pool.query(
+      `INSERT INTO mail_attempts (job_id, classification, counted, stage, response_text, started_at)
+       VALUES ($1, 'TRANSIENT', true, 'DATA', 'CANARY-CLI-RESPONSE-TEXT', now())`,
+      [jobId],
+    );
+    await db.pool.query(
+      "UPDATE mail_jobs SET status = 'FAILED', finished_at = now(), failure_reason = 'ATTEMPTS_EXHAUSTED' WHERE id = $1",
+      [jobId],
+    );
+
+    const shown = await cli(["jobs", "show", jobId], asRead);
+
+    expect(shown.code).toBe(CLI_EXIT.OK);
+    expect(JSON.parse(shown.out)).toMatchObject({
+      jobId,
+      status: "FAILED",
+      outcomeUncertain: true,
+    });
+    expect(shown.out).not.toContain("CANARY-CLI-RESPONSE-TEXT");
+    expect(shown.out).not.toContain("cli-uncertain");
+    expect(shown.out).not.toContain("kim@example.com");
+  });
+
   it("서버가 없으면 종료 코드 3이다", async () => {
     const port = await freePort();
     const result = await cli(["status"], {

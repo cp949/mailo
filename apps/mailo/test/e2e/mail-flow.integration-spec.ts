@@ -36,7 +36,8 @@ interface JobBody {
   status: string;
   attempts: number;
   failureReason: string | null;
-  lastError: { smtpCode: number | null } | null;
+  lastError: { category: string; smtpCode: number | null } | null;
+  outcomeUncertain: boolean;
 }
 interface EventsBody {
   events: Array<{
@@ -44,6 +45,7 @@ interface EventsBody {
     jobId: string;
     idempotencyKey: string;
     failureReason?: string | null;
+    outcomeUncertain?: boolean;
     recipients: { to: string[] };
   }>;
 }
@@ -345,6 +347,57 @@ describe("e2e: POST /jobs -> PostgreSQL -> Worker -> SMTP -> 조회·이벤트",
       type: "JOB_FAILED",
       jobId: json.jobId,
       failureReason: "PERMANENT_ERROR",
+    });
+  });
+
+  it("DATA 뒤 응답 없이 연결이 끊기면 RETRY_WAIT에서 outcomeUncertain이 true이고, 만료되면 JOB_EXPIRED 이벤트도 true다 (RQ-048, ADR-0011 결정 5)", async () => {
+    await startApp();
+    // 서버는 본문을 받았지만 응답을 주지 않고 끊는다. 메일이 수락됐는지 Mailo는 알 수 없다.
+    fake.behavior.dropAfterData = () => true;
+
+    const { json } = await submit("e2e-uncertain");
+    const waiting = await waitStatus(json.jobId, "RETRY_WAIT");
+
+    expect(waiting.lastError).toMatchObject({ category: "TRANSIENT" });
+    expect(waiting.outcomeUncertain).toBe(true);
+
+    // 재시도 대기 중에 만료시키면 주기 sweep이 EXPIRED로 바꾸고 이벤트를 쓴다.
+    await pool.query(
+      "UPDATE mail_jobs SET expires_at = now() - interval '1 second' WHERE id = $1",
+      [json.jobId],
+    );
+    const expired = await waitStatus(json.jobId, "EXPIRED");
+    expect(expired.outcomeUncertain).toBe(true);
+    const feed = await waitFor(async () => {
+      const all = await events();
+      return all.length > 0 ? all : undefined;
+    });
+    expect(feed).toHaveLength(1);
+    expect(feed[0]).toMatchObject({
+      type: "JOB_EXPIRED",
+      jobId: json.jobId,
+      outcomeUncertain: true,
+    });
+  });
+
+  it("SMTP 응답 코드가 명확한 실패(550)는 outcomeUncertain이 false이고 JOB_FAILED 이벤트도 false다 (RQ-048)", async () => {
+    await startApp();
+    fake.behavior.data = () => ({
+      code: 550,
+      text: "5.7.1 Message likely unsolicited mail.",
+    });
+
+    const { json } = await submit("e2e-certain");
+    const failed = await waitStatus(json.jobId, "FAILED");
+
+    expect(failed.outcomeUncertain).toBe(false);
+    const feed = await waitFor(async () => {
+      const all = await events();
+      return all.length > 0 ? all : undefined;
+    });
+    expect(feed[0]).toMatchObject({
+      type: "JOB_FAILED",
+      outcomeUncertain: false,
     });
   });
 

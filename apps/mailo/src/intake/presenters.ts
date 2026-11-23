@@ -109,6 +109,8 @@ function presentJobFields(job: JobView) {
     canceledBy:
       job.status === "CANCELED" ? canceledByOf(job.failureReason) : null,
     lastError: presentLastError(job.lastError),
+    // 모든 상태에서 불리언이다. 생략하지 않는다(RQ-048).
+    outcomeUncertain: job.outcomeUncertain,
   };
 }
 
@@ -134,6 +136,7 @@ export function presentEvent(
   event: FeedEvent,
   lastErrors: ReadonlyMap<string, JobLastError>,
   rejections: ReadonlyMap<string, RejectionView>,
+  uncertainJobIds: ReadonlySet<string>,
 ) {
   const base = {
     eventId: event.id,
@@ -188,5 +191,7 @@ export function presentEvent(
     lastError: presentLastError(
       event.jobId === null ? null : (lastErrors.get(event.jobId) ?? null),
     ),
+    // `JOB_FAILED`·`JOB_EXPIRED`에만 있다. `Job.outcomeUncertain`과 같은 판정이다(RQ-048).
+    outcomeUncertain: event.jobId !== null && uncertainJobIds.has(event.jobId),
   };
 }

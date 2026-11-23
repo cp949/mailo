@@ -33,6 +33,11 @@ export interface JobView {
   /** DB에 저장된 값(`PERMANENT`, `ATTEMPTS_EXHAUSTED`, `ACCOUNT_REPEATED`, `EXPIRED`, 취소는 `CANCELED_BY_CALLER`·`CANCELED_BY_OPERATOR`). 응답 이름 변환은 호출자가 한다. */
   failureReason: string | null;
   lastError: JobLastError | null;
+  /**
+   * SMTP 서버가 메일을 수락했는지 알 수 없는 시도가 한 건이라도 있었으면 true다(RQ-048, ADR-0011 결정 5).
+   * `FAILED`·`EXPIRED`이면 메일이 이미 나갔을 수 있고 `SENT`이면 더 일찍 나갔을 수 있다.
+   */
+  outcomeUncertain: boolean;
   /** `SENT` 시도가 기록한 거부 수신자. 없으면 null. */
   rejectedRecipients: JsonValue | null;
 }
@@ -52,8 +57,19 @@ interface JobRow {
   le_response_code: number | null;
   le_enhanced_code: string | null;
   le_finished_at: Date | null;
+  outcome_uncertain: boolean;
   sent_rejected_recipients: JsonValue | null;
 }
+
+/**
+ * 결과를 알 수 없는 시도의 조건(`mail_attempts` 별칭 `a`, ADR-0011 결정 5).
+ * - `LEASE_EXPIRED`: lease 만료 회수는 전송 결과를 모른다.
+ * - DATA 단계에서 응답 없이 끝난 `TRANSIENT`: 타임아웃·연결 끊김이라 서버가 수락했을 수 있다(ADR-0007 결정 3).
+ * 응답 코드가 있는 실패, DATA 이전 단계, Mailo 내부 오류(`WORKER`)는 포함하지 않는다.
+ * 새 컬럼 없이 기존 컬럼에서 도출하므로 마이그레이션이 필요 없다.
+ */
+const UNCERTAIN_ATTEMPT = `(a.classification = 'LEASE_EXPIRED'
+          OR (a.classification = 'TRANSIENT' AND a.stage = 'DATA' AND a.response_code IS NULL))`;
 
 // 마지막 오류는 SENT가 아닌 가장 최근 시도다. SENT 작업도 이전 시도의 오류를 보여 준다.
 const SELECT_JOB = `
@@ -61,6 +77,7 @@ const SELECT_JOB = `
          j.finished_at, j.failure_reason,
          le.classification AS le_classification, le.response_code AS le_response_code,
          le.enhanced_code AS le_enhanced_code, le.finished_at AS le_finished_at,
+         EXISTS (SELECT 1 FROM mail_attempts a WHERE a.job_id = j.id AND ${UNCERTAIN_ATTEMPT}) AS outcome_uncertain,
          sa.rejected_recipients AS sent_rejected_recipients
     FROM mail_jobs j
     LEFT JOIN LATERAL (
@@ -95,6 +112,7 @@ function toView(row: JobRow): JobView {
             occurredAt: row.le_finished_at,
           }
         : null,
+    outcomeUncertain: row.outcome_uncertain,
     rejectedRecipients: row.sent_rejected_recipients,
   };
 }
@@ -187,4 +205,23 @@ export async function findLastErrors(
     });
   }
   return result;
+}
+
+/**
+ * 작업 여러 건 중 결과를 알 수 없는 시도가 있는 작업의 ID 집합을 한 번에 읽는다(RQ-048).
+ * 이벤트 피드의 `JOB_FAILED`·`JOB_EXPIRED` 응답에 쓴다. 판정은 `findJobById` 등의 `outcomeUncertain`과 같다.
+ * 호출자는 호출처 범위로 이미 걸러낸 작업 ID만 넘긴다.
+ */
+export async function findOutcomeUncertain(
+  db: Queryable,
+  jobIds: readonly string[],
+): Promise<Set<string>> {
+  if (jobIds.length === 0) return new Set();
+  const { rows } = await db.query<{ job_id: string }>(
+    `SELECT DISTINCT a.job_id
+       FROM mail_attempts a
+      WHERE a.job_id = ANY($1::uuid[]) AND ${UNCERTAIN_ATTEMPT}`,
+    [jobIds],
+  );
+  return new Set(rows.map((row) => row.job_id));
 }

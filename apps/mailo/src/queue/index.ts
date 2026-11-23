@@ -68,6 +68,7 @@ export {
   findJobByKey,
   findJobIdByKey,
   findLastErrors,
+  findOutcomeUncertain,
   type JobLastError,
   type JobView,
 } from "./read.js";
