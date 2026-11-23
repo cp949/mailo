@@ -797,6 +797,88 @@ describe("점유 경로 비율 MAILO_CLAIM_FIFO_RATIO (RQ-035, ADR-0009)", () =>
   );
 });
 
+// 요청별 만료 상한과 보존 기간 검사(RQ-039, ADR-0010). 기본 만료 TTL 86400과 기본 보존 2592000은 리터럴로 둔다.
+describe("요청별 만료 상한 MAILO_JOB_EXPIRY_MAX_SECONDS (RQ-039, ADR-0010)", () => {
+  it("생략하면 MAILO_JOB_EXPIRY_SECONDS의 실제 값을 쓴다", () => {
+    expect(loadConfig(env()).queue).toEqual({
+      jobExpirySeconds: 86_400,
+      jobExpiryMaxSeconds: 86_400,
+    });
+    expect(loadConfig(env({ MAILO_JOB_EXPIRY_SECONDS: "3600" })).queue).toEqual(
+      { jobExpirySeconds: 3600, jobExpiryMaxSeconds: 3600 },
+    );
+  });
+
+  it("명시한 값을 쓰고 최대 31536000(1년)을 받는다", () => {
+    expect(
+      loadConfig(env({ MAILO_JOB_EXPIRY_MAX_SECONDS: "1209600" })).queue
+        .jobExpiryMaxSeconds,
+    ).toBe(1_209_600);
+    expect(
+      loadConfig(
+        env({
+          MAILO_JOB_EXPIRY_MAX_SECONDS: "31536000",
+          MAILO_RECORD_RETENTION_SECONDS: "31536000",
+        }),
+      ).queue.jobExpiryMaxSeconds,
+    ).toBe(31_536_000);
+  });
+
+  it("MAILO_JOB_EXPIRY_SECONDS가 상한보다 크면 기동을 거부하고 같으면 받는다", () => {
+    const message = issuesOf({
+      MAILO_JOB_EXPIRY_SECONDS: "7201",
+      MAILO_JOB_EXPIRY_MAX_SECONDS: "7200",
+    });
+    expect(message).toContain("MAILO_JOB_EXPIRY_SECONDS");
+    expect(message).toContain("MAILO_JOB_EXPIRY_MAX_SECONDS");
+    expect(
+      loadConfig(
+        env({
+          MAILO_JOB_EXPIRY_SECONDS: "7200",
+          MAILO_JOB_EXPIRY_MAX_SECONDS: "7200",
+        }),
+      ).queue,
+    ).toEqual({ jobExpirySeconds: 7200, jobExpiryMaxSeconds: 7200 });
+  });
+
+  it.each(["0", "-1", "31536001", "1.5", "abc"])(
+    "범위 밖이거나 정수가 아닌 값(%s)은 기동을 거부하고 변수 이름으로 가리킨다",
+    (text) => {
+      expect(issuesOf({ MAILO_JOB_EXPIRY_MAX_SECONDS: text })).toContain(
+        "MAILO_JOB_EXPIRY_MAX_SECONDS",
+      );
+    },
+  );
+
+  it("기록 보존 기간이 상한보다 짧으면 기동을 거부하고 같으면 받는다", () => {
+    const message = issuesOf({ MAILO_JOB_EXPIRY_MAX_SECONDS: "2592001" });
+    expect(message).toContain(
+      "MAILO_RECORD_RETENTION_SECONDS는 MAILO_JOB_EXPIRY_MAX_SECONDS 이상이어야 한다",
+    );
+    expect(
+      loadConfig(env({ MAILO_JOB_EXPIRY_MAX_SECONDS: "2592000" })).queue
+        .jobExpiryMaxSeconds,
+    ).toBe(2_592_000);
+  });
+
+  it("상한을 생략한 기존 설정은 그대로 기동한다(만료 15초, 만료와 보존이 같은 30일)", () => {
+    expect(loadConfig(env({ MAILO_JOB_EXPIRY_SECONDS: "15" })).queue).toEqual({
+      jobExpirySeconds: 15,
+      jobExpiryMaxSeconds: 15,
+    });
+    expect(
+      loadConfig(env({ MAILO_JOB_EXPIRY_SECONDS: "2592000" })).queue,
+    ).toEqual({ jobExpirySeconds: 2_592_000, jobExpiryMaxSeconds: 2_592_000 });
+  });
+
+  it("상한을 생략하면 보존 기간이 기본 만료 TTL보다 짧을 때 기존처럼 거부한다", () => {
+    const message = issuesOf({
+      MAILO_JOB_EXPIRY_SECONDS: "2592001",
+    });
+    expect(message).toContain("MAILO_RECORD_RETENTION_SECONDS");
+  });
+});
+
 describe("기본값이 안전하지 않은 설정 거부 (M4)", () => {
   const SAMPLE = "mailo-dev-password";
 

@@ -38,6 +38,7 @@ export interface FilePollerDeps {
   fingerprinter: QueueFingerprinter;
   /** `root`는 폴러를 켠 설정이라 null이 아니다. */
   config: FileChannelConfig & { root: string };
+  /** `IngestDeps.jobExpirySeconds`와 같다. */
   jobExpirySeconds: number;
   /** `IngestDeps.defaultFrom`과 같다. */
   defaultFrom: string;

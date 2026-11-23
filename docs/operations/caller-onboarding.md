@@ -12,6 +12,7 @@
 - 파일 채널의 쓰기 순서는 임시 이름(점으로 시작)에 쓰기, `fsync`, `close`, 권한 `0660`, 같은 폴더에서 `rename`이다.
 - 파일 채널만 쓰는 호출처도 REST API 키가 필요하다. 결과는 Key 조회와 이벤트 피드로만 확인한다.
 - 우선순위(`priority`)는 선택이다. 생략하면 `NORMAL`이다. `URGENT`는 즉시 전송을 뜻하지 않는다("우선순위").
+- 만료 시간(`ttlSeconds`)은 선택이다. 생략하면 Mailo 기본 TTL(기본 24시간)이다. 긴 TTL은 한도 지연을 없애지 않는다("요청별 만료 시간").
 
 ## 1. 등록 전에 정할 것
 
@@ -162,7 +163,7 @@ MAILO_UID=1000 MAILO_GID=1000 CALLERS="billing:10002 reports:10003" \
 
 ### 파일 내용
 
-REST 본문과 같은 필드에 `version`(정수 1)과 `idempotencyKey`가 더해진다. REST에서는 이 두 필드가 정의되지 않은 필드(400)다. `attachments`는 거부한다. 선택 필드 `priority`도 REST와 같다("우선순위").
+REST 본문과 같은 필드에 `version`(정수 1)과 `idempotencyKey`가 더해진다. REST에서는 이 두 필드가 정의되지 않은 필드(400)다. `attachments`는 거부한다. 선택 필드 `priority`·`ttlSeconds`도 REST와 같다("우선순위", "요청별 만료 시간").
 
 서명 `none`, 평문:
 
@@ -427,6 +428,39 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 - 배포 순서: Mailo의 모든 인스턴스가 이 기능을 지원하는 버전이 된 뒤에 `priority`를 보내기 시작한다. 이전 버전은 `priority`를 정의되지 않은 필드로 거부한다(REST 400, 파일 거부).
 - 롤백 전에 relay·파일 게시를 멈추고 미확인 Key의 등록 여부를 조회한다. 비기본 등급으로 이미 등록된 요청에서 `priority`만 제거하면 지문이 달라진다. 상세 절차는 `deployment.md` "우선순위 도입 배포 순서"를 따른다.
 
+### 요청별 만료 시간
+
+근거: RQ-039, ADR-0010.
+
+요청 최상위에 정수 `ttlSeconds`를 넣으면 그 작업의 만료 시각을 정한다. REST와 파일이 같은 규칙이다.
+
+- 만료 시각은 Mailo가 등록 때 DB 시각 + `ttlSeconds`로 정한다. 응답·조회의 `expiresAt`이 그 값이다. 호출처 시계는 쓰지 않는다. 절대 시각 필드는 받지 않는다.
+- 생략하면 Mailo 기본 TTL(`MAILO_JOB_EXPIRY_SECONDS`, 기본 86400)이다.
+- 범위는 60 이상 Mailo 상한(`MAILO_JOB_EXPIRY_MAX_SECONDS`) 이하다. 운영자가 상한을 따로 정하지 않았으면 상한은 기본 TTL과 같다. 기본 TTL보다 긴 값이 필요하면 운영자에게 상한을 확인한다.
+- 정수가 아닌 값(소수, 문자열 `"600"`, `null`)은 REST 400 `/ttlSeconds` `INVALID_FORMAT`, 범위 밖 정수는 REST 400 `/ttlSeconds` `OUT_OF_RANGE`다. 파일은 둘 다 `VALIDATION_FAILED` 거부다. relay는 이 400을 재시도하지 않는다.
+- `ttlSeconds`는 평문 최상위 필드다. JWE 복호화 평문(`content`) 안에 넣으면 `UNKNOWN_FIELD`(파일은 `VALIDATION_FAILED`)다. 파일 JWS에서는 서명 대상이다.
+- `ttlSeconds`는 `Idempotency-Key` 내용 비교에 들어간다. 생략한 요청과 기본값(예: 86400)을 명시한 요청은 다른 내용이다. 같은 Key로 값을 바꾸거나 빼거나 새로 넣으면 409(파일은 `FINGERPRINT_MISMATCH`)다. 재시도할 때 값을 바꾸지 않는다. outbox에 값을 저장해 같은 값을 다시 보낸다.
+- 같은 Key로 다시 보내도 만료 시각은 늘어나지 않는다. 처음 등록한 시각이 기준이다.
+
+만료의 뜻:
+
+- 만료 시각 이후에는 새 시도를 시작하지 않는다. 대기·재시도 대기 중이던 작업은 `EXPIRED`가 되고 이벤트 `JOB_EXPIRED`가 나온다.
+- 이미 시작한 전송은 만료 시각을 지나도 끝까지 간다. 성공하면 `SENT`다. 그래서 만료 시각 직후 도착하는 메일은 있을 수 있다.
+- 짧은 TTL은 재시도 기회를 줄인다. 기본 재시도 간격은 60초(±20%)다. `ttlSeconds` 60인 메일은 첫 시도가 일시 오류이면 대부분 재시도 없이 `EXPIRED`다. 재시도가 필요하면 TTL을 재시도 간격보다 충분히 길게 잡는다.
+
+사용 예:
+
+- 인증 코드처럼 몇 분 뒤 쓸모없는 메일: `ttlSeconds` 600(10분). 늦게 도착해 혼란을 주는 재시도를 막는다.
+- 하루를 넘겨도 보내야 하는 대기 알림: 기본 TTL보다 긴 값(예: 172800, 2일). Mailo 상한이 그 이상이어야 한다.
+
+```json
+{"to":["kim@example.com"],"subject":"인증 코드","text":"인증 코드는 123456입니다.","priority":"URGENT","ttlSeconds":600}
+```
+
+**긴 TTL은 메일이 결국 나가게 할 뿐, 한도로 생긴 지연을 없애지 않는다.** 일일 한도(`550 5.4.5`)로 차단기가 열리면 TTL과 무관하게 차단이 풀릴 때까지 발송하지 않는다. 한도 차단이 하루를 넘는 것은 발송량과 계정 한도의 문제다. 발송량을 줄이거나 할당(`sendQuota24h`)을 조정하는 것이 해법이다.
+
+배포 순서: Mailo의 모든 인스턴스가 이 기능을 지원하는 버전이 된 뒤에 `ttlSeconds`를 보내기 시작한다. 이전 버전은 `ttlSeconds`를 정의되지 않은 필드로 거부한다(REST 400, 파일 거부). 롤백 절차는 `deployment.md` "요청별 만료 시간 도입 배포 순서"를 따른다.
+
 ### 한계
 
 - 발송은 at-least-once다. SMTP 수락 직후 장애가 나면 같은 메일이 두 번 갈 수 있다(RQ-013). 완화로 `Message-ID`를 작업 ID에서 유도한 고정값으로 쓴다. Gmail이 같은 `Message-ID`를 중복으로 버리는지는 확인하지 못했다(ADR-0007 결정 8).
@@ -449,4 +483,5 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 - 실제 NAS 제품, bind mount, rootless Docker·`userns-remap`, ACL을 지원하지 않는 파일시스템에서의 권한 구성.
 - 호출처가 Linux가 아닌 환경에서의 파일 쓰기.
 - 실제 Gmail·Workspace SMTP.
+- 요청별 만료 시간의 롤링 배포·롤백. 만료 동작은 통합 테스트(`test/e2e/job-ttl.integration-spec.ts`)로 확인했다.
 - 우선순위의 효과를 실제 부하(여러 인스턴스, 장시간 적체)에서 측정하지 않았다. 점유 순서는 통합 테스트(`test/queue/claim-priority.integration-spec.ts`, `test/worker/worker-priority.integration-spec.ts`)로 확인했다.

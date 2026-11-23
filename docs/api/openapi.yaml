@@ -45,7 +45,7 @@ paths:
         - 같은 `(caller_id, Idempotency-Key)`가 있고 내용이 같으면 200과 기존 작업을 반환한다.
         - 같은 Key에 내용이 다르면 409다. 두 번째 메일은 등록하지 않는다.
         - 내용 동일 여부는 복호화 뒤 평문의 지문으로 판정한다(ADR-0005 결정 3). 암호문은 비교하지 않는다.
-        - 지문 범위는 to, cc, bcc, from, replyTo, subject, text, html, priority다. 재시도할 때 한 필드라도 바꾸면 409다. `priority` 생략과 `NORMAL`은 같은 내용이다(RQ-034).
+        - 지문 범위는 to, cc, bcc, from, replyTo, subject, text, html, priority, ttlSeconds다. 재시도할 때 한 필드라도 바꾸면 409다. `priority` 생략과 `NORMAL`은 같은 내용이다(RQ-034). `ttlSeconds` 생략과 기본 TTL 값을 명시한 요청은 다른 내용이다(RQ-039).
         - 평문 모드(`subject`, `text`, `html`)와 암호화 모드(`content`)는 한 요청에서 섞을 수 없다.
         - 암호화 모드는 수신자·발신자를 먼저 검증하고, 복호화한 뒤에 제목·본문을 검증한다(ADR-0008 결정 3). 지문은 그 뒤에 계산한다. 복호화한 제목·본문의 검증 오류 위치는 모두 `/content`다.
         - 원시 요청이 2 MiB를 넘으면 본문을 읽기 전에도 413으로 거부할 수 있다.
@@ -86,6 +86,17 @@ paths:
                   subject: 인증 코드
                   text: 인증 코드는 123456입니다.
                   priority: URGENT
+              shortTtl:
+                summary: 요청별 만료 시간 지정 (인증 코드, 10분)
+                description: |
+                  `ttlSeconds`는 최상위 평문 정수다. 만료 시각은 Mailo가 등록 때 DB 시각에 더해 정한다(RQ-039).
+                  범위는 60 이상 서버 상한(`MAILO_JOB_EXPIRY_MAX_SECONDS`, 기본은 기본 TTL과 같음) 이하다.
+                value:
+                  to: [kim@example.com]
+                  subject: 인증 코드
+                  text: 인증 코드는 123456입니다.
+                  priority: URGENT
+                  ttlSeconds: 600
       responses:
         '202':
           description: 새 작업을 등록했다. relay는 완료로 처리한다.
@@ -590,6 +601,7 @@ components:
         - `replyTo`는 주소 형식만 검증하고 허용 범위를 두지 않는다.
         - 제목+text+html은 UTF-8로 1 MiB 이하다. 원시 요청은 2 MiB 이하다.
         - `priority`를 생략하면 `NORMAL`이다. `null`, 숫자, 빈 문자열, 정의되지 않은 값(소문자 포함)은 400 `INVALID_FORMAT`(위치 `/priority`)다. 암호화 평문 안의 `priority`는 `UNKNOWN_FIELD`(위치 `/content`)다.
+        - `ttlSeconds`를 생략하면 서버 기본 TTL(`MAILO_JOB_EXPIRY_SECONDS`, 기본 86400)이다. 정수가 아닌 값(소수, 문자열, `null` 등)은 400 `INVALID_FORMAT`, 범위 밖 정수는 400 `OUT_OF_RANGE`(위치 `/ttlSeconds`)다. 암호화 평문 안의 `ttlSeconds`는 `UNKNOWN_FIELD`(위치 `/content`)다.
       required: [to]
       additionalProperties: false
       properties:
@@ -625,6 +637,14 @@ components:
           $ref: '#/components/schemas/JweCompact'
         priority:
           $ref: '#/components/schemas/Priority'
+        ttlSeconds:
+          type: integer
+          minimum: 60
+          description: |
+            요청별 만료 TTL 초(RQ-039, ADR-0010). 상한은 서버 설정 `MAILO_JOB_EXPIRY_MAX_SECONDS`다. 설정하지 않은 서버의 상한은 기본 TTL과 같다.
+            만료 시각은 등록 때 Mailo DB 시각 + `ttlSeconds`로 고정한다. 같은 Key로 다시 보내도 늘어나지 않는다.
+            만료 시각 이후에는 새 시도를 시작하지 않는다. 이미 시작한 전송은 끝까지 가므로 만료 시각 직후 도착할 수 있다.
+            긴 TTL은 한도 차단이 길어져도 메일이 결국 나가게 할 뿐, 한도로 생긴 지연을 없애지 않는다.
       oneOf:
         - title: 평문 모드
           required: [subject]
@@ -744,7 +764,7 @@ components:
         expiresAt:
           type: string
           format: date-time
-          description: 만료 시각. 등록 시각에 만료 TTL(기본 24시간, 추정)을 더한 값이다.
+          description: 만료 시각. 등록 시각에 요청 `ttlSeconds`(생략하면 서버 기본 TTL, 기본 24시간, 추정)를 더한 값이다. 이 시각 이후 새 시도를 시작하지 않는다.
         sentAt:
           type: [string, 'null']
           format: date-time
@@ -1142,6 +1162,7 @@ components:
             - KID_UNKNOWN
             - CALLER_MISMATCH
             - FROM_NOT_ALLOWED
+            - OUT_OF_RANGE
           description: |
             값 이름은 추정이다.
 
@@ -1152,6 +1173,7 @@ components:
             - `KID_UNKNOWN`: JWE `kid`에 맞는 Mailo 개인키가 없거나 `kid`가 없다. Mailo에 JWE 개인키를 설정하지 않은 배치도 같다.
             - `CALLER_MISMATCH`: 복호화에 성공한 JWE의 `caller`가 인증된 호출처와 다르다.
             - `FROM_NOT_ALLOWED`: 요청의 `from`이 호출처의 허용 발신 주소(Mailo 기본 발신 주소 + 호출처 `allowedFrom`)가 아니다. 위치는 `/from`이다. 이미 등록된 Key의 재전송에는 나오지 않는다.
+            - `OUT_OF_RANGE`: 정수지만 허용 범위 밖이다. 현재는 `ttlSeconds`(60 이상 서버 상한 이하)에만 쓴다. 응답에 요청 값과 상한 값을 넣지 않는다.
     Problem:
       type: object
       description: |

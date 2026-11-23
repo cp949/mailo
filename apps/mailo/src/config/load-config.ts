@@ -102,8 +102,13 @@ export interface AppConfig {
   /** 복호화 뒤 입력 검증 상한(RQ-030). */
   limits: MailRequestLimits;
   queue: {
-    /** 새 작업의 만료 TTL 초(RQ-008, 기본 24시간). */
+    /** 요청이 `ttlSeconds`를 생략한 새 작업의 만료 TTL 초(RQ-008, 기본 24시간). */
     jobExpirySeconds: number;
+    /**
+     * 요청 `ttlSeconds`의 상한 초(RQ-039, `MAILO_JOB_EXPIRY_MAX_SECONDS`). 생략하면 `jobExpirySeconds`와 같다.
+     * `jobExpirySeconds` 이상이고 기록 보존 기간 이하다.
+     */
+    jobExpiryMaxSeconds: number;
   };
   worker: WorkerConfig;
   /**
@@ -344,7 +349,7 @@ function loadSmtp(
 
 function loadWorkerConfig(
   reader: EnvReader,
-  jobExpirySeconds: number,
+  jobExpiryMaxSeconds: number,
 ): WorkerConfig {
   const baseSeconds = reader.int("MAILO_RETRY_BASE_SECONDS", 60, {
     min: 1,
@@ -388,9 +393,10 @@ function loadWorkerConfig(
     );
   }
   // 작업 TTL보다 보존이 짧으면 종결 전 Key가 지워지는 일은 없지만, 재시도 기간 안의 재전달을 막지 못한다.
-  if (recordRetentionSeconds < jobExpirySeconds) {
+  // 요청이 상한까지 TTL을 늘릴 수 있으므로 기준은 상한이다(RQ-039, ADR-0010). 상한 생략 시 상한은 기본 TTL과 같다.
+  if (recordRetentionSeconds < jobExpiryMaxSeconds) {
     reader.issue(
-      "MAILO_RECORD_RETENTION_SECONDS는 MAILO_JOB_EXPIRY_SECONDS 이상이어야 한다",
+      "MAILO_RECORD_RETENTION_SECONDS는 MAILO_JOB_EXPIRY_MAX_SECONDS 이상이어야 한다(생략하면 MAILO_JOB_EXPIRY_SECONDS와 같다)",
     );
   }
 
@@ -649,7 +655,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     min: 1,
     max: 31_536_000,
   });
-  const worker = loadWorkerConfig(reader, jobExpirySeconds);
+  // RQ-039: 기본값은 기본 TTL의 실제 값이다. 요청 하한(60)은 요청 필드에만 적용하므로 이 변수의 최소값은 기본 TTL과 같은 1이다.
+  const jobExpiryMaxSeconds = reader.int(
+    "MAILO_JOB_EXPIRY_MAX_SECONDS",
+    jobExpirySeconds,
+    { min: 1, max: 31_536_000 },
+  );
+  if (jobExpirySeconds > jobExpiryMaxSeconds) {
+    reader.issue(
+      "MAILO_JOB_EXPIRY_SECONDS는 MAILO_JOB_EXPIRY_MAX_SECONDS 이하여야 한다",
+    );
+  }
+  const worker = loadWorkerConfig(reader, jobExpiryMaxSeconds);
   const smtp = loadSmtp(reader, worker.lease.seconds);
 
   const maxRequestBytes = reader.int("MAILO_MAX_REQUEST_BYTES", 2 * MIB, {
@@ -734,7 +751,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     http: { maxRequestBytes },
     limits: { ...DEFAULT_MAIL_REQUEST_LIMITS, maxContentBytes, maxRecipients },
-    queue: { jobExpirySeconds },
+    queue: { jobExpirySeconds, jobExpiryMaxSeconds },
     worker,
     stopGracePeriodMs,
     smtp: smtp as SmtpConfig,

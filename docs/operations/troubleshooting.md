@@ -32,12 +32,13 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | ---- | ---------- |
 | 작업이 `PENDING`·`RETRY_WAIT`에 머문다 | 차단기, 호출처 할당, `claim_failed` |
 | `URGENT`·`HIGH`가 늦게 나가거나 `LOW`가 만료된다 | "등급별 적체" |
+| 작업이 예상보다 일찍 또는 늦게 `EXPIRED`가 된다, `ttlSeconds`가 400이다 | "만료 시각" |
 | 작업이 `SENDING`에 오래 머문다 | lease 만료(`lease_recovered`, `LEASE_EXPIRED`), 프로세스 재시작 |
 | 같은 메일이 두 번 갔다 | `LEASE_EXPIRED` 시도, `drain_timeout`, `lease_lost` |
 | 입력 폴더의 파일이 남는다 | `file_poll`의 `unreadable`·`deleteFailed`, `file_inbox_missing` |
 | 이벤트가 안 온다 | 작업 상태, 긴 트랜잭션, cursor 저장 |
 | `/health/ready`가 503 | DB 연결(`readiness_check_failed`) |
-| 기동하지 않는다 | `key-management.md`의 오류 표, `deployment.md`의 제약 표 |
+| 기동하지 않는다 | `key-management.md`의 오류 표, `deployment.md`의 제약 표, "만료 시각"의 기동 오류 |
 
 ## 전역 차단기가 open일 때
 
@@ -161,7 +162,7 @@ SELECT id, caller_id, file_name, size_bytes, reason_code, created_at
 | `IDEMPOTENCY_KEY_MISSING` | 파일에 `idempotencyKey`가 없다 | 필드를 넣는다 |
 | `IDEMPOTENCY_KEY_INVALID` | Key가 1~128자, `[A-Za-z0-9._:-]` 형식이 아니다 | 형식에 맞는 Key를 쓴다 |
 | `FINGERPRINT_MISMATCH` | 같은 `(호출처, Key)`가 이미 있는데 내용이 다르다 | Key를 재사용하는 호출처 버그다. 요청 단위로 고유한 Key를 쓴다. 이미 등록된 작업은 그대로다 |
-| `VALIDATION_FAILED` | 허용 발신 주소가 아닌 `from`(`allowedFrom`·기본 발신 주소 확인), 수신자 형식·수, 제목 길이·CR/LF, 본문 크기, 정의되지 않은 필드, `version`이 1이 아님, `to` 없음, 평문과 `content` 혼용, 복호화한 제목·본문 검증 실패 | 파일을 계약(`docs/api/openapi.yaml`의 `SendRequest`)에 맞춘다. 위치는 이벤트에 없으므로 호출처가 필드를 점검한다 |
+| `VALIDATION_FAILED` | 허용 발신 주소가 아닌 `from`(`allowedFrom`·기본 발신 주소 확인), 수신자 형식·수, 제목 길이·CR/LF, 본문 크기, 정의되지 않은 필드, `ttlSeconds` 형식·범위, `version`이 1이 아님, `to` 없음, 평문과 `content` 혼용, 복호화한 제목·본문 검증 실패 | 파일을 계약(`docs/api/openapi.yaml`의 `SendRequest`)에 맞춘다. 위치는 이벤트에 없으므로 호출처가 필드를 점검한다 |
 | `ATTACHMENTS_NOT_SUPPORTED` | `attachments` 필드가 있다 | 첨부는 지원하지 않는다. 필드를 뺀다 |
 | `CALLER_MISMATCH` | JWS·JWE의 `caller`가 폴더 이름(`caller_id`)과 다르다 | `caller`를 호출처 `id`로 맞춘다. 파일을 다른 호출처 폴더에 넣지 않았는지도 본다 |
 | `IAT_OUT_OF_RANGE` | JWS `iat`가 허용 기간(기본 7일)보다 오래됐거나 허용 오차(기본 5분)를 넘어 미래다 | 호출처 호스트 시계를 NTP로 맞춘다. 파일을 새로 서명해 다시 넣는다 |
@@ -169,7 +170,7 @@ SELECT id, caller_id, file_name, size_bytes, reason_code, created_at
 - 고친 파일을 같은 이름으로 다시 넣어도 내용이 다르면 `sha256`이 달라 새 기록이 생긴다. 같은 이름·같은 내용을 다시 넣으면 새 거부 기록과 이벤트가 생기지 않고 원본만 삭제된다. 고치지 않은 같은 파일을 재투입하지 않는다.
 - `idempotencyKey`는 파싱할 수 있고 형식을 지킨 경우에만 이벤트에 들어간다. 서명이 `required`인 호출처에서 서명을 확인하지 못한 파일은 Key 없이(`null`) 나온다. `fileName`으로 찾는다.
 
-REST의 400 `validation-failed`는 `errors[]`에 `pointer`(또는 `parameter`)와 `code`를 준다. 코드: `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`(복호화 뒤 1 MiB 초과), `CONTROL_CHARACTER`(제목·주소의 CR/LF), `UNKNOWN_FIELD`(`pointer`는 빈 문자열), `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`(`pointer`는 `/from`, 요청의 `from`이 호출처의 허용 발신 주소가 아니다. `callers.json`의 `allowedFrom`을 확인한다). 복호화 관련 코드의 위치는 `/content`다. 409는 거부 기록이 아니라 응답이며 본문의 `jobId`가 먼저 등록된 작업이다.
+REST의 400 `validation-failed`는 `errors[]`에 `pointer`(또는 `parameter`)와 `code`를 준다. 코드: `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`(복호화 뒤 1 MiB 초과), `CONTROL_CHARACTER`(제목·주소의 CR/LF), `UNKNOWN_FIELD`(`pointer`는 빈 문자열), `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`(`pointer`는 `/from`, 요청의 `from`이 호출처의 허용 발신 주소가 아니다. `callers.json`의 `allowedFrom`을 확인한다), `OUT_OF_RANGE`(`pointer`는 `/ttlSeconds`, "만료 시각"). 복호화 관련 코드의 위치는 `/content`다. 409는 거부 기록이 아니라 응답이며 본문의 `jobId`가 먼저 등록된 작업이다.
 
 ## 피드 지연 해석
 
@@ -226,7 +227,7 @@ SELECT c.relname, i.indisvalid AS valid FROM pg_index i JOIN pg_class c ON c.oid
 해석:
 
 - `LOW`의 `oldestDueAgeSeconds`만 커지는 것은 정상 동작이다. 대기 순서 경로가 처리량의 일부(claim 호출의 약 10%)만 오래된 작업에 준다.
-- 굶음의 한계: 유입이 처리량보다 많은 상태가 이어지면 낮은 등급 작업은 만료 시각(기본 24시간, `MAILO_JOB_EXPIRY_SECONDS`)을 넘겨 `EXPIRED`가 될 수 있다. 조치는 처리량을 늘리거나(`MAILO_WORKER_CONCURRENCY`), 호출처가 등급을 용도대로 쓰게 하거나(`caller-onboarding.md` "우선순위"), `MAILO_CLAIM_FIFO_RATIO`를 올리는 것이다. 값을 바꾸면 재시작이 필요하다.
+- 굶음의 한계: 유입이 처리량보다 많은 상태가 이어지면 낮은 등급 작업은 만료 시각(기본 24시간, `MAILO_JOB_EXPIRY_SECONDS`, 요청 `ttlSeconds`가 있으면 그 값)을 넘겨 `EXPIRED`가 될 수 있다. 조치는 처리량을 늘리거나(`MAILO_WORKER_CONCURRENCY`), 호출처가 등급을 용도대로 쓰게 하거나(`caller-onboarding.md` "우선순위"), `MAILO_CLAIM_FIFO_RATIO`를 올리는 것이다. 값을 바꾸면 재시작이 필요하다.
 - 모든 작업이 `URGENT`이면 등급 효과가 없다. Mailo에는 호출처별 등급 제한이 없다(RQ-033). 등급별 상태 분포를 호출처별로 나눠 보려면 위 첫 SQL에 `caller_id`를 더한다.
 
 인덱스 복구. 마이그레이션 실행기는 `-- mailo:no-transaction` 파일을 실행한 뒤 현재 schema에 `INVALID` 인덱스가 있으면 기록하지 않고 실패한다(fail-closed, `src/db/migrator.ts`). 오류 메시지에 인덱스 이름이 있다. `IF NOT EXISTS`가 `INVALID` 인덱스를 건너뛰고 적용으로 기록되는 것을 막기 위해서다. 이 실패는 앱 기동 실패(`migrate-cli` 종료)로 보인다.
@@ -250,6 +251,41 @@ CREATE INDEX CONCURRENTLY mail_jobs_priority_claim_idx
 롤백: 불필요. 인덱스가 없는 동안 우선순위 점유가 느려질 뿐 동작은 같다
 ```
 
+## 만료 시각
+
+근거: RQ-008·039, ADR-0002 결정 7, ADR-0010.
+
+만료 시각(`expires_at`, 조회 응답 `expiresAt`)은 등록 때 DB 시각 + TTL로 고정된다. TTL은 요청 `ttlSeconds`이고 생략하면 `MAILO_JOB_EXPIRY_SECONDS`다. 같은 Key 재요청은 만료 시각을 바꾸지 않는다.
+
+```sql
+-- 작업별 적용된 TTL(초)과 만료 시각. ttl이 기본 TTL과 다르면 요청이 ttlSeconds를 지정한 것이다
+SELECT id, caller_id, idempotency_key, status, failure_reason,
+       EXTRACT(EPOCH FROM expires_at - created_at)::int AS ttl, expires_at, finished_at
+  FROM mail_jobs WHERE caller_id = $1 AND status = 'EXPIRED'
+ ORDER BY finished_at DESC LIMIT 20;
+```
+
+해석:
+
+- 만료 시각 이후에는 새 시도를 시작하지 않는다. `PENDING`·`RETRY_WAIT`는 주기 sweep(`MAILO_MAINTENANCE_INTERVAL_SECONDS`, 기본 60초)이 `EXPIRED`로 바꾼다. 그래서 `finished_at`은 만료 시각보다 늦다. 차이는 보통 sweep 주기 이내다(추정, 측정하지 않았다).
+- 시도 결과를 기록할 때 다음 재시도 시각이 만료 시각보다 뒤이면 기다리지 않고 바로 `EXPIRED`다. 짧은 `ttlSeconds`(예: 60)는 첫 시도의 일시 오류 뒤 재시도 없이 `EXPIRED`가 되는 것이 정상이다.
+- 전송 중(`SENDING`)에 만료 시각이 지나도 그 시도는 끝까지 간다. 만료 시각 뒤의 `SENT`는 정상이다.
+- 차단기 `open`이 TTL보다 길면 그동안의 작업은 `EXPIRED`가 된다. 긴 `ttlSeconds`는 나중에 보내게 할 뿐 차단 시간을 줄이지 않는다(`caller-onboarding.md` "요청별 만료 시간").
+
+`ttlSeconds` 400:
+
+- `INVALID_FORMAT`: 정수가 아니다(소수, 문자열 `"600"`, `null`). 호출처가 숫자를 문자열로 직렬화했는지 본다.
+- `OUT_OF_RANGE`: 60 미만이거나 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS`를 넘었다. 응답에는 상한 값이 없다. 운영자가 설정 값을 확인한다. 상한을 설정하지 않았으면 상한은 `MAILO_JOB_EXPIRY_SECONDS`와 같다.
+- 롤링 배포 중 이전 버전 인스턴스가 받으면 `UNKNOWN_FIELD`(`pointer` 빈 문자열)다(`deployment.md` "요청별 만료 시간 도입 배포 순서").
+
+기동 오류:
+
+| 메시지 | 원인 | 조치 |
+| ------ | ---- | ---- |
+| `MAILO_RECORD_RETENTION_SECONDS는 MAILO_JOB_EXPIRY_MAX_SECONDS 이상이어야 한다(생략하면 MAILO_JOB_EXPIRY_SECONDS와 같다)` | 기록 보존이 요청 TTL 상한보다 짧다. 상한을 설정하지 않았으면 기본 TTL보다 짧다 | 보존 기간을 늘리거나 상한(또는 기본 TTL)을 줄인다 |
+| `MAILO_JOB_EXPIRY_SECONDS는 MAILO_JOB_EXPIRY_MAX_SECONDS 이하여야 한다` | 기본 TTL이 상한보다 크다 | 상한을 기본 TTL 이상으로 올리거나 상한 변수를 지운다 |
+| `MAILO_JOB_EXPIRY_MAX_SECONDS은 1 이상 31536000 이하의 정수여야 한다` | 범위 밖이거나 정수가 아니다 | 정수 초로 적는다 |
+
 ## 호출처 할당 초과
 
 신호: `caller_quota_exceeded`(warn, `callerId`, `limit`)는 할당을 넘긴 호출처가 새로 생겼을 때 한 번, `caller_quota_recovered`(info, `callerId`)는 풀렸을 때 한 번 남는다. 폴링마다 반복되지 않는다.
@@ -257,7 +293,7 @@ CREATE INDEX CONCURRENTLY mail_jobs_priority_claim_idx
 - 사용량 = 최근 24시간의 "할당에 드는 시도" + 현재 `SENDING` 작업 수다. 할당에 드는 시도는 시도 횟수에 포함되는(`counted`) 시도 중 Mailo 내부 오류(`stage = 'WORKER'`)를 뺀 것이다. 차단기를 연 계정 상태 오류 시도(`ACCOUNT`, `counted = false`)는 들지 않고, 차단기가 `closed`로 남은 계정 상태 오류 시도(`counted = true`)와 `TRANSIENT`·`PERMANENT`·`LEASE_EXPIRED`는 든다.
 - 초과한 호출처의 작업은 점유되지 않고 `PENDING`·`RETRY_WAIT`에 머문다. 상태, 시도 횟수, `next_attempt_at`은 바뀌지 않는다. 다른 호출처에는 영향이 없다.
 - 가장 오래된 시도가 24시간을 넘기면 한 건씩 풀린다. 그 전에 만료 시각(기본 24시간)에 이르면 `EXPIRED`가 된다. 할당이 처리량보다 작으면 만료가 쌓인다.
-- 조치: `callers.json`의 `sendQuota24h`를 늘리거나, 호출처의 발송량을 줄이거나, 만료 TTL(`MAILO_JOB_EXPIRY_SECONDS`)을 조정한다. 값을 바꾸면 재시작이 필요하다.
+- 조치: `callers.json`의 `sendQuota24h`를 늘리거나, 호출처의 발송량을 줄이거나, 만료 TTL(`MAILO_JOB_EXPIRY_SECONDS`, 요청별로는 `ttlSeconds`와 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS`)을 조정한다. 설정 값을 바꾸면 재시작이 필요하다.
 
 ## DB 연결 문제
 

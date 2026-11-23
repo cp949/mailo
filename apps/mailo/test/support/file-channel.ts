@@ -183,6 +183,7 @@ export function createFileHarness(
     ),
     fingerprinter,
     iat: config.envelope.iat,
+    maxTtlSeconds: config.queue.jobExpiryMaxSeconds,
   };
   const logs: string[] = [];
   const logger = createJsonLogger((line) => void logs.push(line));
