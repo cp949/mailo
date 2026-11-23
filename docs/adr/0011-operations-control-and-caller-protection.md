@@ -6,7 +6,15 @@
 
 2026-11-23에 제안했고 2026-11-24에 사용자가 승인했다. 열린 질문이던 7건은 이 문서가 적은 권고대로 승인했다. 승인된 값은 "미결정·확인하지 않은 것"의 "승인된 결정" 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 6"이다.
 
-구현 상태(2026-11-24): 구현 묶음 A(작업 취소, 결정 4의 호출처 API와 결정 10의 `0006`·`0007`), 묶음 B(결정 1 토큰 분리, 결정 2·3 발송 정지, 결정 4의 관리 취소 API, 결정 6 감사, 결정 7의 `/ops` REST, 결정 10의 `0008`), 묶음 C(결정 9 피드 공백 신호와 `0009`, 결정 8 `allowedRecipientDomains`, 결정 7의 CLI 읽기·변경 명령)를 구현하고 자동 테스트로 검증했다. 요구사항은 RQ-040(호출처 작업 취소), RQ-041(취소 배포 호환성), RQ-042(운영 토큰과 `/ops` 인증), RQ-043(발송 정지), RQ-044(감사와 관리 취소), RQ-045(이벤트 피드 공백 감지), RQ-046(수신 도메인 허용 목록), RQ-047(운영 CLI)이다. 구현 순서 1의 문서·샘플 반영(1.1~1.7)을 마쳤고 1.8(저장소 밖 호출처 확인)은 남았다. 구현 순서 2~4와 6~9는 끝났다. 이 ADR은 아직 "구현 완료"가 아니다. 결정 5(`outcomeUncertain`, 구현 순서 5)와 호출처 단위 일괄 취소(결정 4가 범위 밖으로 둔 조건부 항목)를 시작하지 않았다. 구현 순서 1.8과 롤링 배포·롤백 실행도 남았다. 구현 중 확정한 세부는 "구현 중 확정" 절이다. `docs/api/openapi.yaml`의 `ReadyResponse`는 `sendPaused`·`sendControls`를 더하고 `Problem`은 `forbidden`을 더했다(`additionalProperties: false`의 계약 변경).
+구현 상태(2026-11-24): 구현 완료(미검증 항목 있음). 결정 1~10을 구현하고 자동 테스트로 검증했다. 구현 묶음 A(작업 취소, 결정 4의 호출처 API와 결정 10의 `0006`·`0007`), 묶음 B(결정 1 토큰 분리, 결정 2·3 발송 정지, 결정 4의 관리 취소 API, 결정 6 감사, 결정 7의 `/ops` REST, 결정 10의 `0008`), 묶음 C(결정 9 피드 공백 신호와 `0009`, 결정 8 `allowedRecipientDomains`, 결정 7의 CLI 읽기·변경 명령), 묶음 D(결정 5 `outcomeUncertain`, 마이그레이션 없음)다. 요구사항은 RQ-040(호출처 작업 취소), RQ-041(취소 배포 호환성), RQ-042(운영 토큰과 `/ops` 인증), RQ-043(발송 정지), RQ-044(감사와 관리 취소), RQ-045(이벤트 피드 공백 감지), RQ-046(수신 도메인 허용 목록), RQ-047(운영 CLI), RQ-048(결과 불명 표시)이다. 구현 순서 1~9를 모두 끝냈다. 구현 중 확정한 세부는 "구현 중 확정" 절이다. `docs/api/openapi.yaml`의 `ReadyResponse`는 `sendPaused`·`sendControls`를 더했고 `Problem`은 `forbidden`을 더했으며 `Job`·`OpsJob`은 `outcomeUncertain`을 더했다(`additionalProperties: false`의 계약 변경).
+
+남은 미검증 항목은 다음과 같다. "미결정·확인하지 않은 것"에 자세히 있다.
+
+- 구현 순서 1.8: 저장소 밖 호출처가 모르는 값·필드·410을 처리하는지 확인하지 않았다. Java 샘플만 확인했다.
+- 롤링 배포(구·신 혼용)와 롤백을 실행하지 않았다. 구버전 동작은 코드 읽기 결과다.
+- 동시 세션 경합: `ALTER TABLE`의 `ACCESS EXCLUSIVE` 대기, `VALIDATE CONSTRAINT`의 비차단, 보존 삭제와 피드 조회의 동시 실행, 복구 중 재발은 실행하지 않았다.
+- 운영 크기·다중 인스턴스의 비용: 정지 판정 쿼리, 삭제 표지 갱신(1000건 배치), `outcomeUncertain`의 `EXISTS`·일괄 조회는 운영 크기에서 측정하지 않았다. 로컬 단일 측정만 있다.
+- 호출처 단위 일괄 취소는 이 ADR의 범위 밖이다(결정 4). 구현하지 않았고 새 결정이 필요하다.
 
 검증 범위는 코드 읽기와 PostgreSQL 17.11(로컬 compose)의 임시 schema 확인이다(2026-11-23).
 
@@ -355,7 +363,7 @@
 
 ## 구현 중 확정 (2026-11-24)
 
-결정 문구는 바꾸지 않는다. 1~8은 구현 묶음 A(작업 취소), 9~20은 구현 묶음 B(토큰 분리·발송 정지·감사·`/ops`), 21~29는 구현 묶음 C(피드 공백 신호·수신 도메인 허용 목록·CLI)에서 정한 세부다.
+결정 문구는 바꾸지 않는다. 1~8은 구현 묶음 A(작업 취소), 9~20은 구현 묶음 B(토큰 분리·발송 정지·감사·`/ops`), 21~29는 구현 묶음 C(피드 공백 신호·수신 도메인 허용 목록·CLI), 30~33은 구현 묶음 D(`outcomeUncertain`)에서 정한 세부다.
 
 1. **409 응답의 현재 상태 필드 이름(결정 4, `src/http/problem.ts`).** 결정 4는 "응답에 현재 `status`만 넣는다"고 적었다. RFC 9457의 `status`는 HTTP 상태 코드(409)이고 같은 이름으로 작업 상태를 넣으면 덮어쓴다. 작업의 현재 상태는 `jobStatus` 필드로 낸다. `type`은 `urn:mailo:problem:job-not-cancelable`이다. 오류 본문에 요청 값을 넣지 않는 규칙은 같다.
 2. **이벤트의 취소 주체 저장(결정 4, `queue/cancel.ts`).** `mail_events`에 새 컬럼을 두지 않는다. 이벤트의 `failure_reason`에 작업과 같은 값(`CANCELED_BY_CALLER`·`CANCELED_BY_OPERATOR`)을 쓰고, 응답의 `canceledBy`는 이 값에서 만든다(`intake/presenters.ts`의 `canceledByOf`). 모르는 값은 `null`이다. 이 저장 값이 구버전 인스턴스에서는 실패형 이벤트의 `failureReason`으로 그대로 나간다(결정 4의 구버전 동작과 같다).
@@ -387,6 +395,10 @@
 27. **정책 판정 위치(결정 8, `validation/recipient-policy.ts`).** REST와 파일 채널이 `checkRequestPolicy`(발신 주소 `FROM_NOT_ALLOWED` + 수신 도메인 `RECIPIENT_DOMAIN_NOT_ALLOWED`) 하나로 위반 목록을 만든다. 목록이 비어 있지 않으면 `denyNew`다. REST는 `register`가 `denied`를 돌려줄 때 같은 목록을 400 `errors`로 낸다. 발신 주소와 수신 도메인 위반이 함께 있으면 모두 담는다(결정은 둘을 따로 적었다). 이미 등록된 Key는 `denyNew`에서 기존 작업(200)이나 409를 돌려주므로 위반 목록을 쓰지 않는다. 부분 거부(ADR-0007 결정 7)와는 단계가 달라 상호작용이 없다. 이 검사는 등록 전이고 SMTP 서버의 수신자 거부는 발송 뒤다.
 28. **CLI 형식(결정 7, `src/cli/`, 진입점 `src/cli.ts`).** 명령은 `status`, `queue stats`, `jobs show <jobId>`, `audit list [--limit N] [--before ID]`(읽기)와 `pause`·`resume`(`--all` 또는 `--caller <호출처 ID>`, 기본 범위 없음), `jobs cancel <jobId>`(변경, `--yes` 필수)다. 결정이 "추정"이라고 적은 종료 코드를 확정했다: 성공 0, 사용법·설정 오류 1(토큰 없음·URL 오류 포함), HTTP 오류 2(2xx인데 JSON이 아니거나 `queue stats`에 `queue`가 없는 경우, 3xx 포함), 연결 실패·시간 초과(15초) 3. 시간 제한은 헤더 대기와 본문 읽기를 함께 덮는다(서버가 헤더만 보내고 본문을 멈춰도 3이고 스택 트레이스가 없다). 출력은 서버 응답 JSON을 들여쓰기 2칸으로 낸다(`status`는 `{ready, pauses}`로 묶는다. 결정은 "서버 응답 JSON 그대로"라고 적었고 두 응답을 한 출력으로 합치는 방법은 정하지 않았다). `MAILO_CLI_TOKEN_FILE`을 읽지 못하면 `MAILO_CLI_TOKEN`으로 넘어가지 않는다. `MAILO_PORT`는 기본 URL을 정하려고 CLI가 읽는 유일한 서버 변수이고 `MAILO_OPS_*`는 읽지 않는다. `redirect: "manual"`로 다른 곳으로 따라가지 않는다. 서버 유래 문자열(응답 본문 포함)은 출력 전에 제어 문자(탭·줄바꿈 제외한 C0, DEL, C1)를 U+FFFD로 바꾸는 `sanitizeForTerminal` 한 곳을 거친다. 성공 출력(stdout)과 오류 출력(stderr) 모두 적용한다. `http`이고 loopback이 아닌 주소에는 평문 경고를 낸다. 호출처 ID 형식은 Nest 모듈을 불러오지 않으려고 복사했고 서버의 `isCallerId`와 같은 판정을 테스트가 고정한다.
 29. **검증.** PostgreSQL 통합: `test/db/event-purges.integration-spec.ts`, `test/events/event-purges.integration-spec.ts`, `test/http/rest-event-gap.integration-spec.ts`, `test/http/rest-recipient-domains.integration-spec.ts`, `test/file-channel/recipient-domains.integration-spec.ts`, `test/cli/cli.integration-spec.ts`. 단위: `test/validation/recipient-policy.spec.ts`, `test/callers/allowed-recipient-domains.spec.ts`, `test/cli/args.spec.ts`, `test/cli/run.spec.ts`. 컨테이너: 저장소 `Dockerfile`로 빌드한 이미지를 읽기 전용 루트로 띄워 컨테이너 안에서 CLI를 1회 실행했다(스크립트 검증, 자동 테스트 아님). 샘플: `samples/spring-boot-relay/verify/run-e2e.sh`에 S16(실제 서버의 헤더·410·`type` 필터·샘플의 확인 필요 처리)을 추가했다(스크립트 검증, 자동 테스트 아님).
+30. **판정 조건의 위치와 단건·일괄 조회(결정 5, `queue/read.ts`).** 두 조건(`LEASE_EXPIRED`, `TRANSIENT`+`DATA`+`response_code IS NULL`)은 상수 `UNCERTAIN_ATTEMPT` 하나에 두고 단건 조회(`SELECT_JOB`의 `EXISTS` 열)와 일괄 조회(`findOutcomeUncertain`, `SELECT DISTINCT job_id`)가 같이 쓴다. 이벤트 응답은 한 페이지의 `JOB_FAILED`·`JOB_EXPIRED` 작업 ID만 넘겨 한 쿼리로 읽고, `findLastErrors`와 `findRejections`와 함께 병렬로 실행한다. 결정 5는 일괄 조회를 `findLastErrors`와 "같은 방식"이라고만 적었고, 구현은 쿼리를 합치지 않고 따로 둔다. Mailo 내부 오류(`stage = 'WORKER'`)는 두 조건에 없어 `false`다. 새 컬럼·인덱스·마이그레이션은 없고 `mail_attempts_job_idx`를 쓴다.
+31. **필드의 존재 규칙(결정 5, `intake/presenters.ts`).** 결정 5는 표시 위치만 정했고 생략 규칙은 적지 않았다. `Job`과 `OpsJob`은 모든 상태에서 항상 불리언을 낸다(생략하지 않는다, `required`). 이벤트는 `JOB_FAILED`·`JOB_EXPIRED`에서 항상 낸다. `JOB_SENT`·`JOB_CANCELED`·`INTAKE_REJECTED`에는 없다. `JOB_SENT` 이벤트에 없는 이유는 결정 5가 이벤트 위치를 실패·만료로만 정했기 때문이다. `SENT` 작업의 이전 불확실 시도는 `Job`에서 본다. 취소된 작업의 `Job` 값은 취소 전 시도를 따른다(`RETRY_WAIT`에서 취소된 작업은 `true`일 수 있다).
+32. **운영자 읽기와 CLI(결정 7).** `GET /ops/jobs/{jobId}`는 `Job`에서 `idempotencyKey`와 `rejectedRecipients`를 뺀 모양이므로 `outcomeUncertain`을 포함한다(`OpsJob`). CLI `jobs show`는 서버 JSON 그대로라 코드 변경 없이 값이 나온다. 관리 취소 응답도 같다. 수신자·본문·응답 텍스트는 이 표시에 쓰지 않는다. 운영자 재시도 경로는 만들지 않았고 `/ops/jobs/{jobId}/retry`는 404다.
+33. **검증과 한계(결정 5).** PostgreSQL 통합: `test/queue/outcome-uncertain.integration-spec.ts`, `test/http/rest-outcome-uncertain.integration-spec.ts`, `test/e2e/mail-flow.integration-spec.ts`(실제 Worker와 가짜 SMTP의 `dropAfterData`: `RETRY_WAIT` `true`, 만료 뒤 `JOB_EXPIRED` `true`, 550 `false`), `test/cli/cli.integration-spec.ts`. 기존 `test/http/rest-intake.integration-spec.ts`의 `Job` 키 목록 단언에 `outcomeUncertain`을 더했다(구현 중 확정 17과 같은 이유). 샘플: `EventFeedPollerApplyTest`(Gradle 단위)와 `run-e2e.sh` S3(스크립트 검증, 자동 테스트 아님)가 샘플이 새 필드를 무시함을 확인한다. 샘플 main 코드는 바꾸지 않았다. 한계는 결정 5의 두 가지(두 조건 밖의 불명, 보존 기간 뒤 404)이고 `true`가 되는 실제 Gmail 경로는 확인하지 않았다. 판정 쿼리의 운영 크기 비용은 측정하지 않았다.
 
 ## 검토한 대안
 
@@ -463,6 +475,7 @@
 - `VALIDATE CONSTRAINT`가 동시 쓰기를 막지 않는지는 잠금 수준만 확인했다. 잠금 큐에서 앱 쿼리가 줄을 서는 동작은 PostgreSQL 규칙에서 추론했고 실행하지 않았다.
 - 롤링 배포(구·신 혼용)와 롤백을 실행하지 않았다. 구버전의 `CANCELED`·`JOB_CANCELED` 처리는 코드 읽기 결과다.
 - 이 저장소 밖의 호출처가 모르는 상태·이벤트·필드와 410을 어떻게 처리하는지 확인하지 않았다. Java 샘플의 `EventFeedPoller`·`RelayWorker`·`MailoClient`·`schema.sql`만 읽었다.
+- `outcomeUncertain`: 가짜 SMTP의 연결 끊김과 시도 행 직접 삽입으로 판정을 확인했다. 실제 Gmail·Workspace에서 `true`가 되는 응답 경로, 서버가 응답했지만 Mailo가 받지 못한 경우, 운영 크기에서 `EXISTS`·일괄 조회의 비용은 확인하지 않았다. 저장소 밖 호출처가 새 필드를 무시하는지도 확인하지 않았다(Java 샘플은 확인했다).
 - CLI: 토큰 파일 전달(`MAILO_CLI_TOKEN_FILE`)은 읽기 전용 루트 컨테이너 안에서 `docker exec`로 실행해 확인했다(구현 중 확정 29). `docker compose exec`, `https` 프록시 뒤 주소, 환경 변수 `MAILO_CLI_TOKEN`의 컨테이너 안 실행은 확인하지 않았다.
 - 정지 판정(`claim`마다 쿼리 1회)은 구현 중 확정 18에서 측정했다. `ALTER TABLE`의 `ACCESS EXCLUSIVE` 대기와 운영 크기·다중 인스턴스의 삭제 표지 갱신(1000건 배치) 비용은 측정하지 않았다(1회 로컬 측정은 구현 중 확정 23).
 - `/metrics`(단계 8)의 권한은 읽기 토큰으로 정했으나 endpoint와 지표는 이 ADR의 범위가 아니다.

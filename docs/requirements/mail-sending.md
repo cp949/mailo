@@ -36,7 +36,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0008](../adr/0008-jwe-jws-envelope-and-db-encryption.md): JWE·JWS 형식, DB 본문 암호화, 본문 삭제.
 - [ADR-0009](../adr/0009-claim-priority.md): 우선순위 등급, 점유 경로(우선순위·대기 순서), 지문의 `policy.priority`, 배포·롤백 순서. ADR-0002 구현 중 확정 2의 점유 인덱스·순서를 이어받는다.
 - [ADR-0010](../adr/0010-per-request-job-ttl.md): 요청별 만료 시간 `ttlSeconds`, 허용 범위와 상한 설정, 지문의 `policy.ttlSeconds`, 만료 의미, 보존 기간 기동 검사, 배포 순서. ADR-0002 결정 7의 요청별 지정 미결정을 정한다.
-- [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 배포·롤백 순서. 구현 묶음 A(작업 취소, RQ-040·041)와 묶음 B(토큰 분리, 발송 정지, 감사, `/ops` REST, 관리 취소, RQ-042~044)를 구현했고 나머지 결정(CLI, 수신 도메인 허용 목록, 피드 공백 감지, 일괄 취소)은 구현 전이다.
+- [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 결과 불명 표시(`outcomeUncertain`), 배포·롤백 순서. 구현 묶음 A(작업 취소, RQ-040·041), 묶음 B(토큰 분리, 발송 정지, 감사, `/ops` REST, 관리 취소, RQ-042~044), 묶음 C(피드 공백, 수신 도메인 허용 목록, CLI, RQ-045~047), 묶음 D(`outcomeUncertain`, RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 
@@ -64,6 +64,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 6단계 묶음 D `outcomeUncertain` 반영 뒤): `pnpm test` 단위 709건(38개 파일, 이 묶음은 단위 테스트를 더하지 않았다), `pnpm test:integration` 통합 590건(40개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. `Job`의 키 목록을 고정한 단언에 새 필드 `outcomeUncertain`이 없었기 때문이고(RQ-048이 정한 계약 필드) 기대 키 목록에 필드를 더한 뒤 그 파일(58건)이 통과했다. 샘플은 Gradle 단위 34건 통과(`EventFeedPollerApplyTest`에 1건 더함), `samples/spring-boot-relay/verify/run-e2e.sh` 통과 123·실패 0(S3에 새 필드 검사 3항목을 더했다, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 샘플의 main 코드는 바꾸지 않았다. 마이그레이션·Dockerfile·compose·종료 순서·파일 채널 I/O는 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(RQ-048 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI 반영 뒤): `pnpm test` 단위 709건(38개 파일), `pnpm test:integration` 통합 564건(38개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 한 번의 검증 묶음이고 같은 소스에서 다시 실행하지 않았다. Dockerfile·compose·종료 순서·파일 채널 I/O는 바꾸지 않았고 `.env.example`은 주석만 더했다(`config/compose-consistency.spec.ts`가 새 변수 이름을 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 120·실패 0(S16 신규 18항목, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). 읽기 전용 루트 컨테이너(`--read-only --cap-drop ALL --security-opt no-new-privileges`) 안의 CLI 실행을 1회 확인했다(`docker run`·`docker exec`, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `scripts/container/verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(해당 영역 변경 없음, RQ-045~047 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 B 운영 토큰·발송 정지·감사·`/ops` 반영 뒤): `pnpm test` 단위 622건(33개 파일), `pnpm test:integration` 통합 513건(32개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 `http/rest-intake.integration-spec.ts` 1건이 실패했다. 호출처 키 `/health/ready`의 응답 동등 비교에 새 필드 `sendPaused`가 없었기 때문이고(ADR-0011 구현 중 확정 17) 기대값에 필드를 더한 뒤 그 파일(58건)이 통과했다. 이 뒤 독립 리뷰 지적 2건(운영자 작업 응답의 거부 수신자 노출, `/ops` 경로 파라미터 디코딩 오류가 인증보다 먼저 나가는 문제, ADR-0011 구현 중 확정 19·20)을 고치고 전체 검증을 다시 실행해 위 수치를 얻었다. Dockerfile·종료 순서·파일 채널 I/O는 바꾸지 않았고 `docker-compose.yml`은 주석만 더했다. `scripts/container/verify-sigterm-file.sh`를 1회 실행했다(컨테이너 안에서 `0001`~`0008`을 적용하고 기동한 뒤 SIGTERM 종료 코드 0, 재기동 뒤 1000통 중복·유실 없음, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). `verify-sigkill-duplicate.sh`는 실행하지 않았다. `scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음, RQ-042~044 판정 근거).
 - 검증 수치(2026-11-24 6단계 묶음 A 작업 취소 반영 뒤): `pnpm test` 단위 602건(31개 파일), `pnpm test:integration` 통합 405건(27개 파일, 실제 PostgreSQL 17), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 이 묶음은 단위 테스트를 더하지 않았다(취소는 PostgreSQL 통합 테스트가 확인한다). 샘플은 Gradle 단위 33건 통과, `samples/spring-boot-relay/verify/run-e2e.sh` 통과 102·실패 0(S15·S15b 신규, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다). Dockerfile·compose·파일 채널 I/O를 바꾸지 않아 `scripts/container/`·`scripts/volume/`·`pnpm test:nfs`는 실행하지 않았다(RQ-040·041 판정 근거).
@@ -88,7 +89,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 | 3단계 | NAS/NFS 통합 테스트, 사용처 연동 문서와 운영 문서 |
 | 4단계 | 발송 우선순위(RQ-033~038, ADR-0009) |
 | 5단계 | 요청별 만료 시간(RQ-039, ADR-0010) |
-| 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041), 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044), 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI(RQ-045~047)를 구현했다. `outcomeUncertain`과 호출처 단위 일괄 취소는 구현 전이다 |
+| 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041), 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044), 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI(RQ-045~047), 묶음 D 결과 불명 표시(RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -570,6 +571,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
   - 최종 발송 성공 시각.
   - 최종 실패 시각과 실패 원인.
   - 취소 시각과 취소 주체(`canceledAt`, `canceledBy`). 취소한 작업에만 값이 있다(RQ-040).
+  - 결과 불명 표시(`outcomeUncertain`). 모든 상태에서 불리언이다(RQ-048).
   - 거부된 수신자(`rejectedRecipients`). 일부 수신자만 거부된 경우에 해당한다.
 
 **수용 조건:**
@@ -1356,7 +1358,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 
 ## 14. 운영 제어와 호출처 보호: 작업 취소
 
-결정은 [ADR-0011](../adr/0011-operations-control-and-caller-protection.md) 결정 4·10이다. RQ-040·041은 호출처 API 키로 하는 취소만 다룬다. RQ-042~044가 운영 토큰·`/ops`, 발송 정지, 감사와 관리 취소를 다룬다. RQ-045~047이 이벤트 피드 공백 신호(결정 9), 수신 도메인 허용 목록(결정 8), 운영 CLI(결정 7)를 다룬다. 호출처 단위 일괄 취소와 `outcomeUncertain`(결정 5)은 구현 전이고 구현할 때 이 절 뒤에 RQ를 추가한다.
+결정은 [ADR-0011](../adr/0011-operations-control-and-caller-protection.md) 결정 4·10이다. RQ-040·041은 호출처 API 키로 하는 취소만 다룬다. RQ-042~044가 운영 토큰·`/ops`, 발송 정지, 감사와 관리 취소를 다룬다. RQ-045~047이 이벤트 피드 공백 신호(결정 9), 수신 도메인 허용 목록(결정 8), 운영 CLI(결정 7)를 다룬다. RQ-048이 `outcomeUncertain` 표시(결정 5)를 다룬다. 호출처 단위 일괄 취소는 ADR상 범위 밖이고 새 결정이 있을 때 RQ를 추가한다.
 
 ### RQ-040 호출처 작업 취소
 
@@ -1385,7 +1387,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
   - `Job` 응답에 `canceledAt`, `canceledBy`(`CALLER`·`OPERATOR`·`null`)를 더한다.
 - 로그: `job_canceled`(info)에 `jobId`, `callerId`, `canceledBy`만 남긴다. `Idempotency-Key`·수신자·본문은 남기지 않는다(RQ-027).
 - 후속 처리: `CANCELED` 작업은 점유·만료 sweep·본문 정리 대상이 아니다. 보존 기간이 지나면 작업과 이벤트를 함께 지운다.
-- 관리 토큰 취소와 감사는 RQ-044가 다룬다. 호출처 단위 일괄 취소는 구현 전이다.
+- 관리 토큰 취소와 감사는 RQ-044가 다룬다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다.
 
 **수용 조건:**
 
@@ -1663,6 +1665,46 @@ ADR-0001~0010은 2026-11-23에, ADR-0011은 2026-11-24에 승인됐다.
 - 구현: `cli/args.ts`·`run.ts`·`index.ts`, 진입점 `cli.ts`. `Dockerfile`은 바꾸지 않았다(`dist/`에 `cli.js`가 포함된다).
 - 남은 미검증: `docker compose exec`로의 실행, `https` 프록시 뒤 주소, 호출처 단위 일괄 취소 명령(범위 밖), 실제 Windows·macOS 셸에서의 인자 처리.
 
+### RQ-048 결과 불명 표시와 운영자 재시도 없음
+
+- [x] **진행 상태:** 검증 완료 (6단계 묶음 D)
+
+**요구사항:**
+
+- 작업 조회(`GET /jobs/{jobId}`, `GET /jobs?idempotencyKey=`, 등록 응답, 취소 응답)의 `Job`과 운영자 읽기(`GET /ops/jobs/{jobId}`, CLI `jobs show`)의 `OpsJob`은 `outcomeUncertain`(불리언)을 모든 상태에서 항상 낸다(ADR-0011 결정 5).
+- `JOB_FAILED`·`JOB_EXPIRED` 이벤트는 같은 값의 `outcomeUncertain`을 항상 낸다. `JOB_SENT`·`JOB_CANCELED`·`INTAKE_REJECTED`에는 없다.
+- 값은 `mail_attempts`에서 도출한다. 다음 시도가 한 건이라도 있으면 `true`다.
+  - `classification = 'LEASE_EXPIRED'`(lease 회수는 전송 결과를 모른다).
+  - `classification = 'TRANSIENT'`이고 `stage = 'DATA'`이고 `response_code IS NULL`(DATA 단계 타임아웃·연결 끊김, ADR-0007 결정 3).
+  그 밖에는 `false`다. SMTP 응답 코드가 있는 실패, DATA 이전 단계, Mailo 내부 오류(`stage = 'WORKER'`), 시도가 없는 작업이 해당한다.
+- 새 컬럼과 마이그레이션은 없다. 단건 조회는 `mail_attempts_job_idx`를 쓰는 `EXISTS`, 이벤트 피드는 한 페이지의 `JOB_FAILED`·`JOB_EXPIRED` 작업 ID를 한 쿼리로 읽는다.
+- 표시만 한다. 재시도 정책(ADR-0001 결정 5, ADR-0007 결정 3)은 바꾸지 않는다. 운영자 재시도 API는 만들지 않는다. 호출처가 새 Key로 다시 제출하고 중복 발송 위험은 호출처가 판단한다.
+- 수신자·본문·SMTP 응답 텍스트·Key(운영자 읽기)는 이 표시로 노출하지 않는다(RQ-027).
+- `openapi.yaml`의 `Job`·`OpsJob`은 `additionalProperties: false`라 필드 추가는 호출처 계약 변경이다. 문서에 명시하고, 호출처는 모르는 필드를 무시한다(`docs/api/README.md` "호출처가 모르는 값을 만났을 때").
+- 한계: 서버가 응답했지만 Mailo가 받지 못한 경우처럼 위 두 조건 밖의 불명은 잡지 못한다. 시도 이력은 작업과 함께 보존 기간(기본 30일) 뒤 지워진다.
+
+**수용 조건:**
+
+- [x] `LEASE_EXPIRED` 시도와 DATA 단계 응답 없는 `TRANSIENT` 시도가 있으면 `true`다. 응답 코드가 있는 `TRANSIENT`·`PERMANENT`, DATA 이전 단계, `ACCOUNT`, 내부 오류(`WORKER`), 시도 없음은 `false`다. 불확실한 시도가 한 건이라도 있으면 뒤의 시도가 확실해도 `true`다(`SENT` 포함).
+- [x] 단건 조회(ID·Key·운영자)와 이벤트 일괄 조회가 같은 판정이다.
+- [x] `Job`은 모든 상태에서 불리언이고(비종결 포함) 등록 응답·재전송 응답·취소 응답에도 있다. `JOB_FAILED`·`JOB_EXPIRED` 이벤트의 값이 `Job`과 같고 `JOB_SENT`·`JOB_CANCELED` 이벤트에는 없다. 한 페이지의 여러 이벤트가 작업별로 맞는 값을 받는다.
+- [x] 실제 Worker와 가짜 SMTP: DATA 뒤 응답 없이 연결이 끊기면 `RETRY_WAIT`에서 `true`이고 만료 뒤 `JOB_EXPIRED` 이벤트도 `true`다. 응답 코드가 명확한 `550`은 `FAILED`에서 `false`이고 `JOB_FAILED` 이벤트도 `false`다.
+- [x] 호출처 격리: 다른 호출처는 작업을 조회하지 못하고 이벤트에서도 보지 못한다.
+- [x] 운영자 읽기(읽기·관리 토큰)와 CLI `jobs show`가 같은 값을 주고 Key·수신자·응답 텍스트가 없다.
+- [x] canary: 시도의 응답 텍스트와 수신자 canary가 작업 조회·운영자 읽기·이벤트 응답·로그에 없다.
+- [x] 운영자 재시도 경로(`/ops/jobs/{jobId}/retry` 등)가 없다(404).
+- [x] 샘플은 새 필드를 무시한다. `JsonNode`로 응답을 읽고 `JOB_FAILED`의 `outcomeUncertain`을 상태 해석에 쓰지 않고 `FAILED`로 반영한다(`samples/spring-boot-relay`의 `EventFeedPollerApplyTest`, Gradle 단위 테스트). `run-e2e.sh`는 스크립트 검증이라 이 항목의 `[x]` 근거에 쓰지 않았다.
+
+**판정 근거:**
+
+- `queue/outcome-uncertain.integration-spec.ts`(PostgreSQL): 시도 종류별 판정 표, 단건·일괄 조회 일치, 호출처 범위.
+- `http/rest-outcome-uncertain.integration-spec.ts`(PostgreSQL, 실제 앱): `Job`·이벤트·운영자 읽기의 값과 생략 규칙, 격리, canary, 재시도 경로 없음.
+- `e2e/mail-flow.integration-spec.ts`(실제 Worker, 로컬 `smtp-server`): DATA 뒤 연결 끊김 `true`, 550 `false`. `cli/cli.integration-spec.ts`: `jobs show` 출력.
+- RED 확인(2026-11-24): 구현 전 `queue/outcome-uncertain.integration-spec.ts`가 `findOutcomeUncertain` export가 없어 로드에 실패했고, `http/rest-outcome-uncertain.integration-spec.ts`는 13건 중 10건이 실패했다(`outcomeUncertain`이 응답에 없음).
+- 구현: `queue/read.ts`(`UNCERTAIN_ATTEMPT`, `findOutcomeUncertain`), `intake/presenters.ts`, `intake/intake.service.ts`. 마이그레이션은 없다.
+- 샘플 e2e(`samples/spring-boot-relay/verify/run-e2e.sh` S3, 2026-11-24, 스크립트 검증): 서버가 새 필드를 보내는 상태에서 샘플 outbox 흐름이 그대로 통과했다. `JOB_FAILED` payload의 `outcomeUncertain`이 `false`로 남고 `JOB_SENT` payload에는 없다.
+- 남은 미검증: `true`가 되는 실제 Gmail 응답 경로(가짜 SMTP의 연결 끊김만 확인), 서버가 응답했지만 Mailo가 받지 못한 경우, 저장소 밖 호출처가 새 필드를 무시하는지.
+
 ## 확정한 항목
 
 2026-11-23 판정으로 미결정에서 확정한 항목이다. 값은 해당 RQ와 ADR이 정한다.
@@ -1700,7 +1742,7 @@ NFS 통합 테스트 환경(3단계, 추정):
 | 파일 채널 상세          | 결정됨: `link` 방식은 채택하지 않는다(ADR-0004 구현 중 확정 10·30·32, `rename`만 쓴다). 실제 NAS의 mount 옵션(NFS loopback 기준은 `docs/operations/nfs.md`에 정했고 실제 NAS는 미검증). 결정됨: 호출처 계정·폴더 모드는 default ACL 권장(ADR-0004 구현 중 확정 14·28, `docs/operations/caller-onboarding.md`), 스키마 필드명과 폴링 간격(30초)·임시 파일 정리 시간(1시간) 기본값은 2단계에서 정했다(ADR-0004 "구현 중 확정") |
 | 메시지별 정책           | 재시도 횟수·간격을 요청별로 지정할지 여부. 결정됨: 우선순위(RQ-033, ADR-0009), 만료 시간(RQ-039, ADR-0010) |
 | 반송(Bounce)            | SMTP 수락 이후 반송까지 추적할지 여부                               |
-| 관리 기능               | 발송 이력 조회, 실패 작업 수동 재시도, `CANCELED` 상태              |
+| 관리 기능               | 결정됨: `CANCELED` 상태와 운영 REST·CLI는 RQ-040~047, 실패 작업 수동 재시도는 만들지 않고 결과 불명 표시로 대신한다(RQ-048). 미결정: 발송 이력 조회 |
 | 계정 전체 발송 속도 제어 | 한도에 닿기 전에 계정 전체 발송 속도를 선제적으로 제한할지 여부. 한도 초과 응답은 ADR-0007이, 호출처별 할당은 RQ-032가 정했다. 한도 수치는 Google 문서 갱신으로 바뀔 수 있다 |
 | 발신자 필드 정책        | 결정됨(ADR-0008 구현 중 확정 12, RQ-028·RQ-030): From은 기본 발신 주소 + 호출처 `allowedFrom`만 허용하고 Reply-To는 형식만 검증한다. 필드 자체는 Key 지문 범위(RQ-011)에 포함한다. 미확인: Gmail 인증 모드에서 `allowedFrom` 주소를 send-as 별칭으로 등록해야 From이 유지되는지 |
 | SMTP Relay 송신 IP      | Workspace SMTP Relay가 IP 허용 방식이면 Docker 송신 IP 고정이 필요한지 확인 |
