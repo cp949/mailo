@@ -267,6 +267,8 @@ gap_header() { # 쿼리 문자열 → stdout: Mailo-Cursor-Gap 헤더 값(없으
 }
 events_http() { curl -s -m 10 -o "$WORK/events.json" -w '%{http_code}' -H "Authorization: Bearer $API_KEY" "http://127.0.0.1:$MAILO_PORT/events?$1"; }
 check "S16 삭제 전 표지 행 수" 0 "$(mq "SELECT count(*) FROM mail_event_purges")"
+# "헤더 없음" 검사는 curl 실패나 4xx·5xx에서도 빈 문자열이라 통과한다. 각 검사 앞에서 같은 요청의 상태 200을 확인한다.
+check "S16 삭제 전 응답 상태는 200" 200 "$(events_http after=MDow)"
 check "S16 삭제 전에는 헤더가 없다" "" "$(gap_header after=MDow)"
 # 종결 작업(S1·S3)의 종결 시각을 40일 전으로 당긴다(검증용 DB 조작). Mailo Worker의 정리 루프(2초 주기)가 지운다.
 mq "UPDATE mail_jobs SET finished_at = now() - interval '40 days' WHERE idempotency_key IN ('$OB1', '$OB3')" >/dev/null
@@ -279,10 +281,12 @@ check "S16 삭제 표지 JOB_SENT" 1 "$(mq "SELECT count(*) FROM mail_event_purg
 check "S16 삭제 표지 JOB_FAILED" 1 "$(mq "SELECT count(*) FROM mail_event_purges WHERE caller_id='sample' AND type='JOB_FAILED'")"
 check "S16 after 뒤에서 삭제됐으면 헤더 true" true "$(gap_header after=MDow)"
 check "S16 응답 상태는 200" 200 "$(events_http after=MDow)"
+check "S16 삭제된 종류가 아닌 type 필터의 응답 상태는 200" 200 "$(events_http 'after=MDow&type=INTAKE_REJECTED')"
 check "S16 삭제된 종류가 아닌 type 필터에는 헤더가 없다" "" "$(gap_header 'after=MDow&type=INTAKE_REJECTED')"
 check "S16 삭제된 종류의 type 필터에는 헤더가 있다" true "$(gap_header 'after=MDow&type=JOB_FAILED')"
 check "S16 onGap=error는 410" 410 "$(events_http 'after=MDow&onGap=error')"
 check "S16 410 type" "urn:mailo:problem:cursor-expired" "$(jq -r .type "$WORK/events.json")"
+check "S16 after 없는 읽기의 응답 상태는 200" 200 "$(events_http limit=1)"
 check "S16 after 없는 읽기에는 헤더가 없다" "" "$(gap_header limit=1)"
 # 샘플의 cursor를 0:0으로 되돌려 삭제 지점 앞에서 읽게 한다. 샘플이 헤더를 받아 등록됨 행을 확인 필요로 두는지 앱 로그로 본다.
 sq "UPDATE mailo_event_cursor SET cursor='MDow'" >/dev/null
