@@ -36,7 +36,10 @@ export interface FakeSmtpBehavior {
   rcpt?: (address: string, n: number) => Reply | undefined;
   /** `n`은 DATA 본문을 받은 횟수(0부터). */
   data?: (n: number) => Reply | undefined;
-  /** 본문을 다 받은 뒤 응답 없이 연결을 끊는다. */
+  /**
+   * 본문을 다 받은 뒤 응답 없이 그 세션의 연결만 끊는다. 같은 서버의 다른 연결은 건드리지 않는다.
+   * 모든 연결을 끊으면 동시에 처리 중인 다른 작업이 DATA 이전 단계(AUTH 등)에서 끊겨 의도하지 않은 분류가 된다.
+   */
   dropAfterData?: (n: number) => boolean;
   /** 본문을 다 받은 뒤 응답하지 않는다. */
   hangAfterData?: (n: number) => boolean;
@@ -174,7 +177,17 @@ export async function startFakeSmtp(
       stream.on("end", () => {
         const n = counts.datas++;
         if (behavior.dropAfterData?.(n)) {
-          for (const s of sockets) s.destroy();
+          // 이 세션의 소켓만 끊는다. 동시 접속한 다른 세션을 끊으면 그 작업이 DATA 이전 단계 오류가 돼 시험이 흔들린다.
+          // 세션과 소켓은 클라이언트 쪽 포트로 맞춘다. 찾지 못하면 이전 동작대로 모두 끊는다.
+          const own = [...sockets].filter(
+            (s) =>
+              s.remotePort === session.remotePort &&
+              s.remoteAddress !== undefined &&
+              session.remoteAddress.endsWith(
+                s.remoteAddress.replace("::ffff:", ""),
+              ),
+          );
+          for (const s of own.length > 0 ? own : sockets) s.destroy();
           return;
         }
         if (behavior.hangAfterData?.(n)) return;
