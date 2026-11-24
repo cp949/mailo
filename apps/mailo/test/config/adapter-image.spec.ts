@@ -78,7 +78,11 @@ describe("AWS 어댑터 변형 이미지의 고정값(RQ-080, ADR-0016 결정 4)
   });
 
   it("기본 이미지를 만드는 루트 Dockerfile은 어댑터 폴더를 복사하지 않고 빌드 컨텍스트에서도 뺀다", () => {
-    expect(rootDockerfile).not.toMatch(/adapters/);
+    const instructions = rootDockerfile
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+    expect(instructions).not.toMatch(/adapters/);
     expect(read(".dockerignore")).toMatch(/^adapters$/m);
   });
 });

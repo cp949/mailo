@@ -1,6 +1,7 @@
 # 태그 대신 다중 아키텍처 index digest로 고정한다(태그는 옮겨질 수 있다). 2026-11-23에 조회한 값이다.
 # 갱신: `docker buildx imagetools inspect node:<버전>-alpine`의 Digest로 바꾸고 .github/workflows/ci.yml의 NODE_VERSION도 맞춘다
 # (Renovate나 Dependabot을 쓰면 digest를 자동 갱신한다). pnpm은 package.json의 packageManager가 sha512 해시로 고정한다.
+# 어댑터 변형 이미지의 adapters/secret-source-aws/Dockerfile도 같은 digest로 바꾼다(test/config/adapter-image.spec.ts가 일치를 검사한다).
 FROM node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS base
 RUN corepack enable
 WORKDIR /repo

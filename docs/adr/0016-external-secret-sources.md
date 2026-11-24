@@ -4,7 +4,7 @@
 
 승인 (2026-11-24). 결정 1~10과 "사용자가 판단할 질문" 9개의 권고안을 모두 승인했다. 질문의 확정 답은 "구현 중 확정"에 적었다.
 
-구현 상태: 묶음 A(코어) 구현(2026-11-24). 묶음 B(AWS 어댑터와 변형 이미지), C(운영 가이드와 수동 시나리오)는 구현 전이다. 이 문서 본문에 "승인 전"·"구현하지 않았다"로 쓰인 문구는 작성 시점의 것이고 현재 상태는 이 줄과 "구현 중 확정"이 정한다.
+구현 상태: 묶음 A(코어)와 B(AWS 어댑터, 변형 이미지, CI·릴리스) 구현(2026-11-24). 묶음 B의 `adapter`·`variants` 잡은 GitHub에서 실행하지 않았다. C(운영 가이드와 수동 시나리오)는 구현 전이다. 이 문서 본문에 "승인 전"·"구현하지 않았다"로 쓰인 문구는 작성 시점의 것이고 현재 상태는 이 줄과 "구현 중 확정"이 정한다.
 
 검증 범위는 코드·문서 읽기다(2026-11-24). 테스트, 스크립트, 이미지 빌드, 외부 서비스 호출을 실행하지 않았다. "배경"의 "확인한 사실"은 Mailo와 형제 프로젝트 storix의 코드·문서에서 읽은 것이다. 그 밖의 것은 "가정"과 "미결정·확인하지 않은 것"에 모았다. 문서에는 줄 번호 대신 파일·함수 이름으로 근거를 적었다(`docs/agents/writing-styles.md`).
 
@@ -474,3 +474,20 @@ storix와 구조가 달라서 그대로 옮기지 않는 부분은 "storix와 �
 - 마이그레이션 CLI 종료. 성공하면 출력을 비운 뒤 `process.exit(0)`로 끝낸다. 어댑터가 남긴 핸들 때문에 compose의 `migrate-cli && exec main`이 멈추지 않게 한다. 실패 경로(종료 코드 1)와 출력은 그대로다. 앱 프로세스(`main.ts`)에는 이 강제 종료가 없으므로 어댑터 계약은 해석 뒤 연결·타이머를 닫고, abort 리스너에서 던지지 않고, 모듈 로드 중 끝나지 않는 비동기 작업을 하지 않도록 정한다(`secrets/source.ts`).
 - 값의 개행. `_FILE`은 끝의 개행 한 개를 자르지만 `X_REF` 값은 어댑터가 준 그대로 쓴다(결정 1의 문구 그대로). 개행이 붙은 SMTP·DB 비밀번호는 소비자 쪽 인증 실패로 나타난다. 운영 문서가 이 차이와 증상을 적는다. 값 크기 상한은 두지 않는다(소비자 검증, 결정 1).
 - timeout과 abort의 순서. 해석 timeout은 확정(reject)을 먼저 하고 `abort()`를 부른다. 어댑터의 abort 리스너가 던져도 timeout이 이긴다.
+
+### 2026-11-24 묶음 B(AWS 어댑터, 변형 이미지, CI·릴리스) 구현 때 확정
+
+결정 문구는 바꾸지 않았다. 구현이 열어 둔 곳을 정했거나 "확인하지 않은 것"을 확인한 곳만 적는다.
+
+- 어댑터 패키지: ESM JavaScript(JSDoc), `index.js` 하나, 테스트는 `node --test`다. devDependency가 없다(타입 검사는 두지 않았다. SDK 호출 형태는 실제 SDK를 로컬 HTTP fixture에 연결한 테스트가 확인한다). `@aws-sdk/client-secrets-manager`는 3.1146.0(2026-10-02 발행)으로 고정했고 코어 `apps/mailo`와 루트 lockfile에는 없다. 패키지 버전(0.1.0)은 Mailo 릴리스 버전과 연동하지 않는다. `createAwsSecretSource({ createClient, env })`를 이름 있는 export로 두어 테스트가 SDK 클라이언트를 바꿔 끼운다. 기본 export는 실제 SDK를 쓰는 인스턴스이고 모듈 로드 중 비동기 작업이 없다.
+- 엔드포인트(결정 8의 "구현 때 확인"): 이 SDK 버전은 표준 환경 변수 `AWS_ENDPOINT_URL_SECRETS_MANAGER`를 읽는다(로컬 fixture로 확인). 그래서 `MAILO_AWS_SM_ENDPOINT`를 만들지 않았다.
+- SDK 재시도와 로깅(결정 5·6의 "미확인"): 5xx와 `ThrottlingException`은 요청당 3회 시도한다(fixture 요청 수 3). 해석 제한 시간 안에서 동작하고 코어는 재시도하지 않는다. 자식 프로세스의 stdout·stderr는 성공·실패 모두 비어 있어 SDK 기본 로거는 조용하다(이 버전, 이 경로 한정).
+- 오류 코드 매핑: SDK 오류의 `name`을 먼저 보고, 이름이 없으면 `$retryable.throttling`, HTTP 상태(429 `throttled`, 401·403 `access-denied`, 5xx `unavailable`), 네트워크 오류 `code`(`ECONNREFUSED`·`ENOTFOUND`·`ETIMEDOUT` 등) 순이다. 메시지는 읽지 않는다. `ResourceNotFoundException`은 `not-found`, 권한·서명·만료 토큰·자격 증명 체인 실패·`DecryptionFailure`(KMS)는 `access-denied`, 제한은 `throttled`, 서비스 오류·시간 초과·`AbortError`·`signal` abort는 `unavailable`, `InvalidRequestException`·`InvalidParameterException`은 `invalid-value`다. 참조 형식 오류, `AWS_REGION` 없음, `SecretBinary`·`SecretString` 없음, JSON 아님·객체 아님·키 없음·상속 속성·문자열 아님은 `invalid-value`다(닫힌 코드에 설정 오류가 없어 가장 가까운 코드를 썼다). 분류하지 못한 오류와 객체가 아닌 던짐은 `code` 없이 던져 코어가 `adapter-error`로 보고한다. 오류 메시지는 코드마다 고정 문구이고 SDK 오류를 `cause`로 달지 않는다.
+- 연결 정리(묶음 A 리뷰 지적): SDK 클라이언트의 `destroy()`를 부르면 서버 쪽 keep-alive 연결이 닫히고 부르지 않으면 열린 채 남는다(fixture의 연결 수로 확인). 부르지 않아도 Node 프로세스는 자연 종료한다(keep-alive 소켓은 이벤트 루프를 붙잡지 않는다). 그래서 자연 종료 테스트는 `destroy()` 제거에 민감하지 않고, 연결 정리는 서버 쪽 연결 수 테스트가 검증한다. 어댑터는 `signal`에 리스너를 달지 않고(SDK가 `abortSignal`을 처리), `destroy()`가 던져도 해석 결과를 바꾸지 않는다.
+- 변형 Dockerfile: 빌드 컨텍스트는 `adapters/secret-source-aws/`다(결정 4가 정하지 않았다). `pnpm pack`을 쓰지 않고 `/opt/mailo-secret-source-aws`에 `package.json`·`index.js`·`README.md`·`node_modules`를 두고 `apps/mailo/node_modules/@cp949/mailo-secret-source-aws`를 그 디렉터리로 심볼릭 링크한다. Node가 링크의 실제 경로에서 `node_modules`를 찾으므로 SDK가 풀린다. 로더(`apps/mailo/dist/secrets`)가 bare 이름 `@cp949/mailo-secret-source-aws`를 찾는지(결정의 "확인하지 않은 것")를 이미지 스모크로 확인했다. 설치 stage의 base digest와 `packageManager`(sha512)는 루트와 같고 `apps/mailo/test/config/adapter-image.spec.ts`가 일치를 검사한다. `ARG MAILO_BASE_IMAGE`의 기본값이 없어 BuildKit이 `InvalidDefaultArgInFrom` 경고를 내지만 의도한 동작이다(미지정이면 빌드 실패).
+- 루트 영향(결정의 "확인하지 않은 것"): 어댑터의 `pnpm-workspace.yaml`(`packages: []`)이 있어도 루트 `pnpm install --frozen-lockfile`은 루트 lockfile을 바꾸지 않고 어댑터를 설치하지 않는다. 어댑터 파일은 루트 `pnpm format:check`의 대상이다(`oxfmt`가 저장소 전체를 본다). 루트 `.dockerignore`에 `adapters`를 더해 기본 이미지 빌드 컨텍스트에서 뺐다.
+- 기본 이미지 부재 검사: `image-smoke/verify-base.sh`가 `find / -xdev`로 `@aws-sdk*`·`@smithy*`·`*mailo-secret-source*`·`aws-sdk*` 이름을 찾는다. 변형 이미지를 넣으면 실패한다. 변형 구조 검사는 BusyBox `find`에 `-writable`이 없어 `! -user root`와 `-perm -0002`(심볼릭 링크 제외)로 한다.
+- 이미지 스모크의 범위: `read_only`·`--tmpfs /tmp`·`cap_drop: [ALL]`·`no-new-privileges`·`--network none`에서 환경 변수 자격 증명으로 통과했다. 이 경로에서 SDK가 필수로 쓰는 쓰기 경로는 없었다. 다른 자격 증명 경로(역할, 웹 ID 토큰, SSO 캐시)는 실행하지 않았다. 스모크의 값 비노출 단언은 `resolveSecrets`가 어댑터 오류 메시지를 버리는 코어의 성질을 확인한다. 어댑터 메시지의 비노출은 어댑터 단위 테스트가 확인한다.
+- 릴리스: `release` 잡이 `outputs`(`digest`, `tag`, `commit`)를 내고 `variants` 잡(`needs: release`, 권한 `contents: read`·`packages: write`)이 그 digest의 기준 이미지를 pull해 `revision` 라벨과 `verify-base.sh`를 확인한 뒤 변형을 빌드·스모크하고 push한다. 변형 빌드는 `docker/build-push-action` 없이 `docker build`를 쓰고 액션은 기존에 SHA로 고정한 `login-action`·`setup-buildx-action`·`checkout`·`setup-node`만 쓴다. push 뒤 config digest 비교는 `release` 잡과 같은 방법이다. 변형 digest는 잡 요약에 남기고 Release 노트에는 쓰지 않는다(변형 잡에 `contents: write`를 주지 않기 위해서). Release 노트의 "변형 이미지" 절이 변형이 별도 잡이고 실패할 수 있음을 알린다(결정 4). 이동 태그는 없다.
+- CI: `ci.yml`의 `adapter` 잡이 어댑터 단위 테스트, 기본 이미지 로컬 빌드와 부재 확인, 변형 로컬 빌드와 스모크를 한다(발행 없음).
+- 검증하지 않은 것: `adapter`·`variants` 잡의 GitHub 실행(`variants`가 GHCR에서 digest로 기준 이미지를 pull하는 단계, `packages: write` push, 러너의 `docker build`가 로컬 태그를 `FROM`으로 쓰는지), 실제 AWS(IAM, KMS, 자격 증명 체인, IMDSv2, 실제 throttling), 변형 이미지의 취약점 스캔(스캔 단계를 두지 않았다), 발행된 변형 이미지의 pull과 compose 기동. 로컬에서는 `actionlint` 1.7.7, 로컬 레지스트리(`registry:2`)를 대상으로 한 `variants` 잡 `run` 본문 실행, 로컬 이미지 빌드·스모크를 확인했다.

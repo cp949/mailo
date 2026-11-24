@@ -5,6 +5,7 @@ Mailo는 단일 컨텍스트다. 도메인 용어와 진행 상태 정의는 `do
 | 구분                            | 위치                                |
 | ------------------------------- | ----------------------------------- |
 | 앱                              | `apps/mailo`                        |
+| 시크릿 어댑터(워크스페이스 밖)  | `adapters/secret-source-aws`        |
 | 요구사항(RQ-001~032, 구현 단계) | `docs/requirements/mail-sending.md` |
 | 결정(ADR-0001~0008)             | `docs/adr/`                         |
 | API 계약(OpenAPI)               | `docs/api/`                         |

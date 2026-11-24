@@ -51,7 +51,7 @@ docker compose up -d --build
 
 ### GHCR 이미지
 
-- 릴리스 태그마다 `ghcr.io/cp949/mailo:vX.Y.Z`와 `latest`가 발행된다(`linux/amd64`만). 발행 절차는 `ci.md` "릴리스 워크플로"다.
+- 릴리스 태그마다 `ghcr.io/cp949/mailo:vX.Y.Z`와 `latest`가 발행된다(`linux/amd64`만). 발행 절차는 `ci.md` "릴리스 워크플로"다. AWS 어댑터 변형은 별도 태그 `vX.Y.Z-aws`다("AWS 변형 이미지(`-aws`)").
 - 태그를 고정해 쓴다: `docker pull ghcr.io/cp949/mailo:vX.Y.Z`. `latest`는 다음 릴리스에서 옮겨지므로 운영에 쓰지 않는다. 더 엄격하게 고정하려면 Release 노트의 digest(`ghcr.io/cp949/mailo@sha256:...`)를 쓴다.
 - 기본 `CMD`는 마이그레이션을 실행하지 않는다("기동 순서와 마이그레이션").
 - `docker-compose.yml`의 `mailo`는 `build: context: .`로 로컬 빌드한다. 발행 이미지를 쓰려면 override 파일에서 `build`를 지우고 `image`를 준 뒤 `--build` 없이 띄운다. `docker-compose.migrate-once.yml`을 쓰면 `mailo-migrate`에도 같은 두 줄을 준다.
@@ -573,7 +573,7 @@ secrets:
 
 비밀값을 외부 저장소에서 기동 때 한 번 읽는 방법이다(ADR-0016, RQ-075~078). 기본은 꺼져 있고 `_REF` 변수와 어댑터를 지정하지 않으면 동작이 달라지지 않는다.
 
-- 이 버전이 제공하는 것은 코어(해석, 어댑터 계약, 로더)뿐이다. 저장소 어댑터와 어댑터가 든 변형 이미지(`-aws`)는 아직 없다(묶음 B). 어댑터 없이 `X_REF`를 쓰면 기동을 거부한다(`unknown-scheme`).
+- 코어(해석, 어댑터 계약, 로더)는 기본 이미지에 있고 저장소 어댑터는 없다. AWS Secrets Manager 어댑터는 변형 이미지 `ghcr.io/cp949/mailo:vX.Y.Z-aws`에만 들어 있다("AWS 변형 이미지(`-aws`)"). 어댑터 없이 `X_REF`를 쓰면 기동을 거부한다(`unknown-scheme`).
 - 지정 방법은 셋 중 하나다: `X=값`, `X_FILE=경로`, `X_REF=<scheme>://<참조>`. 빈 문자열은 지정하지 않은 것이다.
   - `X_REF`와 `X` 또는 `X_FILE`을 함께 주면 `conflict`로 기동을 거부한다. `.env`에 남은 가짜 평문 값(`.env.example`의 `MAILO_SMTP_PASSWORD`, `MAILO_DB_ENCRYPTION_KEY_V1`, `MAILO_FINGERPRINT_KEY_V1`)은 `X_REF`를 쓸 때 주석 처리하거나 compose `environment:`에서 `X: ""`로 비운다.
   - `X_FILE`과 `X`의 우선순위(`_FILE` 우선)는 그대로다.
@@ -591,16 +591,19 @@ secrets:
 - 성공하면 `secrets_resolved`(info) 한 줄이 남는다. 필드는 `count`(해석 건수)와 `schemes`(쓴 scheme, 쉼표 구분)뿐이다. 해석 대상이 없으면 남지 않는다. 설정을 읽기 전에 남는 줄이라 `instance`는 호스트 이름이다.
 - 프로세스 환경(`docker inspect`의 `Config.Env`, `/proc/<pid>/environ`)에는 참조(`X_REF`)와 어댑터의 저장소 접근 자격 증명(`AWS_*` 환경 변수를 쓰는 경우)이 보인다. 해석한 값은 보이지 않는다. 해석값은 앱 프로세스 메모리의 환경 복사본에 있다. 같은 프로세스 권한의 메모리 읽기는 막지 못한다(코드 읽기에 따른 설명이고 `/proc` 비노출은 측정하지 않았다).
 
-DB 비밀번호를 `_REF`로 바꾸는 compose 예(값은 모두 가짜다. 실행해 확인하지 않았다). 어댑터가 든 변형 이미지가 있어야 동작한다.
+DB 비밀번호를 `_REF`로 바꾸는 compose 예(값은 모두 가짜다. 실제 AWS와 compose 기동으로 확인하지 않았다). 어댑터가 든 변형 이미지가 있어야 동작한다.
 
 ```yaml
 # docker-compose.override.yml 예시
 services:
   mailo:
+    image: ghcr.io/cp949/mailo:vX.Y.Z-aws
+    build: !reset null
     environment:
-      MAILO_SECRET_ADAPTERS: "<어댑터 패키지 이름>"
+      MAILO_SECRET_ADAPTERS: "@cp949/mailo-secret-source-aws"
+      AWS_REGION: "ap-northeast-2"
       MAILO_DB_PASSWORD: "" # 기본 파일이 넣은 POSTGRES_PASSWORD 값을 비운다
-      MAILO_DB_PASSWORD_REF: "<scheme>://<참조>"
+      MAILO_DB_PASSWORD_REF: "aws-sm://mailo/example/db#password"
 ```
 
 - `docker-compose.migrate-once.yml`을 쓰면 `mailo-migrate`도 같은 방식으로 비운다: `MAILO_DB_PASSWORD: ""`와 `MAILO_DB_PASSWORD_REF`(마이그레이션 전용 계정이면 그 계정의 참조)를 `mailo-migrate`에 준다. `MAILO_MIGRATE_DB_PASSWORD`를 쓰는 구성은 이 줄이 대신한다.
@@ -611,6 +614,24 @@ services:
 ```txt
 위험도: 중간 (기동 경로의 비밀 해석. 저장소 장애가 새 인스턴스의 기동을 막는다. 기본 설정에는 영향이 없다)
 롤백: 이전 이미지로 교체한다. 데이터·마이그레이션 변경이 없다. `_REF`를 쓰던 배포는 롤백 전에 `_FILE`이나 환경 변수로 되돌린다
+```
+
+#### AWS 변형 이미지(`-aws`)
+
+AWS Secrets Manager의 비밀을 `X_REF`로 읽는 이미지다(ADR-0016 결정 4·8, RQ-079·080).
+
+- 이미지: `ghcr.io/cp949/mailo:vX.Y.Z-aws`. 같은 릴리스 커밋의 기본 이미지(digest) 위에 어댑터 `@cp949/mailo-secret-source-aws`와 AWS SDK(`@aws-sdk/client-secrets-manager`)만 얹었다. 기본 이미지에는 둘 다 없다. 이동 태그(`latest-aws`)는 없다. 변형은 기본 이미지와 Release를 발행한 뒤 별도 잡이 발행하므로 늦거나 없을 수 있다. 이 경우 기본 이미지는 이미 나가 있다(`ci.md` "variants 잡").
+- 쓰는 법: 위 GHCR 절의 override처럼 `image`를 `-aws` 태그로 주고 `build: !reset null`을 쓴다. `MAILO_SECRET_ADAPTERS=@cp949/mailo-secret-source-aws`, `AWS_REGION`(필수), `X_REF`를 준다.
+- 참조 형식: `aws-sm://<SecretId>[#<JSON 키>]`. `SecretId`는 비밀 이름 또는 ARN이다. `SecretString`을 `AWSCURRENT` 단계로 읽는다. `#<키>`가 있으면 `SecretString`을 JSON 객체로 읽어 그 키의 문자열 값만 쓴다(키는 `[A-Za-z0-9_.-]+`). `SecretBinary`, 버전 지정, 중첩 JSON 키는 지원하지 않는다. 같은 `SecretId`를 가리키는 변수마다 `GetSecretValue`가 한 번씩 나간다.
+- 자격 증명은 AWS SDK 기본 체인에서 얻는다(`AWS_ACCESS_KEY_ID`·`AWS_SECRET_ACCESS_KEY` 같은 환경 변수, 플랫폼 역할 등). 이 값은 `docker inspect`에 보일 수 있다. 호환 서버(LocalStack 등)는 SDK 표준 환경 변수 `AWS_ENDPOINT_URL_SECRETS_MANAGER`로 지정한다. 운영에서는 지정하지 않는다.
+- 오류 코드(`troubleshooting.md` "기동 시 비밀값 해석 실패"): `not-found`(비밀 없음), `access-denied`(권한·자격 증명 없음·서명·KMS 복호화 거부), `throttled`, `unavailable`(서비스 오류, 네트워크, 시간 초과), `invalid-value`(참조 형식 오류, `AWS_REGION` 없음, `SecretBinary`만 있음, JSON이 아니거나 키가 없거나 값이 문자열이 아님). SDK의 오류 메시지·SecretId·값은 오류에 싣지 않는다.
+- 재시도: SDK 기본(요청당 최대 3회)이 해석 제한 시간 안에서 동작한다. 코어는 재시도하지 않는다.
+- `read_only: true`·`cap_drop: [ALL]`·`--network none` 컨테이너에서 환경 변수 자격 증명으로 해석 스모크가 통과했다(`adapters/secret-source-aws/image-smoke/run.sh`). 이 경로에서 SDK가 필수로 쓰는 쓰기 경로는 없었다(`HOME`은 `/home/node`이고 `~/.aws`가 없어도 오류가 아니다). 다른 자격 증명 경로(인스턴스·작업 역할, 웹 ID 토큰, SSO 캐시)는 실행하지 않았다.
+- 검증하지 않은 것: 실제 AWS 계정(IAM, KMS, 자격 증명 체인, IMDSv2, 네트워크 제한, 실제 지연·제한), 변형 이미지의 취약점 스캔(스캔 단계가 없다), `variants` 잡의 GitHub 실행. IAM 정책 예시와 KMS 설정은 이 문서에 없다(별도 운영 가이드 예정).
+
+```txt
+위험도: 중간 (비밀 저장소 장애가 새 인스턴스의 기동을 막는다. 변형 이미지는 AWS SDK와 그 취약점을 이 저장소가 소유한다)
+롤백: 기본 이미지로 되돌리고 `X_REF`를 `_FILE`이나 환경 변수로 바꾼다. 발행된 -aws 태그는 GHCR에 남는다
 ```
 
 ## 헬스
@@ -1017,7 +1038,8 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - `/metrics`(RQ-049~052): 운영 크기(수백만 행)·다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프에서의 쿼리 비용과 풀 점유(예비 연결 4개 가정), 롤링 배포(구버전 404는 코드 읽기 결과)와 롤백, 알림 규칙의 발화 조건과 임계값, 부하에서의 스크레이프 간격. 컨테이너·실제 Prometheus 스크레이프·`promtool`은 한 번씩 실행했다("지표").
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
-- 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패·성공 경로(프로세스 수준)를 확인했다. 실제 저장소 어댑터, 컨테이너(`read_only`·`cap_drop`)에서의 해석, 변형 이미지, compose 예시의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복, `/proc/<pid>/environ`에서 해석값이 보이지 않는지는 확인하지 않았다.
+- 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패·성공 경로(프로세스 수준)를 확인했다. compose 예시의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복, `/proc/<pid>/environ`에서 해석값이 보이지 않는지는 확인하지 않았다.
+- AWS 어댑터와 변형 이미지(ADR-0016 묶음 B, 2026-11-24): 어댑터 단위 테스트(가짜 SDK 클라이언트, 로컬 HTTP fixture를 거치는 실제 SDK), 로컬에서 빌드한 기본 이미지의 어댑터·SDK 부재 확인(`image-smoke/verify-base.sh`), 변형 이미지를 `read_only`·`cap_drop: [ALL]`·`--network none`으로 실행한 해석 스모크(`image-smoke/run.sh`: bare 패키지 이름 로드, 해석, JSON 키, 닫힌 코드, 로드 오류)를 실행했다. 실제 AWS(IAM, KMS, 자격 증명 체인, IMDSv2, throttling), 취약점 스캔, `release.yml` `variants` 잡의 GitHub 실행, 발행된 `-aws` 이미지의 pull과 compose 기동은 확인하지 않았다.
 - `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).
 - TLS를 켠 PostgreSQL 서버에 대한 `MAILO_DB_SSLMODE` 접속.
 - TLS 종단 프록시 구성, 다중 인스턴스 배포.

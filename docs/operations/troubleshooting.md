@@ -564,6 +564,12 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 
 닫힌 코드는 진단 힌트다. 어댑터가 분류를 잘못 붙이면 원인을 잘못 읽을 수 있다.
 
+AWS 어댑터(`aws-sm`, 변형 이미지 `-aws`)가 코드를 붙이는 기준은 `deployment.md` "AWS 변형 이미지(`-aws`)"의 오류 코드 줄이다. 이 어댑터 고유의 확인 사항:
+
+- `adapter-error:invalid-value`의 원인이 `AWS_REGION` 없음일 수 있다. 변형 이미지의 컨테이너 환경에 `AWS_REGION`이 있는지 본다.
+- `adapter-error:access-denied`는 정책 거부 외에 자격 증명을 얻지 못한 경우(SDK 기본 체인 실패)도 포함한다. 컨테이너에 `AWS_ACCESS_KEY_ID` 같은 변수나 플랫폼 역할이 있는지 본다.
+- `adapter-error`(코드 없음)는 어댑터가 분류하지 못한 오류다. SDK 오류 메시지는 코어와 어댑터 모두 로그에 싣지 않는다.
+
 - `비밀값 어댑터 로드 실패: <패키지>: <종류>`는 해석 전에 나는 오류다. 종류: `invalid-specifier`(경로·URL·대문자·하위 경로 등 bare 패키지 이름이 아님. 줄에 `<n>번째 항목`으로 나온다), `not-found`(이미지에 패키지가 없다), `import-failed`(패키지를 불러오다 실패했거나, 모듈 로드가 `MAILO_SECRET_RESOLVE_TIMEOUT_MS` 안에 끝나지 않았다. 최상위 await가 끝나지 않는 어댑터가 원인일 수 있다), `invalid-export`(기본 export가 `scheme`·`resolve`를 가진 객체가 아니다), `reserved-scheme`(`file`), `duplicate-scheme`(두 어댑터가 같은 scheme). 이 오류가 나면 해석은 시도하지 않는다.
 - `MAILO_SECRET_RESOLVE_TIMEOUT_MS은 100 이상 60000 이하의 정수여야 한다`는 설정 값 오류다.
 - 값 끝에 개행이 붙어 있으면 그대로 쓰인다(`_FILE`은 끝 개행 한 개를 제거하지만 `X_REF`는 어댑터가 준 값을 자르지 않는다). 증상은 해석이 아니라 소비자 쪽에서 나온다: SMTP·계정 비밀번호는 `AUTH` 사유의 차단기 `open`, DB 비밀번호는 접속 실패(SQLSTATE `28P01`)다. 키 변수(32바이트 키)와 운영 토큰은 소비자가 앞뒤 공백을 무시하므로 영향이 없다. 저장소의 값을 개행 없이 다시 저장한다.
