@@ -886,9 +886,9 @@ groups:
 docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > mailo-$(date +%F).dump
 ```
 
-- 덤프에 들어 있는 것: 작업 행(수신자 평문, 본문 암호문, 지문), 시도 기록, 이벤트, 거부 기록, 차단기 행, `schema_migrations`. 본문은 DB 본문 키로 암호화돼 있다(종결 후 1일 뒤 삭제).
+- 덤프에 들어 있는 것: 작업 행(수신자 평문, 본문 암호문, 지문), 시도 기록, 이벤트, 거부 기록, 차단기 행, `schema_migrations`. 본문은 DB 본문 키로 암호화돼 있다(종결 전이에서 삭제, RQ-071). 종결한 작업 행의 수신자·봉투도 비어 있다. 이전 버전이 종결한 행은 예외다.
 - 복원에 필요한 키:
-  - DB 본문 암호화 키: 미종결 작업과 종결 후 유예(기본 1일) 안의 작업 본문을 읽는 데 필요하다. 해당 `body_key_version`의 키가 없으면 그 작업은 복호화 실패(`BodyCipherError:UNKNOWN_KEY_VERSION`)로 `job_internal_error`를 남기고 3번째 시도에서 `FAILED`가 된다.
+  - DB 본문 암호화 키: 미종결 작업(과 이전 버전이 종결해 유예(기본 1일) 안에 본문이 남은 작업)의 본문을 읽는 데 필요하다. 해당 `body_key_version`의 키가 없으면 그 작업은 복호화 실패(`BodyCipherError:UNKNOWN_KEY_VERSION`)로 `job_internal_error`를 남기고 3번째 시도에서 `FAILED`가 된다.
   - 지문 키: `fingerprint_key_version`이 남아 있는 모든 작업 행의 버전이 필요하다. 없으면 그 Key로 다시 오는 요청의 비교가 예외가 되어 REST는 503, 파일은 `file_ingest_failed`다(코드 읽기 결과). 현재 버전 키는 기동 조건이다.
   - JWE 개인키: DB 덤프를 읽는 데는 필요 없다. 수집 시점에 이미 복호화해 DB 키로 다시 암호화해 저장하기 때문이다. 서비스를 복원해 JWE를 쓰는 호출처의 요청(relay 재시도, 입력 폴더에 남은 파일)을 받으려면 필요하다. 키 목록 파일이 가리키는 변수가 없으면 기동하지 않는다.
 - 키는 DB 덤프와 다른 저장소에 보관한다. 같은 곳에 두면 DB 본문 암호화의 의미가 없다(권장).

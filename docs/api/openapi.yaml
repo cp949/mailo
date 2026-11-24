@@ -191,7 +191,7 @@ paths:
       summary: 작업 ID로 작업 조회
       description: |
         존재하지 않는 ID와 다른 호출처의 작업은 모두 404다.
-        본문은 응답에 포함하지 않는다. 종결 후 1일이 지나면 DB에서도 삭제된다.
+        본문은 응답에 포함하지 않는다. 종결 때 DB에서도 삭제된다.
       parameters:
         - $ref: '#/components/parameters/JobId'
       responses:
