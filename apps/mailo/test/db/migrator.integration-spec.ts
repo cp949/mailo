@@ -245,3 +245,103 @@ describe("PostgreSQL 통합: 마이그레이션의 비트랜잭션 실행과 loc
     }
   });
 });
+
+/**
+ * 같은 database에서 `migrate-cli`가 겹치는 경우를 실제 PostgreSQL로 고정한다(RQ-025, ADR-0002 구현 중 확정 13).
+ * 이 describe의 테스트는 database 전체의 advisory lock, `pg_stat_activity`, 스냅샷 대기에 의존한다.
+ * schema 격리로 막을 수 없으므로 전용 database(`scripts/test-db.sh create`)에서만 실행한다.
+ * 같은 database를 쓰는 다른 jest나 `pg_dump`가 있으면 `CREATE INDEX CONCURRENTLY`가 그 트랜잭션도 기다려 느려질 수 있다(`docs/agents/verification.md`).
+ */
+describe("PostgreSQL 통합: 마이그레이션 실행기의 잠금 대기(RQ-025, ADR-0002 구현 중 확정 13)", () => {
+  let db: TestDatabase;
+  let dir: string;
+
+  beforeEach(async () => {
+    db = await createTestDatabase();
+    dir = await mkdtemp(path.join(tmpdir(), "mailo-migrations-lock-"));
+    await db.pool.query("CREATE TABLE t (id int)");
+    await writeFile(
+      path.join(dir, "0001_idx.sql"),
+      "-- mailo:no-transaction\nCREATE INDEX CONCURRENTLY IF NOT EXISTS t_id_idx ON t (id);\n",
+    );
+  });
+
+  afterEach(async () => {
+    await db.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  /** 거부도 값으로 바꿔 둔다. 실행 중 먼저 거부된 Promise가 처리되지 않은 거부로 남지 않게 한다. */
+  const settle = (run: Promise<string[]>) =>
+    run.then(
+      (applied) => ({ applied }),
+      (error: unknown) => ({
+        error: (error as { name?: string }).name,
+        code: (error as { code?: string }).code,
+      }),
+    );
+
+  const indexValid = async (name: string): Promise<boolean | undefined> =>
+    (
+      await db.pool.query<{ indisvalid: boolean }>(
+        `SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+         WHERE c.relname = $1 AND c.relnamespace = $2::regnamespace`,
+        [name, db.schema],
+      )
+    ).rows[0]?.indisvalid;
+
+  it("CIC를 실행 중인 보유자 뒤에서 대기자가 기다려도 교착(40P01)하지 않고 둘 다 성공한다", async () => {
+    // 다른 트랜잭션 H가 t에 쓰기 잠금을 쥐어 보유자 A의 CIC가 H를 기다리게 한다.
+    const holder = await db.pool.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query("INSERT INTO t VALUES (1)");
+
+      const a = settle(runMigrations(db.pool, dir));
+      await waitUntil(
+        db,
+        `SELECT 1 FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND pid <> pg_backend_pid()
+            AND query LIKE '%CREATE INDEX CONCURRENTLY%'
+            AND wait_event_type = 'Lock'`,
+        "보유자의 CIC가 H를 기다리는 상태",
+      );
+
+      const b = settle(runMigrations(db.pool, dir));
+      // B가 deadlock_timeout을 넘겨 기다린 뒤에 H를 풀어야 A가 B를 기다리는 순간 B가 먼저 대기자가 된다.
+      // 이 순서에서 블로킹 대기는 A(CIC)를 희생시킨다.
+      const { rows } = await db.pool.query<{ ms: number }>(
+        "SELECT setting::int AS ms FROM pg_settings WHERE name = 'deadlock_timeout'",
+      );
+      await sleep(rows[0]!.ms * 1.5);
+      await holder.query("COMMIT");
+
+      expect(await Promise.all([a, b])).toEqual([
+        { applied: ["0001_idx.sql"] },
+        { applied: [] },
+      ]);
+      expect(await indexValid("t_id_idx")).toBe(true);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      holder.release();
+    }
+  });
+});
+
+/** 조회가 한 행 이상 나올 때까지 폴링한다(상한 10초). 실패 메시지에 기다린 상태를 담는다. */
+async function waitUntil(
+  db: TestDatabase,
+  sql: string,
+  what: string,
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if ((await db.pool.query(sql)).rowCount) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`10초 안에 ${what}가 되지 않았다`);
+}
