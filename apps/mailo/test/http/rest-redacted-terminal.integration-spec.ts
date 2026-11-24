@@ -123,6 +123,45 @@ describe("REST 통합: 종결 때 비운 행의 읽기(RQ-071, ADR-0015 결정 2
     }
   });
 
+  it("종결 뒤 응답과 앱 로그 어디에도 replyTo·본문·제목 canary가 없다(RQ-027)", async () => {
+    const replyTo = "canary-reply-4d9e@example.com";
+    app.logs.lines.length = 0;
+    const res = await postJob(app, {
+      key: "redacted-canary",
+      body: plainMail({
+        to: [RECIPIENT],
+        replyTo,
+        subject: CANARY.subject,
+        text: CANARY.text,
+      }),
+    });
+    expect(res.status).toBe(202);
+    const jobId = ((await res.json()) as Json)["jobId"] as string;
+    const [job] = await claim(db.pool, { leaseSeconds: 120, limit: 1, deps });
+    await completeAttempt(
+      db.pool,
+      { id: jobId, leaseToken: job!.leaseToken },
+      { classification: "SENT" },
+      deps,
+    );
+
+    const texts = [
+      await (await getJson(app, `/jobs/${jobId}`)).text(),
+      await (await getJson(app, "/jobs?idempotencyKey=redacted-canary")).text(),
+      await (await getJson(app, "/events")).text(),
+      await (await getJson(app, `/ops/jobs/${jobId}`, READ)).text(),
+      app.logs.lines.join("\n"),
+    ];
+    for (const text of texts) {
+      expect(text).not.toContain(replyTo);
+      expect(text).not.toContain(CANARY.subject);
+      expect(text).not.toContain(CANARY.text);
+    }
+    // 발신 주소(from)는 응답·이벤트·로그 어디에도 내지 않는다.
+    for (const text of texts)
+      expect(text).not.toContain("no-reply@example.com");
+  });
+
   it("같은 Key를 다시 보내면 비운 행도 중복 응답(200)이고 다른 내용이면 409다(RQ-034)", async () => {
     const jobId = await register("redacted-dup");
     const [job] = await claim(db.pool, { leaseSeconds: 120, limit: 1, deps });

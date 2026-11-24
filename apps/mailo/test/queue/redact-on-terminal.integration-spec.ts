@@ -355,6 +355,111 @@ describe("PostgreSQL 통합: 종결 때 본문·수신자·봉투 비움(RQ-071,
     });
   });
 
+  describe("계정 상태 오류·내부 오류의 종결 경로", () => {
+    it("같은 계정 응답이 반복돼 ACCOUNT_REPEATED로 FAILED가 되면 비운다(ADR-0007 결정 4)", async () => {
+      const id = await create();
+      const job = await claimOne(id);
+      // 차단기를 이미 최대 횟수만큼 연 작업이 같은 응답을 다시 받은 상태를 만든다.
+      await db.pool.query(
+        "UPDATE mail_jobs SET account_trips = $2, last_account_response = '550 5.7.1' WHERE id = $1",
+        [id, deps.breaker.maxAccountTrips],
+      );
+
+      const result = await completeAttempt(
+        db.pool,
+        { id, leaseToken: job.leaseToken },
+        {
+          classification: "ACCOUNT",
+          reason: "OTHER",
+          afterMailFrom: true,
+          responseCode: 550,
+          enhancedCode: "5.7.1",
+        },
+        deps,
+      );
+
+      expect(result).toMatchObject({ applied: true, status: "FAILED" });
+      expect((await jobRow(id)).status).toBe("FAILED");
+      await expectRedacted(id);
+      await expectEventKeepsRecipients(id, "JOB_FAILED");
+    });
+
+    it("재개 시각이 만료 시각보다 뒤라 계정 상태 오류가 EXPIRED로 끝나면 비운다(ADR-0003 결정 6)", async () => {
+      const id = await create({ expiresInSeconds: 30 });
+      const job = await claimOne(id);
+
+      const result = await completeAttempt(
+        db.pool,
+        { id, leaseToken: job.leaseToken },
+        {
+          classification: "ACCOUNT",
+          reason: "DAILY_LIMIT",
+          afterMailFrom: false,
+        },
+        deps,
+      );
+
+      expect(result).toMatchObject({ applied: true, status: "EXPIRED" });
+      await expectRedacted(id);
+      await expectEventKeepsRecipients(id, "JOB_EXPIRED");
+    });
+
+    it("계정 상태 오류가 RETRY_WAIT으로 끝나면 비우지 않는다", async () => {
+      const id = await create();
+      const job = await claimOne(id);
+
+      const result = await completeAttempt(
+        db.pool,
+        { id, leaseToken: job.leaseToken },
+        {
+          classification: "ACCOUNT",
+          reason: "DAILY_LIMIT",
+          afterMailFrom: false,
+        },
+        deps,
+      );
+
+      expect(result).toMatchObject({ applied: true, status: "RETRY_WAIT" });
+      const row = await jobRow(id);
+      expect(row.body_ciphertext).not.toBeNull();
+      expect(row.recipients).toEqual(RECIPIENTS);
+      expect(row.envelope).toEqual(ENVELOPE);
+    });
+
+    it("내부 오류(internal: true)의 영구 실패 FAILED가 비운다", async () => {
+      const id = await create();
+      const job = await claimOne(id);
+
+      const result = await completeAttempt(
+        db.pool,
+        { id, leaseToken: job.leaseToken },
+        { classification: "PERMANENT", internal: true, stage: "WORKER" },
+        deps,
+      );
+
+      expect(result).toMatchObject({ applied: true, status: "FAILED" });
+      await expectRedacted(id);
+      await expectEventKeepsRecipients(id, "JOB_FAILED");
+    });
+
+    it("내부 오류(internal: true)의 일시 오류가 시도 횟수를 소진해 FAILED가 되면 비운다", async () => {
+      const id = await create();
+      const job = await claimOne(id);
+      const oneShot = completeDeps({ maxAttempts: 1 });
+
+      const result = await completeAttempt(
+        db.pool,
+        { id, leaseToken: job.leaseToken },
+        { classification: "TRANSIENT", internal: true, stage: "WORKER" },
+        oneShot,
+      );
+
+      expect(result).toMatchObject({ applied: true, status: "FAILED" });
+      await expectRedacted(id);
+      await expectEventKeepsRecipients(id, "JOB_FAILED");
+    });
+  });
+
   describe("비운 행의 기존 읽기 경로", () => {
     it("작업 조회, 이벤트 피드, 같은 Key의 재등록, 본문 정리, 보존 삭제가 비운 값으로 깨지지 않는다", async () => {
       const id = await create({ idempotencyKey: "redact-key-1" });

@@ -52,7 +52,7 @@ describe("PostgreSQL 통합: 작업 취소(RQ-040, ADR-0011 결정 4)", () => {
   async function row(id: string) {
     const { rows } = await db.pool.query(
       `SELECT status, finished_at, failure_reason, body_ciphertext, body_nonce, body_key_version,
-              body_deleted_at, attempts, idempotency_key, fingerprint
+              body_deleted_at, attempts, idempotency_key, fingerprint, recipients, envelope
          FROM mail_jobs WHERE id = $1`,
       [id],
     );
@@ -308,6 +308,12 @@ describe("PostgreSQL 통합: 작업 취소(RQ-040, ADR-0011 결정 4)", () => {
           status: "SENDING",
         });
         expect(await events(id)).toHaveLength(0);
+        // 취소가 지다: 본문·수신자·봉투를 비우지 않았다(RQ-071).
+        const kept = await row(id);
+        expect(kept.body_ciphertext).not.toBeNull();
+        expect(kept.body_deleted_at).toBeNull();
+        expect(kept.recipients).toEqual({ to: ["to@example.invalid"] });
+        expect(kept.envelope).toEqual({ from: "from@example.invalid" });
       } finally {
         holder.release();
       }
@@ -358,12 +364,18 @@ describe("PostgreSQL 통합: 작업 취소(RQ-040, ADR-0011 결정 4)", () => {
           expect(claimedIds.has(id)).toBe(false);
           expect(r.status).toBe("CANCELED");
           expect(r.body_ciphertext).toBeNull();
+          expect(r.recipients).toEqual({});
+          expect(r.envelope).toEqual({});
           expect(await events(id)).toHaveLength(1);
         } else {
           // claim이 이기면 SENDING이고 취소는 거부됐으며 이벤트가 없다.
           expect(result).toEqual({ kind: "not_cancelable", status: "SENDING" });
           expect(claimedIds.has(id)).toBe(true);
           expect(r.status).toBe("SENDING");
+          // claim이 이긴 행은 전송 중이라 본문·수신자·봉투가 그대로다(RQ-071).
+          expect(r.body_ciphertext).not.toBeNull();
+          expect(r.recipients).toEqual({ to: ["to@example.invalid"] });
+          expect(r.envelope).toEqual({ from: "from@example.invalid" });
           expect(await events(id)).toHaveLength(0);
         }
       }

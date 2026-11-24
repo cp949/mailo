@@ -936,6 +936,44 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     ).toBe(false);
   });
 
+  it("종결한 작업(SENT·영구 거부 FAILED)의 로그·시도 기록·이벤트·작업 행에 from·replyTo canary가 없다 (RQ-027, RQ-071)", async () => {
+    const from = "canary-from-6c21@example.com";
+    const replyTo = "canary-reply-6c21@example.com";
+    const rejectedRecipient = "canary-rejected-6c21@example.com";
+    const envelope = { from, replyTo };
+    const ok = await mailJob({ envelope });
+    fake.behavior.rcpt = (address) =>
+      address === rejectedRecipient
+        ? { code: 550, text: `5.1.1 <${address}> does not exist` }
+        : undefined;
+    const rejected = await mailJob({
+      envelope,
+      recipients: { to: [rejectedRecipient], cc: [], bcc: [] },
+    });
+    startWorker();
+    await waitStatus(ok, "SENT");
+    await waitStatus(rejected, "FAILED");
+
+    const dump = JSON.stringify({
+      logs,
+      attempts: (await pool.query("SELECT * FROM mail_attempts")).rows,
+      events: (await pool.query("SELECT * FROM mail_events")).rows,
+      jobs: (await pool.query("SELECT * FROM mail_jobs")).rows,
+    });
+    expect(dump).not.toContain(from);
+    expect(dump).not.toContain(replyTo);
+    const rows = (
+      await pool.query(
+        "SELECT recipients, envelope, body_ciphertext FROM mail_jobs",
+      )
+    ).rows;
+    for (const row of rows) {
+      expect(row.recipients).toEqual({});
+      expect(row.envelope).toEqual({});
+      expect(row.body_ciphertext).toBeNull();
+    }
+  });
+
   it("기본 SMTP 타임아웃은 lease 안에 들어간다 (기동 시 검증)", () => {
     expect(() => checkSmtpTimeouts(DEFAULT_SMTP_TIMEOUTS, 120)).not.toThrow();
   });
