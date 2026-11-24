@@ -4,6 +4,9 @@
 --
 -- 기본값 없는 NULL 허용 컬럼 추가는 표를 다시 쓰지 않는다. 백필은 없다. 기존 이벤트는 NULL이고
 -- 배포 직후 보존 기간 안의 기존 이벤트(최대 30일치) 중 유예가 지난 것이 비움 대상이 된다.
--- 구버전 인스턴스는 컬럼을 열거해 읽고 쓰므로 이 컬럼을 무시한다. 새 코드는 이 마이그레이션이 적용된 뒤에 띄운다.
+-- 구버전 인스턴스는 컬럼을 열거해 읽고 쓰므로 쿼리는 깨지지 않는다. 새 코드는 이 마이그레이션이 적용된 뒤에 띄운다.
+-- 롤링 배포의 혼용 구간에는 영향이 있다. 새 인스턴스가 기존 이벤트를 비우기 시작하는데 구버전 응답은 `recipientsRedacted`를 모른다.
+-- 그동안 `MAILO_RECIPIENT_RETENTION_SECONDS`를 `MAILO_RECORD_RETENTION_SECONDS`와 같게 둔다(docs/operations/deployment.md "기동 순서와 마이그레이션").
+-- ADD COLUMN은 mail_events의 ACCESS EXCLUSIVE 잠금을 기다릴 수 있다. 그동안 이 표의 쓰기가 막힐 수 있다(미측정).
 -- IF NOT EXISTS라 파일을 다시 실행해도 오류가 없다. 롤백은 코드를 되돌리는 것이고 컬럼은 남긴다.
 ALTER TABLE mail_events ADD COLUMN IF NOT EXISTS recipients_redacted_at timestamptz;

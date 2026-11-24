@@ -400,7 +400,7 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 
 - 비운 이벤트는 `recipientsRedacted: true`이고 `recipients`는 `{to: [], cc: [], bcc: []}`, `rejectedRecipients`는 `[]`다. 비우기 전에는 `false`와 수신자 목록이다.
 - 이벤트의 수신자에 의존하지 않는다. 일주일 안에 폴링이 따라가면 값이 있지만, 폴링이 멈췄다가 늦게 읽으면 빈 값을 받는다. 상태 판단과 기록에는 `idempotencyKey`로 찾은 outbox 행의 수신자를 쓴다.
-- `GET /jobs`의 `rejectedRecipients`도 같은 시점부터 빈 목록이다. `Job`에 새 필드는 없다.
+- `GET /jobs`의 `rejectedRecipients`도 같은 시점부터 빈 목록이다. `Job`에 새 필드는 없어 비운 뒤의 빈 목록은 "거부 없음"과 구분되지 않는다. 거부 수신자가 필요하면 유예 안에 이벤트에서 기록한다.
 - 비운 값은 복원하지 못한다. 비우기 전에 받은 이벤트의 사본은 사용처 저장소의 몫이다.
 - 모르는 필드는 무시하는 규칙(위)대로 `recipientsRedacted`를 모르는 코드도 동작한다. 엄격하게 필드를 검사하는 코드는 이 필드를 허용해야 한다.
 

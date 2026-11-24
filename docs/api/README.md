@@ -137,7 +137,7 @@
 
 - 비운 이벤트는 `recipientsRedacted: true`이고 `recipients`는 `to`·`cc`·`bcc`가 모두 빈 배열, `rejectedRecipients`는 빈 배열이다. 비우기 전에는 `false`와 기록한 값이다. 이 필드는 `JOB_SENT`·`JOB_FAILED`·`JOB_EXPIRED`·`JOB_CANCELED`에 항상 있다. `INTAKE_REJECTED`에는 수신자가 없어 이 필드도 없다.
 - 이벤트 행은 지우지 않는다. `eventId`, 순서, cursor, `Mailo-Cursor-Gap` 판정은 비우기 전과 같다. 같은 cursor로 다시 읽으면 같은 이벤트가 비운 값으로 온다.
-- `GET /jobs`의 `rejectedRecipients`도 같은 유예 뒤 빈 배열이다. `Job`에 새 필드는 없다.
+- `GET /jobs`의 `rejectedRecipients`도 같은 유예 뒤 빈 배열이다. `Job`에 새 필드는 없으므로 비운 뒤의 빈 배열은 "거부 없음"과 구분되지 않는다. 구분은 이벤트의 `recipientsRedacted`로만 한다.
 - 호출처는 이벤트의 수신자에 상태 판단을 걸지 않는다. 수신자가 필요하면 `idempotencyKey`로 찾은 자기 outbox 행에서 읽는다. 폴링이 유예보다 오래 멈췄다가 따라잡으면 빈 값을 받는다.
 - 비운 값은 서버가 복원하지 못한다.
 
