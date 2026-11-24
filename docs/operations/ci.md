@@ -15,7 +15,17 @@ GitHub 실행 기록(2026-11-23, `gh run view`로 확인):
 | 45182590945 | dev `365a9d4` | 수동 | `static`·`integration`·`container` 성공, `nfs` 건너뜀 |
 | 45185115879 | dev `ab7d879` | 수동 | `static`·`integration`·`container` 성공, `nfs` 건너뜀 |
 
-schedule 트리거 실행 기록은 없다(2026-11-23 `gh run list` 기준). schedule은 기본 브랜치 main의 워크플로로만 돈다.
+이후 실행(2026-11-24, `gh run list --workflow ci.yml`로 확인. 잡별 결론은 `gh run view`):
+
+| run | 브랜치·커밋 | 트리거 | 결과 |
+| --- | ----------- | ------ | ---- |
+| 45322809772 | main `8ed464d` | schedule | `nfs` 성공, 나머지 세 잡 건너뜀 |
+| 45327376177 | main `2f633f2` | push | `integration` 실패(원인은 이 문서에 기록하지 않았다), `static`·`container` 성공, `nfs` 건너뜀 |
+| 45329951424 | main `0eca330` | push | 성공 |
+| 45348444784 | main `3f1762e` | push | `integration` 실패(원인은 이 문서에 기록하지 않았다), `static`·`container` 성공, `nfs` 건너뜀 |
+| 45351278337 | main `f56ce79` | push | 성공 |
+
+`adapter` 잡의 실행은 "확인하지 않은 것"에 적었다. schedule 실행은 위 1회뿐이고 `nfs` 잡 결론 외에는 확인하지 않았다(잡 로그·테스트 수·ESTALE 표본을 읽지 않았다). schedule은 기본 브랜치 main의 워크플로로만 돈다.
 
 ## 잡
 
@@ -88,11 +98,11 @@ adapters/secret-source-aws/image-smoke/run.sh mailo:adapter-aws
   - 새 폴더 테스트의 `[nfs-measure]`: 옵션 `''`은 30474 ms, `acdirmin=3,acdirmax=3`은 3273 ms에 보였고 둘 다 오류 폴링 0, ACCESS 경고 1이다. `lookupcache=pos`는 4 ms, ACCESS 경고 0이다. 러너에서 `ACCESS`(`EACCES`·`EPERM`)가 다시 났고 (1)의 건너뛰기로 테스트가 통과했다. 원인은 여전히 확정하지 못했다.
   - ESTALE 테스트의 `[nfs-measure]`: `ESTALE 표본 0/40`, `ESTALE 재현 못 함`. (2)로 통과했고 러너에서 ESTALE 경로는 검증되지 않았다.
 - 설치(`MAILO_NFS_INSTALL=1`, `acl`)는 일회용 러너를 전제로 한다. `teardown.sh`는 설치를 되돌리지 않는다.
-- 러너 통과는 위 세 번째 실행 1회다. schedule 실행은 아직 없다. 필수 체크 지정 여부는 따로 정한다.
+- 수동 실행의 러너 통과는 위 세 번째 실행 1회다. schedule 실행은 2026-11-24 run 45322809772에서 `nfs` 잡이 성공한 1회뿐이다(로그는 읽지 않았다). 필수 체크 지정 여부는 따로 정한다.
 
 ## 릴리스 워크플로
 
-`.github/workflows/release.yml`. `vX.Y.Z` 태그 push 때 이미지를 `ghcr.io/cp949/mailo`에 발행하고 GitHub Release를 만든다. `v0.1.0` 태그(run 45189361321, 커밋 `771f083`, 2026-11-23)로 1회 실행해 성공했다("확인하지 않은 것").
+`.github/workflows/release.yml`. `vX.Y.Z` 태그 push 때 이미지를 `ghcr.io/cp949/mailo`에 발행하고 GitHub Release를 만든다. `v0.1.0`~`v0.6.0` 태그 6건의 실행이 모두 성공했다(`gh run list --workflow release.yml`로 2026-11-24 확인. 실행 번호는 "확인하지 않은 것"). `variants` 잡은 `v0.6.0`부터 있다.
 
 | 항목 | 내용 |
 | ---- | ---- |
@@ -203,7 +213,7 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 3. main의 그 커밋에 태그를 달고 push한다: `git tag vX.Y.Z origin/main && git push origin vX.Y.Z`.
 4. `Release` 워크플로 결과와 GHCR 패키지, GitHub Release를 확인한다. `variants` 잡이 성공해 `vX.Y.Z-aws`가 있는지도 본다(v0.6.0에서 run 45380436731로 처음 실행해 성공했다). 첫 발행이면 "GHCR 공개 범위"를 확인한다.
 
-## 로컬에서 확인한 범위 (2026-11-23)
+## 로컬에서 확인한 범위 (2026-11-23~24)
 
 | 항목 | 결과 |
 | ---- | ---- |
@@ -233,7 +243,7 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 - 변형 이미지에 취약점 스캔 단계가 없다. AWS SDK 취약점은 이 저장소가 소유하고 감시 수단이 정해지지 않았다.
 - `variants` 잡 push 뒤 변형 이미지를 실제로 pull해 기동한 적이 없다.
 - `ci.yml`: `static`·`integration`·`container` 잡은 러너에서 성공했다(위 실행 기록). 러너의 Docker·compose 버전, 이미지 pull·빌드 시간, `timeout-minutes` 여유는 기록하지 않았다.
-- `release.yml`: `v0.1.0` 태그로 1회 성공했다(run 45189361321, 2분). `verify` 34초, `release` 약 1분 20초. 러너에서 스모크, GHCR push(config digest 일치), `latest` 부착, Release 생성이 통과했다. `vX.Y.Z`와 `latest`의 manifest digest는 같았다(`sha256:d5c5657f…`). 로그인 정보 없이 `docker buildx imagetools inspect`로 manifest를 조회할 수 있었다. 실패 경로(재실행 표)는 GitHub에서 실행하지 않았다. 실제 `docker pull` 후 기동과 패키지 설정 화면의 공개 범위·저장소 연결은 확인하지 않았다.
+- `release.yml`: `v0.1.0`~`v0.6.0` 태그 6건이 성공했다(`gh run list --workflow release.yml`, 2026-11-24 확인). 실행 번호는 `v0.1.0` 45189361321, `v0.2.0` 45227297793, `v0.3.0` 45248178906, `v0.4.0` 45330558288, `v0.5.0` 45352095174, `v0.6.0` 45380436731이다. 잡별 소요·단계 결과는 `v0.1.0`만 확인했다: 총 2분, `verify` 34초, `release` 약 1분 20초이고 러너에서 스모크, GHCR push(config digest 일치), `latest` 부착, Release 생성이 통과했다. `v0.1.0`의 `vX.Y.Z`와 `latest` manifest digest는 같았다(`sha256:d5c5657f…`). 로그인 정보 없이 `docker buildx imagetools inspect`로 manifest를 조회할 수 있었다. `v0.2.0`~`v0.5.0`은 실행 결론(`success`)만 확인했고 단계별 로그는 읽지 않았다. 실패 경로(재실행 표)는 GitHub에서 실행하지 않았다. 실제 `docker pull` 후 기동과 패키지 설정 화면의 공개 범위·저장소 연결은 확인하지 않았다.
 - 러너(ubuntu-24.04)의 Docker 저장소는 `overlay2`(classic)였고 이 환경에서 config digest 비교가 통과했다. containerd 저장소 러너에서의 결과는 확인하지 않았다.
 - `actions/*` 세 액션의 이 워크플로 입력(`cache: pnpm`, `persist-credentials`, `if-no-files-found`, `retention-days`)은 `actionlint`가 문법을 통과시켰을 뿐 실행하지 않았다.
 - `schedule`은 기본 브랜치에서만 돈다. 저장소가 비활성이면 GitHub가 schedule을 멈출 수 있다.
