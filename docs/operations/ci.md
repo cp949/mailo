@@ -102,7 +102,7 @@ adapters/secret-source-aws/image-smoke/run.sh mailo:adapter-aws
 
 ## 릴리스 워크플로
 
-`.github/workflows/release.yml`. `vX.Y.Z` 태그 push 때 이미지를 `ghcr.io/cp949/mailo`에 발행하고 GitHub Release를 만든다. `v0.1.0`~`v0.6.0` 태그 6건의 실행이 모두 성공했다(`gh run list --workflow release.yml`로 2026-11-24 확인. 실행 번호는 "확인하지 않은 것"). `variants` 잡은 `v0.6.0`부터 있다.
+`.github/workflows/release.yml`. `vX.Y.Z` 태그 push 때 이미지를 `ghcr.io/cp949/mailo`에 발행하고 GitHub Release를 만든다. `v0.1.0`~`v0.6.1` 태그 7건의 실행이 모두 성공했다(`gh run list --workflow release.yml`로 2026-11-25 확인. 실행 번호는 "확인하지 않은 것"). `variants` 잡은 `v0.6.0`부터 있다.
 
 | 항목 | 내용 |
 | ---- | ---- |
@@ -243,7 +243,7 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 - 변형 이미지에 취약점 스캔 단계가 없다. AWS SDK 취약점은 이 저장소가 소유하고 감시 수단이 정해지지 않았다.
 - `variants` 잡 push 뒤 변형 이미지를 실제로 pull해 기동한 적이 없다.
 - `ci.yml`: `static`·`integration`·`container` 잡은 러너에서 성공했다(위 실행 기록). 러너의 Docker·compose 버전, 이미지 pull·빌드 시간, `timeout-minutes` 여유는 기록하지 않았다.
-- `release.yml`: `v0.1.0`~`v0.6.0` 태그 6건이 성공했다(`gh run list --workflow release.yml`, 2026-11-24 확인). 실행 번호는 `v0.1.0` 45189361321, `v0.2.0` 45227297793, `v0.3.0` 45248178906, `v0.4.0` 45330558288, `v0.5.0` 45352095174, `v0.6.0` 45380436731이다. 잡별 소요·단계 결과는 `v0.1.0`만 확인했다: 총 2분, `verify` 34초, `release` 약 1분 20초이고 러너에서 스모크, GHCR push(config digest 일치), `latest` 부착, Release 생성이 통과했다. `v0.1.0`의 `vX.Y.Z`와 `latest` manifest digest는 같았다(`sha256:d5c5657f…`). 로그인 정보 없이 `docker buildx imagetools inspect`로 manifest를 조회할 수 있었다. `v0.2.0`~`v0.5.0`은 실행 결론(`success`)만 확인했고 단계별 로그는 읽지 않았다. 실패 경로(재실행 표)는 GitHub에서 실행하지 않았다. 실제 `docker pull` 후 기동과 패키지 설정 화면의 공개 범위·저장소 연결은 확인하지 않았다.
+- `release.yml`: `v0.1.0`~`v0.6.1` 태그 7건이 성공했다(`gh run list --workflow release.yml`, 2026-11-25 확인). 실행 번호는 `v0.1.0` 45189361321, `v0.2.0` 45227297793, `v0.3.0` 45248178906, `v0.4.0` 45330558288, `v0.5.0` 45352095174, `v0.6.0` 45380436731, `v0.6.1` 45422056286이다. 잡별 소요·단계 결과는 `v0.1.0`만 확인했다: 총 2분, `verify` 34초, `release` 약 1분 20초이고 러너에서 스모크, GHCR push(config digest 일치), `latest` 부착, Release 생성이 통과했다. `v0.1.0`의 `vX.Y.Z`와 `latest` manifest digest는 같았다(`sha256:d5c5657f…`). 로그인 정보 없이 `docker buildx imagetools inspect`로 manifest를 조회할 수 있었다. `v0.2.0`~`v0.5.0`은 실행 결론(`success`)만 확인했고 단계별 로그는 읽지 않았다. 실패 경로(재실행 표)는 GitHub에서 실행하지 않았다. 실제 `docker pull` 후 기동과 패키지 설정 화면의 공개 범위·저장소 연결은 확인하지 않았다.
 - 러너(ubuntu-24.04)의 Docker 저장소는 `overlay2`(classic)였고 이 환경에서 config digest 비교가 통과했다. containerd 저장소 러너에서의 결과는 확인하지 않았다.
 - `actions/*` 세 액션의 이 워크플로 입력(`cache: pnpm`, `persist-credentials`, `if-no-files-found`, `retention-days`)은 `actionlint`가 문법을 통과시켰을 뿐 실행하지 않았다.
 - `schedule`은 기본 브랜치에서만 돈다. 저장소가 비활성이면 GitHub가 schedule을 멈출 수 있다.

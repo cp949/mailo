@@ -35,7 +35,7 @@ Mailo를 배포·운영하고 호출처를 연동하는 문서다. 요구사항�
 
 ## 알려진 공백
 
-- 실제 NAS 제품(Docker local 드라이버 NFS 볼륨 `docker-compose.nfs-example.yml`은 같은 호스트 loopback만 확인했다), 실제 Gmail·Workspace SMTP 검증은 없다. CI·릴리스 워크플로(`ci.md`)는 GitHub에서 실행해 성공했다(`ci.yml` main push run 45379361922, `release.yml` `v0.1.0`~`v0.6.0` 태그 6건, 2026-11-24 확인). `nfs` 잡 러너 통과는 수동 1회(run 45127889424)이고 schedule 실행은 1회(run 45322809772, 잡 결론만 확인)다.
+- 실제 NAS 제품(Docker local 드라이버 NFS 볼륨 `docker-compose.nfs-example.yml`은 같은 호스트 loopback만 확인했다), 실제 Gmail·Workspace SMTP 검증은 없다. CI·릴리스 워크플로(`ci.md`)는 GitHub에서 실행해 성공했다(`ci.yml` main push run 45379361922, `release.yml` `v0.1.0`~`v0.6.1` 태그 7건, 2026-11-25 확인). `nfs` 잡 러너 통과는 수동 1회(run 45127889424)이고 schedule 실행은 1회(run 45322809772, 잡 결론만 확인)다.
 - 컨테이너 SIGKILL·SIGTERM은 `scripts/container/`로 실행했다(lease 45초 기준). lease 기본 120초에서의 종료 시간, 백업·복구 절차는 실행하지 않았다.
 - 키 사고 대응 절차(`key-management.md`)와 레지스트리 롤링 중 동작(`caller-onboarding.md`)은 코드 읽기와 임시 schema SQL로만 확인했고 운영 환경·다중 인스턴스에서 실행하지 않았다. DB 유지보수 수치(`db-maintenance.md`)는 로컬 PostgreSQL 17 한 번의 측정이고 운영 크기가 아니다.
 - `caller-onboarding.md`의 인라인 Java 조각은 컴파일하지 않았다. 컴파일·실행한 구현은 `samples/spring-boot-relay/`이고 nimbus-jose-jwt 10.10과 JWE·JWS 한 조합씩 확인했다(`samples/spring-boot-relay/README.md`).
