@@ -530,6 +530,8 @@ describe("PostgreSQL + SMTP 통합: Worker 계정 단위 점유 (RQ-054·055, AD
                 const params = (args[1] ?? []) as unknown[];
                 const run = () =>
                   (target.query as (...a: unknown[]) => unknown)(...args);
+                // 이 SQL 문자열 일부에 의존한다. claim이 계정의 차단기 행을 읽는 쿼리(`queue/claim.ts`)를 가리키는 표지다.
+                // 쿼리 문구가 바뀌면 일치하지 않아 `gated.reached`가 끝나지 않고 테스트가 거기서 멈춘다(타임아웃).
                 if (
                   text.includes("FROM mail_circuit_breaker WHERE breaker_key")
                 ) {
