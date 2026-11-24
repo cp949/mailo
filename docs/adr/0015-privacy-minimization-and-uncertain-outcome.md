@@ -426,9 +426,21 @@
 - 마이그레이션: `0017_event_recipients_redacted_at.sql`은 `mail_events.recipients_redacted_at timestamptz`(NULL 허용, 기본값 없음)를 `ADD COLUMN IF NOT EXISTS`로 더한다. `0018_event_recipients_redact_idx.sql`(`-- mailo:no-transaction`, 문장 하나, `IF NOT EXISTS`)은 `mail_events_recipients_redact_idx ON mail_events (created_at, id) WHERE type IN ('JOB_SENT','JOB_FAILED','JOB_EXPIRED','JOB_CANCELED') AND recipients_redacted_at IS NULL`을 만든다. 비운 이벤트는 인덱스에서 빠진다. 비움 쿼리의 조건은 이 정의와 글자 그대로 같다. 번호는 결정 9가 말한 "결정 3의 마이그레이션이 먼저"에 따라 `0017`·`0018`이고 결과 불명 컬럼은 그 뒤 번호다.
 - 설정 이름은 `MAILO_RECIPIENT_RETENTION_SECONDS`로 확정했다(가칭 해제). 기본 7일, 범위 60 이상 `MAILO_RECORD_RETENTION_SECONDS` 이하, 기동 때 검사한다. 한 가지를 정했다. 이 변수를 주지 않았고 `MAILO_RECORD_RETENTION_SECONDS`가 7일보다 짧으면 기본값을 보존 기간으로 줄인다. 그렇지 않으면 이 변수를 모르는 기존 설정(예: 보존 1일)이 업그레이드만으로 기동을 거부한다. 명시한 값은 줄이지 않고 범위 밖이면 거부한다. 결정 문구의 검사 규칙과 충돌하지 않는다.
 - 비움은 한 SQL 문장(CTE 셋)이다. 대상 선택, `mail_events` 갱신(`recipients = '{}'`, `rejected_recipients = NULL`, `recipients_redacted_at = now()`), 같은 작업의 `mail_attempts.rejected_recipients` NULL 갱신이 한 트랜잭션이다. 시도 행의 나머지 열(응답 코드, 마스킹한 응답 텍스트)은 남긴다. 오래된 이벤트부터(`created_at`, `id`) 처리하고 멱등이다(`recipients_redacted_at IS NULL`).
-- 잠금: 정리 단계 `recipients`(advisory lock 키 5) 뒤에 이벤트의 작업 행을 `FOR KEY SHARE OF j SKIP LOCKED`로 잡는다. 결정 3은 잠금을 정하지 않았다. 이 잠금이 없으면 비움(이벤트 → 시도 순으로 행 잠금)과 보존 삭제의 cascade(시도 → 이벤트 순)가 같은 작업에서 교착한다. 작업 400건·배치 100건으로 겹쳐 돌렸을 때 3번 모두 `deadlock detected`였다(PostgreSQL 17.11). 보존 삭제도 작업 행을 `FOR UPDATE SKIP LOCKED`로 먼저 잡으므로 두 단계가 같은 작업을 겹쳐 잡지 못한다. 차단기 행은 건드리지 않아 잠금 순서(작업 행 → 차단기 행)는 그대로다.
+- 잠금: 정리 단계 `recipients`(advisory lock 키 5) 뒤에 이벤트의 작업 행을 `FOR KEY SHARE OF j SKIP LOCKED`로 잡는다. 결정 3은 잠금을 정하지 않았다. 이 잠금이 없으면 비움(이벤트 → 시도 순으로 행 잠금)과 보존 삭제의 cascade(시도 → 이벤트 순)가 같은 작업에서 교착한다. 작업 400건·배치 100건으로 겹쳐 돌렸을 때 `deadlock detected`가 났다(PostgreSQL 17.11). 구현자는 3번 모두 재현했지만 리뷰에서 잠금을 뺀 변형 30라운드 중 5번만 교착해 확률적이다. 잠금의 존재는 작업 행을 다른 트랜잭션이 잡고 있을 때 건너뛰는 결정적 테스트가 지킨다. 보존 삭제도 작업 행을 `FOR UPDATE SKIP LOCKED`로 먼저 잡으므로 두 단계가 같은 작업을 겹쳐 잡지 못한다. 차단기 행은 건드리지 않아 잠금 순서(작업 행 → 차단기 행)는 그대로다.
 - 단계 순서: 정리 루프의 정리 블록에서 본문 삭제, 보존 삭제 뒤에 돈다. 보존 삭제가 지울 행을 먼저 지워 비움이 그 행을 건드리는 낭비를 줄인다. 한 단계 처리 상한은 보존 삭제와 같다(배치 1000건, 사이클당 20배치). 로그 이벤트는 `recipients_redacted`(info, `count`)와 `recipients_redacted_failed`(error)이고 주소는 없다.
 - 피드: 비움은 `id`·`txid`·`created_at`을 바꾸지 않고 삭제 표지(`mail_event_purges`)를 쓰지 않는다. 같은 cursor로 읽으면 같은 이벤트가 같은 순서로 오고 공백 감지는 바뀌지 않는다.
 - 응답: `JOB_SENT`·`JOB_FAILED`·`JOB_EXPIRED`·`JOB_CANCELED`에 `recipientsRedacted`를 항상 낸다. 비운 이벤트의 `recipients`는 `to`·`cc`·`bcc` 빈 배열이고 `rejectedRecipients`는 빈 배열이다. `Job.rejectedRecipients`는 시도 기록에서 읽으므로 비운 뒤 빈 배열이고 `Job`에 새 필드는 없다. `INTAKE_REJECTED`에는 이 필드가 없다. `openapi.yaml`, `docs/api/README.md`, `caller-onboarding.md`를 같은 변경에서 고쳤다.
 - 측정(로컬 PostgreSQL 17.11 임시 schema, 이벤트·시도 20만 건, 한 번): 비움 201배치 9.3초, 배치 중앙값 37ms, 최대 1.9초. `mail_events` 갱신은 HOT 0%(갱신 열이 부분 인덱스 조건에 들어간다는 결정 3의 예상과 같다), `mail_attempts`는 97.8%였다. 값과 한계는 `docs/operations/db-maintenance.md` "수신자 비움 측정"이다.
 - 설계에서 ADR과 어긋난 점은 없다. 실행하지 않은 것: 롤링 배포(구·신 인스턴스 혼용)와 롤백, 운영 크기·다중 인스턴스에서의 백필 비용, `ADD COLUMN` 잠금 대기, 저장소 밖 호출처가 유예 뒤 빈 수신자와 `recipientsRedacted`를 처리하는지.
+
+### 2026-11-24 묶음 C 리뷰 반영
+
+결정 문구는 바꾸지 않는다. 결정 3의 위험과 롤백 문구("구버전이 무시하므로 남긴다")는 쿼리 호환만 말한다. 롤링 배포의 혼용 구간은 아래와 같이 정정한다.
+
+- 구버전 인스턴스는 새 컬럼을 열거하지 않아 쿼리는 깨지지 않는다. 그러나 새 인스턴스의 `recipients` 단계가 뜨자마자 보존 기간 안의 기존 이벤트(최대 30일치) 중 유예가 지난 것을 비운다. 구버전이 응답하는 `GET /events`는 `recipientsRedacted`를 내지 않고 비운 이벤트의 `{}`를 빈 `to`·`cc`·`bcc`로 내보낸다. 호출처는 "원래 없음"과 "비움"을 구분하지 못한다(코드 읽기, 실행하지 않았다).
+- 절차: 혼용 구간에는 `MAILO_RECIPIENT_RETENTION_SECONDS`를 `MAILO_RECORD_RETENTION_SECONDS`와 같게 두고, 모든 인스턴스가 새 버전이 된 뒤 줄인다. 줄이는 시점에 기존 이벤트 백필이 시작된다. 절차와 위험도·롤백은 `docs/operations/deployment.md` "기동 순서와 마이그레이션"이다.
+- `openapi.yaml`의 `recipientsRedacted`는 필수라 혼용 구간의 구버전 응답과 어긋난다. 이벤트 스키마가 닫혀 있지 않고 호출처가 모르는 필드·없는 필드를 허용해야 해서 위험은 낮다.
+- `0017`의 `ADD COLUMN`이 `ACCESS EXCLUSIVE` 잠금을 기다리는 동안(긴 읽기나 `pg_dump` 뒤) `lock_timeout`(10초) 동안 `mail_events` 쓰기가 막힐 수 있다. 측정하지 않았다.
+- `Job.rejectedRecipients`가 비운 뒤 빈 배열이라 "거부 없음"과 구분되지 않는 점은 결정 3의 결과다. `docs/api/README.md`와 `caller-onboarding.md`에 적었다.
+- 비움 쿼리의 인덱스 사용을 리뷰가 30만 건에서 힌트 없이 `EXPLAIN`으로 확인했다. 대상 이벤트 종류 목록을 0018 인덱스, `mail_events_type_check`, 비움 SQL과 대조하는 테스트를 더했다.
+

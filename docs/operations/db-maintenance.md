@@ -247,9 +247,10 @@ DELETE FROM mail_ops_audit WHERE at < now() - interval '365 days';
 
 - 이벤트의 HOT가 0인 것은 갱신 열이 부분 인덱스 조건에 들어가기 때문이다(ADR-0015 결정 3의 예상과 같다). 갱신마다 새 행 버전과 인덱스 항목이 생긴다.
 - 죽은 행 수는 측정 중 autovacuum이 돌아 일부를 회수한 뒤의 값일 수 있다. 정확한 최댓값이 아니다.
+- 인덱스 사용: `db/event-recipients-migration.integration-spec.ts`가 앱이 보내는 비움 SQL(`REDACT_EVENT_RECIPIENTS_SQL`)을 힌트 없이 `EXPLAIN`해 이벤트 3만 건에서 부분 인덱스를 고르는 것을 확인한다. 독립 리뷰가 30만 건에서도 힌트 없이 확인했다.
 - 최대 1,897ms인 배치가 한 번 있었다. 어느 배치인지 기록하지 않았다. 중앙값의 50배라 `statement_timeout` 기본값(30초) 안이지만 여유를 판단할 근거는 아니다.
 
-한계: 로컬에서 한 번 실행했다. 운영 크기(수백만 행), 쓰기 부하 중 실행, 여러 인스턴스, 보존 삭제와 겹치는 실제 부하를 확인하지 않았다. 교착 방지(작업 행 잠금)는 통합 테스트로 확인했다. 잠금을 뺀 변형은 400건 규모에서 교착이 났다(`queue/redact-event-recipients.integration-spec.ts`).
+한계: 로컬에서 한 번 실행했다. 운영 크기(수백만 행), 쓰기 부하 중 실행, 여러 인스턴스, 보존 삭제와 겹치는 실제 부하를 확인하지 않았다. 교착 방지(작업 행 잠금)는 통합 테스트로 확인했다. 잠금을 뺀 변형은 400건 규모에서 교착이 나기도 했다(확률적, `queue/redact-event-recipients.integration-spec.ts`의 보조 테스트).
 
 ## 파티셔닝 검토 시작 조건
 
