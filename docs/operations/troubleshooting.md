@@ -8,6 +8,7 @@
 - 발송이 멈췄으면 먼저 발송 정지를 확인한다. 호출처 키로 `GET /health/ready`를 호출해 `sendPaused`를(`scope`가 `all`·`account`·`caller`), 운영자 토큰으로 `sendControls`를 본다("발송 정지").
 - 정지가 아니면 인증된 `GET /health/ready`의 `circuitBreaker`를 본다. `open`·`half_open`이면 SMTP 계정 단위 장애다. 차단기가 `closed`인데 쌓이면 운영자 토큰(`MAILO_OPS_TOKEN` 또는 관리 토큰)으로 호출해 `queue.oldestDueAgeSeconds`와 `worker.lastPollAgeSeconds`를 본다(`deployment.md` "헬스"). 둘 다 크면 점유 루프가 멈춘 것이다.
 - 차단기가 `closed`인데 작업이 쌓이면 호출처 할당(`caller_quota_exceeded`), lease 회수(`LEASE_EXPIRED`), DB 오류(`claim_failed`)를 순서대로 본다.
+- 앱이 뜨지 않고 `migrate-cli`가 `deadlock detected`(`40P01`), `55P03`, `INVALID` 인덱스 이름 오류로 끝나면 "마이그레이션 동시 실행과 INVALID 인덱스"를 따른다.
 - 파일이 입력 폴더에서 사라지지 않으면 `file_poll` 로그의 `unreadable`을 본다. 권한 문제다.
 - 파일 거부는 이벤트의 `reasonCode`로 원인을 고른다. 원본은 삭제되므로 호출처가 보유한 원본과 `fileName`·`sha256`을 대조한다.
 - 피드 지연은 단독 장애 신호가 아니다. 새 이벤트가 없어도 `lagSeconds`가 커진다.
@@ -347,6 +348,53 @@ SELECT c.relname, i.indisvalid AS valid FROM pg_index i JOIN pg_class c ON c.oid
 롤백: 불필요. 인덱스가 없는 동안 수신자 비움이 느려질 뿐 동작은 같다
 ```
 
+## 마이그레이션 동시 실행과 INVALID 인덱스
+
+근거: `deployment.md` "기동 순서와 마이그레이션"의 "동시 실행 교착". `-- mailo:no-transaction` 마이그레이션(`CREATE INDEX CONCURRENTLY`, 이하 CIC)이 있는 배포에서 `migrate-cli`가 실패하고 앱이 뜨지 않을 때 쓴다.
+
+증상과 원인:
+
+| 증상(`migrate-cli` 로그·종료 코드)                                              | 원인                                                                                                              |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `deadlock detected`(`40P01`), 종료 코드 1, 인덱스 이름을 담은 오류는 없음       | 같은 database에서 `migrate-cli` 둘이 겹쳤다. 락을 기다리던 쪽이 희생됐다. `INVALID` 인덱스는 남지 않는다        |
+| `deadlock detected`(`40P01`) 또는 `INVALID` 인덱스 이름을 담은 오류. 두 `migrate-cli`가 모두 실패 | 같은 겹침에서 CIC를 실행하던 쪽이 희생됐다. `INVALID` 인덱스가 남는다                                |
+| `canceling statement due to lock timeout`(`55P03`)과 `INVALID` 인덱스 이름 오류 | `pg_dump` 같은 오래 열린 스냅샷이 CIC를 `lock_timeout`(10초)까지 기다리게 했다. `INVALID` 인덱스가 남을 수 있다 |
+
+- 겹침과 교착의 조건, 측정(2026-11-24, 로컬 compose `postgres:17-alpine`)과 한계는 `deployment.md` "동시 실행 교착"이다. 앱의 worker·intake 트랜잭션은 원인이 아니다.
+- 첫 행은 인덱스 이름 오류가 없으면 `INVALID` 인덱스도 없다. 다른 `migrate-cli`가 끝나기를 기다린 뒤 다시 실행하면 바로 통과한다(로컬 측정). 아래 1~5는 `INVALID` 인덱스가 있을 때만 한다.
+
+복구. 순서대로 한다.
+
+1. 진행 중인 마이그레이션이 없는지 본다. 행이 나오면 끝나기를 기다린다. 진행 중인 CIC가 만드는 인덱스도 `INVALID`로 보이므로 이 단계 전에 지우지 않는다.
+   ```sql
+   SELECT pid, state, wait_event_type, wait_event, left(query, 80) AS query
+     FROM pg_stat_activity
+    WHERE datname = current_database() AND pid <> pg_backend_pid()
+      AND (query ILIKE 'CREATE INDEX CONCURRENTLY%' OR query ILIKE '%pg_advisory_lock(%');
+   ```
+2. `INVALID` 인덱스를 찾는다. 실행기가 보는 것과 같은 조건(현재 schema)이다. `migrate-cli` 오류 메시지의 인덱스 이름과 같아야 한다.
+   ```sql
+   SELECT c.relname AS index_name, t.relname AS table_name
+     FROM pg_index i
+     JOIN pg_class c ON c.oid = i.indexrelid
+     JOIN pg_class t ON t.oid = i.indrelid
+    WHERE NOT i.indisvalid AND c.relnamespace = current_schema()::regnamespace
+    ORDER BY c.relname;
+   ```
+3. 2의 결과에 나온 인덱스만 하나씩 지운다. `DROP INDEX CONCURRENTLY`는 트랜잭션 블록 안에서 실행하지 못한다. `psql`에서 `BEGIN` 없이 한 문장씩 보낸다.
+   ```sql
+   DROP INDEX CONCURRENTLY <index_name>;
+   ```
+4. 실패 원인을 없앤다. 겹친 `migrate-cli`·컨테이너가 없는지 `docker compose ps`로 보고, 긴 트랜잭션과 덤프 작업이 끝났는지 `db-maintenance.md` 점검 쿼리 3으로 본다.
+5. 마이그레이션을 한 번에 하나만 다시 실행한다(`pnpm --filter @cp949/mailo migrate` 또는 `docker-compose.migrate-once.yml`의 `mailo-migrate`). 지운 인덱스의 파일이 다시 실행돼 기록되고, 뒤 파일이 이어서 적용된다. 로컬 측정에서 `DROP INDEX CONCURRENTLY` 뒤 재실행은 적용됐다.
+
+인덱스별 이름과 복구 뒤 확인은 "등급별 적체"(`0012`~`0014`)와 "이벤트 수신자 비움 인덱스"(`0018`)에 있다. 이 절은 원인이 `migrate-cli` 겹침이나 오래 열린 스냅샷일 때의 공통 절차다.
+
+```txt
+위험도: 낮음 (INVALID 인덱스 삭제와 재생성. 쓰기를 막지 않는다. 큰 테이블에서는 재생성이 오래 걸린다)
+롤백: 불필요. INVALID 인덱스는 쿼리가 쓰지 못하는 상태라 복원할 것이 없다. 재실행이 새 인덱스를 만든다
+```
+
 ## 만료 시각
 
 근거: RQ-008·039, ADR-0002 결정 7, ADR-0010.
@@ -655,4 +703,5 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 - "지표 해석"은 지표 이름과 라벨을 코드의 카탈로그와 대조했고 `/metrics` 통합 테스트(`test/http/metrics-*.integration-spec.ts`, `test/e2e/metrics-counters.integration-spec.ts`)가 값을 확인한다. 위 증상 표의 원인 후보와 조치는 부하나 실제 장애에서 확인하지 않았다.
 - "기동 시 비밀값 해석 실패"의 종류별 메시지는 단위·통합 테스트(`test/secrets/`, `test/e2e/secret-sources.integration-spec.ts`, `test/e2e/secret-startup.integration-spec.ts`)가 가짜 어댑터로 확인한다. 닫힌 코드의 뜻은 어댑터가 정한다. 실제 저장소(AWS Secrets Manager 등)의 오류가 어떤 코드로 오는지는 확인하지 않았다.
 - 긴 트랜잭션의 원인 목록(`pg_dump`, prepared transaction)은 일반 지식이며 Mailo 피드로 재현하지 않았다.
+- "마이그레이션 동시 실행과 INVALID 인덱스": 교착(`40P01`)·`55P03`·복구 재실행은 로컬 compose `postgres:17-alpine`에서 `migrate-cli`를 겹치거나 스냅샷을 잡아 측정한 결과다(2026-11-24). 이 절의 두 조회 SQL은 같은 서버(17.11)에서 실행해 문법과 열을 확인했고 결과는 0행이었다. 다른 버전, 운영 크기·쓰기 부하 중, 운영 환경은 확인하지 않았다.
 - "SMTP 계정 구성"의 기동 오류와 로그 이벤트는 단위·통합 테스트(`test/config/smtp-accounts.spec.ts`, `test/callers/account-id.spec.ts`, `test/e2e/multi-account.integration-spec.ts`, `test/worker/account-startup.spec.ts`)가 확인한다. 운영 환경에서 실행하지 않았고 실제 Gmail·Workspace 계정 둘 이상으로 확인하지 않았다.
