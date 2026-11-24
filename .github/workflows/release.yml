@@ -282,8 +282,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # docker buildx imagetools(레지스트리 config digest 조회)에 buildx 플러그인을 쓴다.
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # setup-buildx-action을 쓰지 않는다. docker-container 드라이버가 기본 빌더가 되면 `docker build`가 이미지를 로컬 docker로
+      # 싣지 않아(--load 필요) 아래 `docker image inspect`·스모크가 실패한다. config digest 조회(`docker buildx imagetools`)는
+      # 러너에 설치된 buildx 플러그인만으로 된다. 기본(docker) 드라이버의 `docker build`는 결과를 로컬에 싣는다.
       # 기준 이미지는 release 잡이 push한 digest로 가져온다. 태그는 쓰지 않는다(옮겨질 수 있다).
       - name: 기준 이미지 가져오기와 어댑터 부재 확인
         env:

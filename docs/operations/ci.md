@@ -135,7 +135,7 @@ adapters/secret-source-aws/image-smoke/run.sh mailo:adapter-aws
 `release` 잡 뒤(`needs: release`)에 도는 별도 잡이다. `release` 잡이 push한 기준 이미지의 manifest digest(`outputs.digest`)와 태그·커밋(`outputs.tag`, `outputs.commit`)을 받아 같은 릴리스 커밋의 기준 이미지 위에 어댑터만 얹는다(ADR-0016 결정 4, RQ-080). 스모크를 통과한 이미지만 push한다.
 
 1. 어댑터 `pnpm install --frozen-lockfile`과 `pnpm test`. 실패하면 이미지를 만들지 않는다.
-2. GHCR 로그인과 `docker/setup-buildx-action`(`docker buildx imagetools` 사용).
+2. GHCR 로그인. `docker/setup-buildx-action`은 쓰지 않는다. docker-container 드라이버가 기본 빌더가 되면 `docker build`가 이미지를 로컬 docker에 싣지 않는다. `docker buildx imagetools`는 러너의 buildx 플러그인으로 동작한다(로컬 확인은 기본 드라이버, setup 없음).
 3. 기준 이미지를 `ghcr.io/cp949/mailo@<digest>`로 pull한다(태그를 쓰지 않는다). `revision` 라벨이 태그 커밋과 같은지 확인하고 `verify-base.sh`로 발행된 기준 이미지에 어댑터·SDK가 없음을 확인한다.
 4. 변형 빌드: `docker build --build-arg MAILO_BASE_IMAGE=ghcr.io/cp949/mailo@<digest> --tag ghcr.io/cp949/mailo:vX.Y.Z-aws adapters/secret-source-aws`. 라벨(`revision`·`version`·`created`)은 기준 이미지에서 이어받는다.
 5. 변형 스모크: 변형의 `revision` 라벨이 태그 커밋과 같은지 확인하고 `image-smoke/run.sh`를 돌린다("어댑터 잡"의 6과 같다).
