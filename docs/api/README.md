@@ -131,6 +131,16 @@
 - 호출처가 직접 하는 작업 취소와 달리 관리 취소는 `canceledBy`가 `OPERATOR`다. 호출처 피드의 `JOB_CANCELED`에 운영자 이름은 없다.
 - 운영 응답은 `Cache-Control: no-store`다.
 
+## 수신자 비움
+
+근거: RQ-072, ADR-0015 결정 3. 서버는 이벤트가 생기고 유예(기본 7일, 운영자가 정한다)가 지나면 `JOB_*` 이벤트의 수신자를 비운다.
+
+- 비운 이벤트는 `recipientsRedacted: true`이고 `recipients`는 `to`·`cc`·`bcc`가 모두 빈 배열, `rejectedRecipients`는 빈 배열이다. 비우기 전에는 `false`와 기록한 값이다. 이 필드는 `JOB_SENT`·`JOB_FAILED`·`JOB_EXPIRED`·`JOB_CANCELED`에 항상 있다. `INTAKE_REJECTED`에는 수신자가 없어 이 필드도 없다.
+- 이벤트 행은 지우지 않는다. `eventId`, 순서, cursor, `Mailo-Cursor-Gap` 판정은 비우기 전과 같다. 같은 cursor로 다시 읽으면 같은 이벤트가 비운 값으로 온다.
+- `GET /jobs`의 `rejectedRecipients`도 같은 유예 뒤 빈 배열이다. `Job`에 새 필드는 없다.
+- 호출처는 이벤트의 수신자에 상태 판단을 걸지 않는다. 수신자가 필요하면 `idempotencyKey`로 찾은 자기 outbox 행에서 읽는다. 폴링이 유예보다 오래 멈췄다가 따라잡으면 빈 값을 받는다.
+- 비운 값은 서버가 복원하지 못한다.
+
 ## 호출처가 모르는 값을 만났을 때
 
 서버는 이벤트 종류, 작업 상태, 응답 필드를 추가할 수 있다(ADR-0011 구현 순서 1). 호출처는 다음 세 규칙을 지킨다.
@@ -144,6 +154,7 @@
 3. 모르는 응답 필드와 모르는 응답 헤더는 무시한다. 오류를 내거나 요청을 거부하지 않는다.
    - `openapi.yaml`의 `Job`, `Event`, `EventPage`, `ReadyResponse` 스키마는 지금 `additionalProperties: false`이다. 현재 응답의 모양일 뿐이고 이후 버전이 필드를 더하지 않는다는 약속이 아니다.
    - 더해진 필드의 예: `outcomeUncertain`(`Job`의 모든 응답과 `JOB_FAILED`·`JOB_EXPIRED` 이벤트). 모르는 호출처는 무시해도 안전하다. 이 필드는 판단을 돕는 표시이고 상태 해석을 바꾸지 않는다.
+   - 더해진 필드의 예: `recipientsRedacted`(`JOB_*` 이벤트, RQ-072). 모르는 호출처는 무시해도 안전하다. 다만 유예 뒤 이벤트의 수신자가 비어 있다는 값 변화는 필드를 모르는 호출처에도 보인다("수신자 비움").
 
 `GET /events`가 200이 아니면 같은 요청을 말없이 반복하지 않는다. 상태 코드를 기록하고 알린다. 401은 자격 문제이므로 고치기 전에 반복하지 않는다.
 
@@ -204,6 +215,7 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 - 공백 신호(ADR-0011 결정 9): `after`가 있고 그 cursor 뒤에서 보존 기간이 지나 삭제된 이벤트가 있으면 응답 헤더 `Mailo-Cursor-Gap: true`가 붙는다. 상태는 200이고 본문은 같다. 헤더를 받으면 응답의 이벤트를 처리하고, 종결되지 않은 outbox 행을 `GET /jobs?idempotencyKey=`로 확인한다. 쿼리 `onGap=error`를 보내면 공백일 때 410(`cursor-expired`)이다. 410을 받으면 `after` 없이 다시 읽고 같은 확인을 한다. 410을 처리하지 못하는 호출처는 `onGap`을 보내지 않는다. 헤더를 모르는 호출처는 지금처럼 공백을 알지 못한다. 한계는 `openapi.yaml`의 `GET /events` 설명에 있다.
 - `limit`은 기본 100, 최대 500이다. cursor는 최대 256자다.
 - `eventId`는 문자열이고 순서 의미가 없다. 이벤트의 `recipients`는 `to`, `cc`, `bcc`를 모두 담는다.
+- `JOB_*` 이벤트는 `recipientsRedacted`(불리언)를 항상 낸다. 수신자 비움은 아래 "수신자 비움"이다.
 - `INTAKE_REJECTED` 필드는 `rejectionId`, `idempotencyKey`(없으면 `null`), `fileName`, `fileSize`, `sha256`, `reasonCode`다. 사유 코드 11종(`MALFORMED` 등)의 이름은 이 계약이 정했다.
 - 파일 채널(2026-11-23 구현)의 거부 기록 규칙. `idempotencyKey`는 파일에서 파싱할 수 있고 형식을 지킨 경우에만 있다. 서명이 `required`인 호출처의 파일은 서명을 확인한 뒤의 사유일 때만 있다. 서명을 확인하지 못한 파일은 `null`이어서 `fileName`과 `sha256`으로 식별한다. `sha256`은 파일 전체의 해시이지만 `SIZE_EXCEEDED`(처음 2 MiB + 1바이트)와 내용을 읽지 않은 항목(빈 입력의 해시, `fileSize` 0)은 예외다. 일반 파일이 아닌 항목은 `MALFORMED`다. 같은 이름과 같은 `sha256`의 파일을 다시 넣어도 거부 기록과 이벤트는 새로 생기지 않는다(ADR-0004 "구현 중 확정" 4·5·6).
 
@@ -236,6 +248,7 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 
 - YAML 구문, `$ref` 해소, 예시 48건의 스키마 적합성은 일회성 스크립트(ajv 8, JSON Schema 2020-12)로 확인했다. 이 스크립트는 저장소에 없다.
 - OpenAPI 전용 린터(redocly, swagger-cli, spectral)는 실행하지 않았다.
+- 2026-11-24 `recipientsRedacted` 추가(RQ-072) 뒤에는 YAML 구문 파싱과 `JobEvent`의 필수·속성 목록만 확인했다. 예시 스키마 적합성 스크립트는 다시 돌리지 않았다.
 - 구현 통합 테스트(`apps/mailo/test/http/rest-intake.integration-spec.ts`)가 상태 코드, 오류 `type`, 검증 오류 위치·코드, 이벤트 모양을 대조한다. openapi 스키마를 읽어 응답을 자동 검증하는 계약 테스트는 없다.
 - 2026-11-23 단위 테스트 274건, 통합 테스트 116건(종단 7건 포함)이 통과했고 실패는 0건이다. 계약 변경(`rejectionId`, `smtpCode`, `eventFeed`) 뒤 실행한 결과다.
 - 실제 Gmail 서버, 실제 호출처(relay) 대상 검증은 하지 않았다.

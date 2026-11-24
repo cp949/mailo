@@ -380,19 +380,29 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 
 | 이벤트 `type` | 사용처 처리 |
 | ------------- | ----------- |
-| `JOB_SENT` | outbox 행을 `SENT`로 표시한다. `rejectedRecipients`가 있으면 일부 수신자가 거부된 것이므로 기록·알림 여부를 정한다 |
+| `JOB_SENT` | outbox 행을 `SENT`로 표시한다. `rejectedRecipients`가 있으면 일부 수신자가 거부된 것이므로 기록·알림 여부를 정한다. 유예(기본 7일) 뒤에 읽으면 `recipientsRedacted`가 `true`이고 목록이 비어 있다(아래 "수신자 비움") |
 | `JOB_FAILED` | `failureReason`(`PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`)과 `lastError`를 기록하고 알린다. `outcomeUncertain`이 `true`이면 메일이 이미 나갔을 수 있다(아래 "결과 불명 실패"). 새 요청으로 다시 보낼지는 사용처가 정한다(새 Key) |
 | `JOB_EXPIRED` | `failureReason: EXPIRED`. 기본 만료 TTL은 24시간이다. 차단기 장애가 길면 대량으로 올 수 있다. 이전 시도에 결과 불명이 있었으면 `outcomeUncertain`이 `true`다 |
 | `JOB_CANCELED` | 취소 종결이다. 실패가 아니다. outbox 행을 취소 상태로 닫고 재시도하지 않는다. `canceledBy`(`CALLER`·`OPERATOR`)로 운영자가 취소한 것인지 구분한다. 호출처가 직접 취소해도 온다 |
 | `INTAKE_REJECTED` | 파일 수집 거부. `reasonCode`로 원인을 고쳐 새 파일로 다시 보낸다(`troubleshooting.md`). `idempotencyKey`가 있으면 outbox 행을 찾고, `null`이면 `fileName`으로 찾는다 |
 | 위에 없는 `type` | 건너뛰지 않는다. 이벤트를 기록하고 outbox 행을 "확인 필요"로 표시한 뒤 `GET /jobs`로 상태를 확인한다. cursor는 그 이벤트를 지나가므로 이 표시가 유일한 단서다 |
 
-- 이벤트 모양 예(JOB_SENT): `eventId`, `type`, `occurredAt`, `jobId`, `idempotencyKey`, `attempts`, `recipients{to,cc,bcc}`, `rejectedRecipients[]`. `JOB_FAILED`·`JOB_EXPIRED`는 `failureReason`, `lastError`, `outcomeUncertain`을 더한다. `INTAKE_REJECTED`는 `rejectionId`, `idempotencyKey`(없으면 `null`), `fileName`, `fileSize`, `sha256`, `reasonCode`다.
+- 이벤트 모양 예(JOB_SENT): `eventId`, `type`, `occurredAt`, `jobId`, `idempotencyKey`, `attempts`, `recipientsRedacted`, `recipients{to,cc,bcc}`, `rejectedRecipients[]`. `recipientsRedacted`는 `JOB_*` 이벤트에 항상 있다. `JOB_FAILED`·`JOB_EXPIRED`는 `failureReason`, `lastError`, `outcomeUncertain`을 더한다. `INTAKE_REJECTED`는 `rejectionId`, `idempotencyKey`(없으면 `null`), `fileName`, `fileSize`, `sha256`, `reasonCode`다.
 - 이벤트는 기록 후 30일 보존한다. 30일 넘게 폴링하지 않으면 그 사이 이벤트를 놓친다. 응답 헤더 `Mailo-Cursor-Gap: true`가 이 유실을 알린다(아래 "공백 신호").
 - `GET /events`가 200이 아니면 같은 요청을 말없이 반복하지 않는다. 상태 코드를 기록하고 알린다. 401은 키를 고치기 전에 반복하지 않는다.
 - 응답의 모르는 필드와 헤더는 무시한다.
 - 빈 `events`가 새 이벤트가 없다는 뜻은 아니다. DB에 긴 트랜잭션이 있으면 피드가 지연된다(이벤트는 유실되지 않는다). 지연은 `/health/ready`의 `eventFeed.lagSeconds`로 본다. 새 이벤트가 없어도 값이 커지므로 단독 장애 신호가 아니다.
 - 같은 이름·같은 `sha256`의 파일을 다시 넣어도 거부 기록과 이벤트는 새로 생기지 않는다. 고친 파일은 내용이 달라지므로 새 기록이 생긴다.
+
+### 수신자 비움 `recipientsRedacted`
+
+근거: RQ-072, ADR-0015 결정 3. 이벤트가 생기고 유예(`MAILO_RECIPIENT_RETENTION_SECONDS`, 기본 7일, 운영자가 바꿀 수 있다)가 지나면 Mailo가 그 이벤트의 `recipients`와 `rejectedRecipients`를 비운다. 이벤트 행과 `eventId`·순서·cursor는 그대로다.
+
+- 비운 이벤트는 `recipientsRedacted: true`이고 `recipients`는 `{to: [], cc: [], bcc: []}`, `rejectedRecipients`는 `[]`다. 비우기 전에는 `false`와 수신자 목록이다.
+- 이벤트의 수신자에 의존하지 않는다. 일주일 안에 폴링이 따라가면 값이 있지만, 폴링이 멈췄다가 늦게 읽으면 빈 값을 받는다. 상태 판단과 기록에는 `idempotencyKey`로 찾은 outbox 행의 수신자를 쓴다.
+- `GET /jobs`의 `rejectedRecipients`도 같은 시점부터 빈 목록이다. `Job`에 새 필드는 없다.
+- 비운 값은 복원하지 못한다. 비우기 전에 받은 이벤트의 사본은 사용처 저장소의 몫이다.
+- 모르는 필드는 무시하는 규칙(위)대로 `recipientsRedacted`를 모르는 코드도 동작한다. 엄격하게 필드를 검사하는 코드는 이 필드를 허용해야 한다.
 
 ### 공백 신호 `Mailo-Cursor-Gap`
 

@@ -19,7 +19,7 @@ info:
     - 모든 오류 응답은 `application/problem+json`(RFC 9457)이다.
     - 오류 응답, 로그, 거부 기록에는 제목, text, html, 암호문과 요청 값을 넣지 않는다.
     - 첨부파일은 지원하지 않는다. 정의되지 않은 필드(`attachments` 포함)는 400이다.
-    - 호출처는 모르는 이벤트 `type`과 모르는 `Job.status`를 무시하거나 성공으로 처리하지 않고, 해당 작업을 `GET /jobs`로 확인할 때까지 미종결로 둔다. 모르는 응답 필드는 무시한다. 이 계약의 enum과 `additionalProperties`는 지금 닫혀 있지만 이후 버전이 값과 필드를 더할 수 있다. `outcomeUncertain`(ADR-0011 결정 5)이 이 규칙으로 더한 필드다. `Job`·`OpsJob`은 `additionalProperties: false`이므로 필드 추가는 응답 계약 변경이다. 규칙은 `docs/api/README.md`의 "호출처가 모르는 값을 만났을 때" 절이다.
+    - 호출처는 모르는 이벤트 `type`과 모르는 `Job.status`를 무시하거나 성공으로 처리하지 않고, 해당 작업을 `GET /jobs`로 확인할 때까지 미종결로 둔다. 모르는 응답 필드는 무시한다. 이 계약의 enum과 `additionalProperties`는 지금 닫혀 있지만 이후 버전이 값과 필드를 더할 수 있다. `outcomeUncertain`(ADR-0011 결정 5)과 `JOB_*` 이벤트의 `recipientsRedacted`(ADR-0015 결정 3)가 이 규칙으로 더한 필드다. `Job`·`OpsJob`은 `additionalProperties: false`이므로 필드 추가는 응답 계약 변경이다. 규칙은 `docs/api/README.md`의 "호출처가 모르는 값을 만났을 때" 절이다.
 servers:
   - url: https://mailo.example.internal
     description: 운영 (호스트명은 자리표시자, 추정)
@@ -657,6 +657,12 @@ paths:
         - cursor는 `type` 필터와 무관하다. 필터를 바꾸면서 같은 cursor를 이어 쓰면 이벤트를 놓칠 수 있다. 필터 조합마다 cursor를 따로 저장한다.
         - 이벤트는 기록 후 30일 보존한다. 30일 넘게 폴링하지 않으면 그 사이 이벤트를 놓친다.
 
+        수신자 비움(RQ-072, ADR-0015 결정 3).
+
+        - `JOB_*` 이벤트의 수신자(`recipients`)와 거부 수신자(`rejectedRecipients`)는 이벤트 기록 후 유예(기본 7일, 운영자가 정한다)가 지나면 서버가 비운다. 이벤트 행은 30일 보존 안에서 그대로이고 `eventId`·순서·cursor도 그대로다.
+        - 비운 이벤트는 `recipientsRedacted: true`이고 `recipients`는 `to`·`cc`·`bcc`가 모두 빈 배열이며 `rejectedRecipients`는 빈 배열이다. 비우기 전에는 `false`다. `recipientsRedacted`는 `JOB_*` 이벤트에 항상 있다.
+        - 수신자는 유예 안에서만 믿을 수 있다. 상태 판단과 기록에는 `idempotencyKey`로 찾은 호출처 자신의 outbox 행을 쓴다. 비운 값은 복원하지 못한다.
+
         공백 신호(ADR-0011 결정 9).
 
         - `after`가 있을 때 그 cursor 뒤에서 보존 기간이 지나 삭제된 이벤트가 있으면 응답에 헤더 `Mailo-Cursor-Gap: true`가 붙는다. 상태는 200이고 본문 형식은 바뀌지 않는다. 모르는 호출처는 헤더를 무시한다.
@@ -691,6 +697,7 @@ paths:
                         jobId: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e90
                         idempotencyKey: outbox-8841
                         attempts: 1
+                        recipientsRedacted: false
                         recipients:
                           to: [kim@example.com, park@example.com]
                           cc: []
@@ -705,6 +712,7 @@ paths:
                         jobId: 9b7c1e34-2d5a-4f60-8a1c-6e0d3f9b5a22
                         idempotencyKey: outbox-8842
                         attempts: 1
+                        recipientsRedacted: false
                         recipients:
                           to: [nobody@example.invalid]
                           cc: []
@@ -722,6 +730,7 @@ paths:
                         jobId: c2a84d17-90be-4e3f-b6a5-71f0d2e8c913
                         idempotencyKey: outbox-8790
                         attempts: 3
+                        recipientsRedacted: false
                         recipients:
                           to: [kim@example.com]
                           cc: []
@@ -739,6 +748,7 @@ paths:
                         jobId: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e91
                         idempotencyKey: outbox-8850
                         attempts: 0
+                        recipientsRedacted: false
                         recipients:
                           to: [kim@example.com]
                           cc: []
@@ -754,6 +764,24 @@ paths:
                         sha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
                         reasonCode: MALFORMED
                     nextCursor: MTc2MzkwMDAwMDoxMDUy
+                    hasMore: false
+                redacted:
+                  summary: 유예(기본 7일)가 지난 이벤트. 수신자가 비어 있고 recipientsRedacted가 true다.
+                  value:
+                    events:
+                      - eventId: '1048'
+                        type: JOB_SENT
+                        occurredAt: '2026-11-10T09:30:12Z'
+                        jobId: 3f0e9a52-6b1d-4c8e-9f27-1a5d7c4b8e90
+                        idempotencyKey: outbox-8841
+                        attempts: 1
+                        recipientsRedacted: true
+                        recipients:
+                          to: []
+                          cc: []
+                          bcc: []
+                        rejectedRecipients: []
+                    nextCursor: MTc2MzkwMDAwMDoxMDQ4
                     hasMore: false
                 empty:
                   summary: 새 이벤트가 없다. nextCursor는 요청의 after 값이다.
@@ -1437,7 +1465,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/RejectedRecipient'
-          description: '`SENT`이고 일부 수신자가 거부됐을 때만 값이 있다. 그 밖에는 빈 배열이다.'
+          description: '`SENT`이고 일부 수신자가 거부됐을 때만 값이 있다. 그 밖에는 빈 배열이다. 이벤트의 수신자와 같은 유예(기본 7일) 뒤에는 `SENT`여도 빈 배열이다(RQ-072).'
     EventType:
       type: string
       enum: [JOB_SENT, JOB_FAILED, JOB_EXPIRED, JOB_CANCELED, INTAKE_REJECTED]
@@ -1477,6 +1505,7 @@ components:
         `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `JOB_CANCELED`. 작업의 종결 전이와 같은 트랜잭션에서 기록한다.
         주기 sweep의 `EXPIRED` 전이도 같다. `JOB_CANCELED`는 호출처가 직접 취소해도 쓴다. outbox를 이벤트로 닫는 호출처가 취소를 알아야 하기 때문이다.
         `JOB_FAILED`·`JOB_EXPIRED`는 `outcomeUncertain`을 더한다(ADR-0011 결정 5). 이벤트 스키마는 `additionalProperties`를 닫지 않았지만 호출처 코드가 필드를 엄격히 검사하면 같은 계약 변경이다.
+        네 종류 모두 `recipientsRedacted`를 항상 낸다(RQ-072, ADR-0015 결정 3). 유예 뒤에는 `recipients`와 `rejectedRecipients`가 비어 있다.
       allOf:
         - $ref: '#/components/schemas/EventBase'
         - type: object
@@ -1485,6 +1514,7 @@ components:
             - jobId
             - idempotencyKey
             - attempts
+            - recipientsRedacted
             - recipients
           properties:
             type:
@@ -1498,8 +1528,14 @@ components:
               type: integer
               minimum: 0
               description: 최대 시도 횟수에 산입되는 시도 수(`Job.attempts`와 같은 정의).
+            recipientsRedacted:
+              type: boolean
+              description: |
+                서버가 유예(기본 7일) 뒤 이 이벤트의 수신자를 비웠으면 `true`다. 네 종류 모두 항상 있다.
+                `true`이면 `recipients`의 `to`·`cc`·`bcc`는 빈 배열이고 `rejectedRecipients`는 빈 배열이다. `false`이면 기록한 값이다. 비운 값은 복원하지 못한다.
             recipients:
               $ref: '#/components/schemas/Recipients'
+              description: '이벤트 기록 시점의 수신자. `recipientsRedacted`가 `true`이면 세 목록이 모두 비어 있다.'
             failureReason:
               $ref: '#/components/schemas/FailureReason'
               description: '`JOB_FAILED`와 `JOB_EXPIRED`에만 있다.'
@@ -1517,7 +1553,7 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/RejectedRecipient'
-              description: '`JOB_SENT`에만 있다. 거부된 수신자가 없으면 생략하거나 빈 배열이다.'
+              description: '`JOB_SENT`에만 있다. 거부된 수신자가 없거나 `recipientsRedacted`가 `true`이면 생략하거나 빈 배열이다.'
             canceledBy:
               type: string
               enum: [CALLER, OPERATOR]
