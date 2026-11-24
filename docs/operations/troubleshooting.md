@@ -406,7 +406,7 @@ SELECT j.id, j.caller_id, j.status, j.attempts, j.finished_at
 
 - 호출처 문의의 답: `GET /jobs/{jobId}`(호출처 키) 또는 `GET /ops/jobs/{jobId}`·`jobs show <jobId>`(운영 토큰)의 `outcomeUncertain`을 본다. `/ops` 응답에는 Key·수신자·본문·SMTP 응답 텍스트가 없다. 이벤트의 값과 작업 조회의 값은 같다.
 - `true`가 많으면 SMTP 응답 지연이나 연결 끊김이 반복된 것이다. DATA 단계 타임아웃(`MAILO_SMTP_TIMEOUT_SECONDS`, 기본 30초)과 "lease 만료"의 원인 목록을 본다.
-- 운영자가 대신 다시 보내는 방법은 없다. 호출처가 새 Key로 다시 제출한다(`caller-onboarding.md` "결과 불명 실패"). 본문은 종결 뒤 기본 1일에 지워지므로 운영자가 복원할 수 없다.
+- 운영자가 대신 다시 보내는 방법은 없다. 호출처가 새 Key로 다시 제출한다(`caller-onboarding.md` "결과 불명 실패"). 본문은 종결 전이에서 지워지므로(RQ-071) 운영자가 복원할 수 없다.
 - 한계: 서버가 응답했지만 Mailo가 받지 못한 경우처럼 위 두 조건 밖의 불명은 잡지 못한다. 시도 이력은 작업과 함께 보존 기간(기본 30일) 뒤에 지워져 조회가 404다.
 
 ## 작업 취소
@@ -495,7 +495,7 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 | `lease_recovered` | lease가 지난 `SENDING` 작업을 회수했다 |
 
 - 인스턴스가 여럿이면 각 단계(`sweep_expired`, `lease_recovered`, 본문 삭제 `bodies_deleted`, 보존 삭제 `records_deleted`)는 배치마다 DB advisory lock을 잡은 인스턴스만 돌린다. 못 잡은 인스턴스는 기다리지 않고 건너뛰므로 로그에 `count`가 없다. 배치는 최대 1,000건이다(ADR-0002 구현 중 확정 10).
-| `bodies_deleted` | 종결 후 유예가 지난 작업의 본문을 비웠다 |
+| `bodies_deleted` | 종결 후 유예가 지났는데 본문이 남은 작업(이전 버전이 종결한 행)의 본문을 비웠다. 종결 전이가 본문을 바로 비우므로(RQ-071) 새 버전만 쓰면 `count`가 없다 |
 | `records_deleted` | 보존 기간이 지난 작업 행(시도·이벤트 포함)과 거부 기록을 삭제했다 |
 | `<이름>_failed`(error) | 위 작업의 실패. `error`에 오류 이름 |
 

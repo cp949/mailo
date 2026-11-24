@@ -19,7 +19,7 @@ Mailo의 PostgreSQL 테이블에서 팽창(죽은 행이 쌓여 파일이 커지
 
 | 테이블 | 행을 바꾸는 동작 | 삭제 | 팽창 원인(확인) |
 | ------ | ---------------- | ---- | --------------- |
-| `mail_jobs` | 점유(`PENDING`·`RETRY_WAIT`에서 `SENDING`), 결과 기록(`SENT`·`RETRY_WAIT`·`FAILED`), lease 복구, 만료 sweep, 취소, 본문 삭제(`UPDATE`로 본문 열을 `NULL`). 재시도마다 점유·결과 기록이 반복된다 | 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일) 뒤 보존 삭제 | 작업 한 건당 갱신 3번 이상(점유, 결과 기록, 본문 삭제, 재시도마다 점유·결과 기록 추가). 측정에서 모두 HOT가 아니었다 |
+| `mail_jobs` | 점유(`PENDING`·`RETRY_WAIT`에서 `SENDING`), 결과 기록(`SENT`·`RETRY_WAIT`·`FAILED`), lease 복구, 만료 sweep, 취소(종결 전이의 같은 `UPDATE`가 본문·수신자·봉투를 비운다, RQ-071), 이전 버전이 종결한 행의 본문 삭제(`UPDATE`로 본문 열을 `NULL`). 재시도마다 점유·결과 기록이 반복된다 | 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일) 뒤 보존 삭제 | 작업 한 건당 갱신 3번 이상(점유, 결과 기록, 본문 삭제, 재시도마다 점유·결과 기록 추가). 측정에서 모두 HOT가 아니었다 |
 | `mail_attempts` | 삽입만 | `mail_jobs` 삭제의 `ON DELETE CASCADE` | 보존 삭제 때 한꺼번에 죽은 행이 생긴다 |
 | `mail_events` | 삽입만(종결 이벤트, 수집 거부) | `mail_jobs`·`mail_intake_rejections` 삭제의 `CASCADE` | 보존 삭제 때 한꺼번에 죽은 행이 생긴다 |
 | `mail_intake_rejections` | 삽입만 | 생성 후 `MAILO_RECORD_RETENTION_SECONDS` 뒤 보존 삭제 | 보존 삭제 때 죽은 행 |
@@ -144,10 +144,10 @@ VACUUM (VERBOSE) mail_jobs;   -- 출력의 "dead but not yet removable"이 0이 
 
 ## 보존·삭제 규칙과의 관계
 
-- 삭제 순서: 종결 후 본문 유예(`MAILO_BODY_RETENTION_SECONDS`, 기본 1일)가 지나면 본문 열을 비운다(`UPDATE`). 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일)가 지나면 작업 행과 시도·이벤트를 지운다(`DELETE`).
+- 삭제 순서: 종결 전이의 같은 `UPDATE`가 본문·수신자·봉투를 비운다(RQ-071). 종결 후 본문 유예(`MAILO_BODY_RETENTION_SECONDS`, 기본 1일)가 지나도 본문이 남은 행(이전 버전이 종결한 행)은 별도 `UPDATE`로 비운다(안전망). 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일)가 지나면 작업 행과 시도·이벤트를 지운다(`DELETE`).
 - 두 단계 모두 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌고 한 번에 최대 20배치 × 1000건이다(`MAX_BATCHES_PER_CYCLE`, `SWEEP_BATCH`). 기본값에서 한 인스턴스의 한 단계 처리 상한은 분당 2만 건이다(코드에서 계산한 값). 같은 단계는 한 번에 한 배치만 돌지만(advisory lock) 인스턴스가 여럿일 때의 합산 상한은 확인하지 않았다. 종결 작업이 이보다 오래 빠르게 쌓이면 삭제가 따라가지 못한다.
 - 측정에서 1000건 배치는 본문 삭제 약 28ms, 보존 삭제(시도·이벤트 CASCADE 포함) 약 35ms였다(로컬, 단독 실행). 처리 상한은 시간이 아니라 사이클당 20배치 상한이 정한다.
-- 본문 삭제는 `UPDATE`라 새 행 버전과 TOAST 죽은 행을 만든다. 팽창은 본문이 저장되는 동안(종결 후 1일)과 삭제 직후에 가장 크다.
+- 본문을 비우는 `UPDATE`는 새 행 버전과 TOAST 죽은 행을 만든다. 종결 전이가 같은 `UPDATE`로 비우면 별도 본문 삭제 `UPDATE`가 새 종결 행에서는 생기지 않는다. 아래 "로컬 측정"은 이 변경 전 구조(본문 삭제가 별도 `UPDATE`)로 쟀고, 변경 뒤 구조는 재측정하지 않았다.
 - 보존 삭제는 한 번에 많은 죽은 행을 만든다(측정: 10만 작업에서 `mail_jobs` 99,770 + `mail_attempts` 109,769 + `mail_events` 99,770). 배치 크기를 키우지 않는다. 1000건 단위는 트랜잭션이 길어져 이벤트 피드 cursor(`xmin`)를 멈추지 않게 정한 값이다(`maintenance.ts`).
 
 ## 감사 테이블

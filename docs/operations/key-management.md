@@ -60,7 +60,7 @@ SELECT body_key_version, count(*) FROM mail_jobs
  WHERE body_key_version IS NOT NULL GROUP BY body_key_version ORDER BY 1;
 ```
 
-- 본문은 종결 후 `MAILO_BODY_RETENTION_SECONDS`(기본 1일) 뒤에 비워진다. 기본값에서 버전 1로 등록된 마지막 작업의 본문이 사라지기까지는 대략 만료 TTL(24시간) + 1일 + 유지 주기(60초)다(계산값, 실행해 확인하지 않았다). SQL 결과를 기준으로 삼는다.
+- 본문은 종결 전이의 같은 `UPDATE`에서 비워진다(RQ-071). 이전 버전이 종결한 행은 `MAILO_BODY_RETENTION_SECONDS`(기본 1일) 뒤에 비워진다. 기본값에서 버전 1로 등록된 마지막 작업의 본문이 사라지기까지는 대략 만료 TTL(24시간)이다(계산값, 실행해 확인하지 않았다). 구버전 인스턴스가 종결한 행이 섞이면 TTL + 1일 + 유지 주기(60초)까지 길어진다. SQL 결과를 기준으로 삼는다.
 - 이전 키를 너무 일찍 지우면 기동은 되지만 해당 버전 작업의 발송 시 `job_internal_error`(`error=BodyCipherError:UNKNOWN_KEY_VERSION`)가 나고, 같은 작업이 3번째 시도에서 `FAILED`가 된다.
 
 ## 지문 키
@@ -297,7 +297,7 @@ Mailo 쪽에 남는 JWE 암호문은 없다(확인). 수집은 복호화한 평�
 
 ### DB 본문 키 사고
 
-유출된 키는 그 버전 행의 본문이 모두 지워질 때까지 설정에 남는다. 본문은 종결 후 `MAILO_BODY_RETENTION_SECONDS`(기본 1일) 뒤 비워지므로 기본값에서 유출 키의 노출은 새 버전으로 바꾼 뒤 약 2일(요청별 TTL을 크게 쓰면 `TTL + 1일`, 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS`)이다(계산값).
+유출된 키는 그 버전 행의 본문이 모두 지워질 때까지 설정에 남는다. 본문은 종결 전이에서 바로 비워지므로(RQ-071) 기본값에서 유출 키의 노출은 새 버전으로 바꾼 뒤 약 1일(만료 TTL, 요청별 TTL을 크게 쓰면 그 값, 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS`)이다. 이전 버전이 종결한 행이 있으면 `MAILO_BODY_RETENTION_SECONDS`(기본 1일)가 더해진다(계산값).
 
 유출:
 

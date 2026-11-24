@@ -329,7 +329,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 
 | 변수 | 기본값 | 범위 | 설명 |
 | ---- | ------ | ---- | ---- |
-| `MAILO_BODY_RETENTION_SECONDS` | 86400 | 1~31536000 | 종결 후 본문 삭제 유예 |
+| `MAILO_BODY_RETENTION_SECONDS` | 86400 | 1~31536000 | 종결 전이가 본문을 바로 비우므로(RQ-071) 이전 버전이 종결한 행의 본문 삭제 유예(안전망) |
 | `MAILO_RECORD_RETENTION_SECONDS` | 2592000 (30일) | 1~31536000 | 종결 후 작업 행·시도·이벤트·Key 보존, 거부 기록은 생성 후. `BODY` 이상이고 `JOB_EXPIRY_MAX` 이상이어야 한다 |
 | `MAILO_MAINTENANCE_INTERVAL_SECONDS` | 60 | 1~86400 | 만료 sweep·lease 회수·본문 삭제·보존 삭제 주기 |
 
