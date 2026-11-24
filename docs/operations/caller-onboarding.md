@@ -13,6 +13,7 @@
 - 파일 채널만 쓰는 호출처도 REST API 키가 필요하다. 결과는 Key 조회와 이벤트 피드로만 확인한다.
 - 우선순위(`priority`)는 선택이다. 생략하면 `NORMAL`이다. `URGENT`는 즉시 전송을 뜻하지 않는다("우선순위").
 - 만료 시간(`ttlSeconds`)은 선택이다. 생략하면 Mailo 기본 TTL(기본 24시간)이다. 긴 TTL은 한도 지연을 없애지 않는다("요청별 만료 시간").
+- 결과 불명 처리(`onUncertainOutcome`)는 선택이다. 생략하면 `retry`(기존 동작)다. `fail`은 메일이 나갔는지 모르는 시도 뒤 재시도하지 않고 `OUTCOME_UNKNOWN`으로 끝내며 정확히 한 번을 보장하지 않는다("결과 불명이면 재시도하지 않기").
 - 나가기 전의 작업은 취소할 수 있다(`POST /jobs/{jobId}/cancel`, 파일 채널 호출처는 `POST /jobs/cancel?idempotencyKey=`). 취소 API를 쓰기 전에 사용처가 `CANCELED`·`JOB_CANCELED`와 모르는 값을 처리하는지 확인한다("작업 취소").
 
 ## 1. 등록 전에 정할 것
@@ -180,7 +181,7 @@ MAILO_UID=1000 MAILO_GID=1000 CALLERS="billing:10002 reports:10003" \
 
 ### 파일 내용
 
-REST 본문과 같은 필드에 `version`(정수 1)과 `idempotencyKey`가 더해진다. REST에서는 이 두 필드가 정의되지 않은 필드(400)다. `attachments`는 거부한다. 선택 필드 `priority`·`ttlSeconds`도 REST와 같다("우선순위", "요청별 만료 시간").
+REST 본문과 같은 필드에 `version`(정수 1)과 `idempotencyKey`가 더해진다. REST에서는 이 두 필드가 정의되지 않은 필드(400)다. `attachments`는 거부한다. 선택 필드 `priority`·`ttlSeconds`·`onUncertainOutcome`도 REST와 같다("우선순위", "요청별 만료 시간", "결과 불명이면 재시도하지 않기").
 
 서명 `none`, 평문:
 
@@ -381,7 +382,7 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 | 이벤트 `type` | 사용처 처리 |
 | ------------- | ----------- |
 | `JOB_SENT` | outbox 행을 `SENT`로 표시한다. `rejectedRecipients`가 있으면 일부 수신자가 거부된 것이므로 기록·알림 여부를 정한다. 유예(기본 7일) 뒤에 읽으면 `recipientsRedacted`가 `true`이고 목록이 비어 있다(아래 "수신자 비움") |
-| `JOB_FAILED` | `failureReason`(`PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`)과 `lastError`를 기록하고 알린다. `outcomeUncertain`이 `true`이면 메일이 이미 나갔을 수 있다(아래 "결과 불명 실패"). 새 요청으로 다시 보낼지는 사용처가 정한다(새 Key) |
+| `JOB_FAILED` | `failureReason`(`PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`, `OUTCOME_UNKNOWN`)과 `lastError`를 기록하고 알린다. `outcomeUncertain`이 `true`이면 메일이 이미 나갔을 수 있다(아래 "결과 불명 실패"). 새 요청으로 다시 보낼지는 사용처가 정한다(새 Key) |
 | `JOB_EXPIRED` | `failureReason: EXPIRED`. 기본 만료 TTL은 24시간이다. 차단기 장애가 길면 대량으로 올 수 있다. 이전 시도에 결과 불명이 있었으면 `outcomeUncertain`이 `true`다 |
 | `JOB_CANCELED` | 취소 종결이다. 실패가 아니다. outbox 행을 취소 상태로 닫고 재시도하지 않는다. `canceledBy`(`CALLER`·`OPERATOR`)로 운영자가 취소한 것인지 구분한다. 호출처가 직접 취소해도 온다 |
 | `INTAKE_REJECTED` | 파일 수집 거부. `reasonCode`로 원인을 고쳐 새 파일로 다시 보낸다(`troubleshooting.md`). `idempotencyKey`가 있으면 outbox 행을 찾고, `null`이면 `fileName`으로 찾는다 |
@@ -516,11 +517,52 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 
 `outcomeUncertain`은 SMTP 서버가 메일을 수락했는지 알 수 없는 시도가 한 건이라도 있었으면 `true`다. `GET /jobs`의 `Job`(모든 상태)과 `JOB_FAILED`·`JOB_EXPIRED` 이벤트에 있다. `FAILED`·`EXPIRED`에서 `true`이면 메일이 이미 나갔을 수 있다.
 
+- 이 표시 자체는 재시도 정책을 바꾸지 않는다. 요청이 `onUncertainOutcome: fail`을 고른 경우만 재시도 없이 끝난다(아래 "결과 불명이면 재시도하지 않기").
 - 운영자 재시도 API는 없다. 다시 보내는 책임은 사용처에 있다. 새 `Idempotency-Key`(새 outbox 행)로 등록한다. 같은 Key로 보내면 `FAILED` 작업이 돌아올 뿐 다시 발송되지 않는다.
 - 같은 내용이 수신자에게 이미 갔을 수 있으므로 중복 수신 위험은 사용처가 판단한다. `Message-ID`가 작업마다 다르므로 새 Key로 보낸 메일은 수신 측이 같은 `Message-ID`로 중복을 걸러내는 완화가 듣지 않는다.
 - `true`가 아니어도 메일이 나가지 않았다는 보장은 아니다. 서버가 응답했지만 Mailo가 받지 못한 경우는 이 표시가 잡지 못한다(RQ-013).
 - 표시를 모르는 사용처도 안전하다. 모르는 응답 필드는 무시하는 규칙(`docs/api/README.md` "호출처가 모르는 값을 만났을 때")이 이미 있다. 샘플(`samples/spring-boot-relay/`)은 JSON을 `JsonNode`로 읽어 이 필드를 무시하고 이벤트 원본을 `mailo_event_log.payload`에 보관한다.
 - 작업은 종결 후 30일(기본)이 지나면 지워지고 그 뒤에는 값을 조회할 수 없다. 이벤트의 값은 이벤트 보존 기간(30일) 안에 읽는다.
+
+### 결과 불명이면 재시도하지 않기
+
+근거: RQ-073·074, ADR-0015 결정 5~10, `docs/api/README.md` "결과 불명이면 재시도하지 않기".
+
+요청 최상위에 `onUncertainOutcome`(`retry` 또는 `fail`)을 넣으면 메일이 나갔는지 알 수 없는 시도 뒤의 처리를 고른다. REST와 파일이 같은 규칙이다.
+
+- 알 수 없는 시도는 `outcomeUncertain`을 `true`로 만드는 두 종류다. lease 만료로 회수된 시도와, DATA 단계에서 SMTP 응답 없이 끝난 일시 오류(타임아웃·연결 끊김)다.
+- `retry`(생략 포함): 재시도한다. 같은 메일이 두 번 갈 수 있다.
+- `fail`: 재시도하지 않고 `FAILED`·`failureReason: OUTCOME_UNKNOWN`으로 끝낸다. 시도 횟수 소진, 만료와 겹쳐도 이 사유다. 응답 코드가 있는 실패(`550` 등)와 DATA 이전 단계의 오류는 `fail`이어도 기존대로 처리한다.
+- 값은 등록 때 작업에 고정된다. 같은 Key로 값을 바꾸거나 생략과 `retry`를 바꿔 보내면 409(파일은 `FINGERPRINT_MISMATCH`)다. 도입 전에 등록한 작업은 `retry`이고, 그 Key를 `retry` 명시로 다시 보내도 409다.
+- `onUncertainOutcome`은 평문 최상위 필드다. JWE 복호화 평문(`content`) 안에 넣으면 `UNKNOWN_FIELD`(파일은 `VALIDATION_FAILED`)다. 파일 JWS에서는 서명 대상이다. 잘못된 값은 REST 400(`/onUncertainOutcome` `INVALID_FORMAT`), 파일은 `VALIDATION_FAILED`다.
+
+사용 기준:
+
+| 메일의 성격 | 권고 |
+| ----------- | ---- |
+| 같은 코드·링크가 두 번 가면 혼란이나 보안 문제가 되는 메일(일회용 인증 코드) | `fail`. 종결 뒤 사용자가 다시 요청하게 한다 |
+| 두 번 가면 신뢰가 깨지는 확인 메일(결제 영수증) | `fail`과 호출처의 사후 확인을 함께 쓴다 |
+| 늦게 가도 한 번은 가야 하는 메일(공지, 알림) | `retry`(기본) |
+
+`OUTCOME_UNKNOWN`을 받았을 때:
+
+1. outbox 행을 "확인 필요"로 표시하고 `outcomeUncertain`이 `true`인지 본다(항상 `true`다).
+2. 메일이 나갔는지는 Mailo가 알려 주지 못한다. 사용처가 가진 수단(수신자 문의, 발송 계정의 보낸편지함)으로 확인한다.
+3. 다시 보내기로 하면 새 `Idempotency-Key`(새 outbox 행)로 등록한다. 같은 Key로 보내면 `FAILED` 작업이 돌아올 뿐 다시 발송되지 않는다.
+
+한계(정확히 한 번을 보장하지 않는다):
+
+- 점유 직후 프로세스가 죽어 전송 전이었던 시도도 알 수 없는 시도로 본다. 보내지 않은 메일이 `OUTCOME_UNKNOWN`으로 끝날 수 있다.
+- 메일이 나갔는데 `OUTCOME_UNKNOWN`이 올 수 있다(SMTP 서버가 수락한 뒤 응답이 끊긴 경우).
+- Mailo 배포로 전송이 끊기는 경우(종료 대기 시간 초과)에도 `fail` 요청이 종결된다. 운영팀이 `stop_grace_period`를 lease 이상으로 두는지 확인한다(`deployment.md` "종료와 stop_grace_period").
+- 서버가 응답했지만 Mailo가 받지 못한 경우처럼 두 종류 밖의 불명은 정책 대상이 아니다.
+
+배포 순서: Mailo의 모든 인스턴스가 이 기능을 지원하는 버전이 된 뒤에 `onUncertainOutcome`을 보내기 시작한다. 이전 버전은 정의되지 않은 필드로 거부한다(REST 400, 파일 거부). 롤링 중에는 이전 버전 Worker가 `fail` 작업을 `retry`처럼 처리한다. 롤백 절차는 `deployment.md` "결과 불명 정책 도입 배포 순서"를 따른다.
+
+```txt
+위험도: 높음 (호출처 계약 변경, 모든 인스턴스 교체 전에 보내면 400 또는 재시도로 처리)
+롤백: 전송을 먼저 끊고 Mailo를 이전 버전으로 되돌린다. 이미 OUTCOME_UNKNOWN으로 끝난 작업은 FAILED로 남는다
+```
 
 ### 작업 취소
 
@@ -569,6 +611,7 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 
 - 발송은 at-least-once다. SMTP 수락 직후 장애가 나면 같은 메일이 두 번 갈 수 있다(RQ-013). 완화로 `Message-ID`를 작업 ID에서 유도한 고정값으로 쓴다. Gmail이 같은 `Message-ID`를 중복으로 버리는지는 확인하지 못했다(ADR-0007 결정 8).
 - `SENT`는 SMTP 서버의 수락이다. 받은편지함 도착이 아니고, 일부 수신자가 거부됐을 수 있다(RQ-016).
+- 요청이 `onUncertainOutcome: fail`을 고르면 결과 불명 구간에서만 재발송하지 않는다. 정확히 한 번은 아니다("결과 불명이면 재시도하지 않기").
 - 요청 중복 방지(Key)와 SMTP 중복 방지는 다르다. Key는 등록 중복을, 위 한계는 전송 중복을 말한다.
 
 ## 8. 등록 확인 체크리스트
@@ -648,6 +691,7 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 - 호출처의 `accountId` 전환(`default`에서 다른 계정으로)을 실제 Gmail 계정 둘로 실행하지 않았다. 계정별 송신은 로컬 SMTP 서버 둘(`test/e2e/multi-account.integration-spec.ts`)로만 확인했다.
 - 모르는 이벤트 종류·`Job.status`를 서버가 실제로 보낼 때의 샘플 동작. 서버가 아직 보내지 않아 샘플 단위 테스트의 대역으로만 확인했다(`samples/spring-boot-relay/README.md`).
 - 작업 취소 도입의 롤링 배포·롤백 실행. 구버전 인스턴스의 동작은 코드를 읽어 적었다. 이 저장소 밖 사용처가 모르는 값 규칙을 지키는지도 확인하지 않았다.
+- 결과 불명 정책의 롤링 배포·롤백 실행과 실제 Gmail의 DATA 단계 타임아웃 빈도. `fail` 판정은 통합 테스트(`test/queue/uncertain-outcome.integration-spec.ts`, `test/e2e/uncertain-outcome.integration-spec.ts`)와 로컬 smtp-server의 연결 끊김으로만 확인했다. 이 저장소 밖 호출처가 새 필드와 `OUTCOME_UNKNOWN`을 처리하는지 확인하지 않았다.
 - 요청별 만료 시간의 롤링 배포·롤백. 만료 동작은 통합 테스트(`test/e2e/job-ttl.integration-spec.ts`)로 확인했다.
 - 우선순위의 효과를 실제 부하(여러 인스턴스, 장시간 적체)에서 측정하지 않았다. 점유 순서는 통합 테스트(`test/queue/claim-priority.integration-spec.ts`, `test/worker/worker-priority.integration-spec.ts`)로 확인했다.
 - 레지스트리 변경 반영("9. 레지스트리 변경 반영")의 롤링 재시작 중 동작(새 호출처·새 API 키의 401, 새 `kid` 파일 거부, 폐기 키의 부분 유효)은 코드를 읽어 정리했고 다중 인스턴스에서 실행하지 않았다. 이 저장소의 compose는 `mailo` 서비스 하나다. 단일 인스턴스 재시작 중 REST 중단 구간의 길이를 측정하지 않았다.

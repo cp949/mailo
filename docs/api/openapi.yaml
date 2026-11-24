@@ -51,7 +51,7 @@ paths:
         - 같은 `(caller_id, Idempotency-Key)`가 있고 내용이 같으면 200과 기존 작업을 반환한다.
         - 같은 Key에 내용이 다르면 409다. 두 번째 메일은 등록하지 않는다.
         - 내용 동일 여부는 복호화 뒤 평문의 지문으로 판정한다(ADR-0005 결정 3). 암호문은 비교하지 않는다.
-        - 지문 범위는 to, cc, bcc, from, replyTo, subject, text, html, priority, ttlSeconds다. 재시도할 때 한 필드라도 바꾸면 409다. `priority` 생략과 `NORMAL`은 같은 내용이다(RQ-034). `ttlSeconds` 생략과 기본 TTL 값을 명시한 요청은 다른 내용이다(RQ-039).
+        - 지문 범위는 to, cc, bcc, from, replyTo, subject, text, html, priority, ttlSeconds, onUncertainOutcome이다. 재시도할 때 한 필드라도 바꾸면 409다. `priority` 생략과 `NORMAL`은 같은 내용이다(RQ-034). `ttlSeconds` 생략과 기본 TTL 값을 명시한 요청은 다른 내용이다(RQ-039). `onUncertainOutcome` 생략과 `retry` 명시도 다른 내용이다(RQ-073).
         - 평문 모드(`subject`, `text`, `html`)와 암호화 모드(`content`)는 한 요청에서 섞을 수 없다.
         - 암호화 모드는 수신자·발신자를 먼저 검증하고, 복호화한 뒤에 제목·본문을 검증한다(ADR-0008 결정 3). 지문은 그 뒤에 계산한다. 복호화한 제목·본문의 검증 오류 위치는 모두 `/content`다.
         - 원시 요청이 2 MiB를 넘으면 본문을 읽기 전에도 413으로 거부할 수 있다.
@@ -103,6 +103,17 @@ paths:
                   text: 인증 코드는 123456입니다.
                   priority: URGENT
                   ttlSeconds: 600
+              failOnUncertain:
+                summary: 결과 불명이면 재시도하지 않는 요청 (인증 코드)
+                description: |
+                  `onUncertainOutcome`은 최상위 평문 필드다. 암호화 모드에서도 `content` 바깥에 둔다(RQ-073).
+                  `fail`이면 메일이 나갔는지 알 수 없는 시도 뒤에 재시도하지 않고 `FAILED`와 `failureReason` `OUTCOME_UNKNOWN`으로 끝낸다.
+                  정확히 한 번 보내는 보장이 아니다. 아래 `SendRequest.onUncertainOutcome`의 한계를 읽는다.
+                value:
+                  to: [kim@example.com]
+                  subject: 인증 코드
+                  text: 인증 코드는 123456입니다.
+                  onUncertainOutcome: fail
       responses:
         '202':
           description: 새 작업을 등록했다. relay는 완료로 처리한다.
@@ -208,6 +219,8 @@ paths:
                   $ref: '#/components/examples/JobFailed'
                 failedOutcomeUncertain:
                   $ref: '#/components/examples/JobFailedUncertain'
+                failedOutcomeUnknown:
+                  $ref: '#/components/examples/JobFailedOutcomeUnknown'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1258,6 +1271,7 @@ components:
         - 제목+text+html은 UTF-8로 1 MiB 이하다. 원시 요청은 2 MiB 이하다.
         - `priority`를 생략하면 `NORMAL`이다. `null`, 숫자, 빈 문자열, 정의되지 않은 값(소문자 포함)은 400 `INVALID_FORMAT`(위치 `/priority`)다. 암호화 평문 안의 `priority`는 `UNKNOWN_FIELD`(위치 `/content`)다.
         - `ttlSeconds`를 생략하면 서버 기본 TTL(`MAILO_JOB_EXPIRY_SECONDS`, 기본 86400)이다. 정수가 아닌 값(소수, 문자열, `null` 등)은 400 `INVALID_FORMAT`, 범위 밖 정수는 400 `OUT_OF_RANGE`(위치 `/ttlSeconds`)다. 암호화 평문 안의 `ttlSeconds`는 `UNKNOWN_FIELD`(위치 `/content`)다.
+        - `onUncertainOutcome`을 생략하면 `retry`다. `retry`·`fail` 외의 값(`null`, 숫자, 빈 문자열, 대문자 포함)은 400 `INVALID_FORMAT`(위치 `/onUncertainOutcome`)다. 암호화 평문 안의 `onUncertainOutcome`은 `UNKNOWN_FIELD`(위치 `/content`)다. 이 필드를 모르는 이전 버전의 서버는 400 `UNKNOWN_FIELD`로 거부한다. 모든 서버 인스턴스를 교체한 뒤에 보내기 시작한다.
       required: [to]
       additionalProperties: false
       properties:
@@ -1301,6 +1315,18 @@ components:
             만료 시각은 등록 때 Mailo DB 시각 + `ttlSeconds`로 고정한다. 같은 Key로 다시 보내도 늘어나지 않는다.
             만료 시각 이후에는 새 시도를 시작하지 않는다. 이미 시작한 전송은 끝까지 가므로 만료 시각 직후 도착할 수 있다.
             긴 TTL은 한도 차단이 길어져도 메일이 결국 나가게 할 뿐, 한도로 생긴 지연을 없애지 않는다.
+        onUncertainOutcome:
+          type: string
+          enum: [retry, fail]
+          default: retry
+          description: |
+            메일이 나갔는지 알 수 없는 시도 뒤의 처리(RQ-073·074, ADR-0015). 생략하면 `retry`다. 대소문자를 구분한다.
+            알 수 없는 시도는 `Job.outcomeUncertain`의 두 종류다. lease 만료로 회수된 시도와, DATA 단계에서 SMTP 응답 없이 끝난 일시 오류(타임아웃·연결 끊김)다.
+            - `retry`: 재시도한다. 같은 메일이 두 번 갈 수 있다(at-least-once).
+            - `fail`: 재시도하지 않고 `FAILED`와 `failureReason` `OUTCOME_UNKNOWN`으로 끝낸다. 시도 횟수 소진과 만료 시각보다 먼저 판정한다. 응답 코드가 있는 실패와 DATA 이전 단계의 오류는 `fail`이어도 기존대로 처리한다.
+            `fail`은 정확히 한 번을 보장하지 않는다. 점유 직후 프로세스가 죽어 전송 전이었던 시도도 알 수 없는 시도로 보므로 보내지 않은 메일이 종결될 수 있다. 메일이 나갔는데 `OUTCOME_UNKNOWN`이 올 수도 있다.
+            `OUTCOME_UNKNOWN`을 받으면 호출처가 확인한 뒤 새 `Idempotency-Key`로 다시 보낼지 정한다.
+            값은 등록 때 작업에 고정한다. 같은 Key로 값을 바꾸거나 생략·`retry`를 바꿔 보내면 409다.
       oneOf:
         - title: 평문 모드
           required: [subject]
@@ -1333,7 +1359,7 @@ components:
         종결 상태는 `SENT`, `FAILED`, `EXPIRED`, `CANCELED`다. 종결 상태에서는 전이하지 않는다.
     FailureReason:
       type: string
-      enum: [PERMANENT_ERROR, MAX_ATTEMPTS_EXCEEDED, ACCOUNT_ERROR_REPEATED, EXPIRED]
+      enum: [PERMANENT_ERROR, MAX_ATTEMPTS_EXCEEDED, ACCOUNT_ERROR_REPEATED, EXPIRED, OUTCOME_UNKNOWN]
       description: |
         종결 실패의 원인(값 이름은 추정).
 
@@ -1342,6 +1368,7 @@ components:
         - `MAX_ATTEMPTS_EXCEEDED`: 최대 시도 횟수를 소진했다.
         - `ACCOUNT_ERROR_REPEATED`: 같은 작업이 차단기를 3회 연 뒤에도 같은 계정 상태 응답을 받았다(ADR-0007 결정 4). 한도 사유(일일·순간 한도)는 제외한다(ADR-0007 구현 중 확정 8).
         - `EXPIRED`: 만료 시각에 도달했다.
+        - `OUTCOME_UNKNOWN`: 요청이 `onUncertainOutcome` `fail`을 골랐고 메일이 나갔는지 알 수 없는 시도 뒤에 재시도하지 않고 끝냈다(RQ-074). `outcomeUncertain`은 `true`이고 `lastError.category`는 `LEASE_EXPIRED` 또는 응답 코드가 없는 `TRANSIENT`다. 메일이 이미 나갔을 수 있고 나가지 않았을 수도 있다.
     LastError:
       type: object
       description: |
@@ -2329,6 +2356,28 @@ components:
           smtpCode: null
           enhancedCode: null
           occurredAt: '2026-11-23T11:02:10Z'
+        outcomeUncertain: true
+        rejectedRecipients: []
+    JobFailedOutcomeUnknown:
+      summary: '`onUncertainOutcome` `fail` 요청이 결과 불명으로 끝났다. 메일이 나갔는지 알 수 없다.'
+      value:
+        jobId: 7a3c9e51-0d4b-4f82-b6a1-2e8d5c1f9047
+        idempotencyKey: outbox-8901
+        status: FAILED
+        priority: URGENT
+        attempts: 1
+        createdAt: '2026-11-23T09:40:00Z'
+        expiresAt: '2026-11-23T09:50:00Z'
+        sentAt: null
+        failedAt: '2026-11-23T09:40:35Z'
+        failureReason: OUTCOME_UNKNOWN
+        canceledAt: null
+        canceledBy: null
+        lastError:
+          category: TRANSIENT
+          smtpCode: null
+          enhancedCode: null
+          occurredAt: '2026-11-23T09:40:35Z'
         outcomeUncertain: true
         rejectedRecipients: []
     ProblemMalformed:

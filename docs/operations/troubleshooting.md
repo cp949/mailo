@@ -38,7 +38,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | 호출처가 취소했는데 메일이 나갔다, 취소 요청이 409다 | "작업 취소" |
 | 실패한 작업의 메일이 이미 나갔는지 모르겠다, `outcomeUncertain`이 `true`다 | "결과 불명 실패" |
 | 작업이 `SENDING`에 오래 머문다 | lease 만료(`lease_recovered`, `LEASE_EXPIRED`), 프로세스 재시작 |
-| 같은 메일이 두 번 갔다 | `LEASE_EXPIRED` 시도, `drain_timeout`, `lease_lost` |
+| `failureReason`이 `OUTCOME_UNKNOWN`이다, 같은 메일이 두 번 갔다 | "결과 불명 실패"의 `OUTCOME_UNKNOWN`, `LEASE_EXPIRED` 시도, `drain_timeout`, `lease_lost` |
 | 입력 폴더의 파일이 남는다 | `file_poll`의 `unreadable`·`deleteFailed`, `file_inbox_missing` |
 | 이벤트가 안 온다 | 작업 상태, 긴 트랜잭션, cursor 저장 |
 | 호출처가 오래 폴링하지 않았다, `Mailo-Cursor-Gap` 헤더나 410이 온다 | "이벤트 피드 공백" |
@@ -422,7 +422,7 @@ SELECT scope_type, scope_id, paused_at, paused_by FROM mail_send_controls ORDER 
 
 ## 결과 불명 실패
 
-근거: RQ-048, ADR-0011 결정 5.
+근거: RQ-048·073·074, ADR-0011 결정 5, ADR-0015 결정 5~10.
 
 의미: `outcomeUncertain: true`는 SMTP 서버가 메일을 수락했는지 알 수 없는 시도가 한 건이라도 있었다는 뜻이다. 판정은 `mail_attempts`에서 한다. 새 컬럼은 없다.
 
@@ -450,6 +450,28 @@ SELECT j.id, j.caller_id, j.status, j.attempts, j.finished_at
 - `true`가 많으면 SMTP 응답 지연이나 연결 끊김이 반복된 것이다. DATA 단계 타임아웃(`MAILO_SMTP_TIMEOUT_SECONDS`, 기본 30초)과 "lease 만료"의 원인 목록을 본다.
 - 운영자가 대신 다시 보내는 방법은 없다. 호출처가 새 Key로 다시 제출한다(`caller-onboarding.md` "결과 불명 실패"). 본문은 종결 전이에서 지워지므로(RQ-071) 운영자가 복원할 수 없다.
 - 한계: 서버가 응답했지만 Mailo가 받지 못한 경우처럼 위 두 조건 밖의 불명은 잡지 못한다. 시도 이력은 작업과 함께 보존 기간(기본 30일) 뒤에 지워져 조회가 404다.
+
+### `OUTCOME_UNKNOWN` 종결
+
+요청이 `onUncertainOutcome: fail`을 보냈으면 위 두 조건의 시도 뒤에 재시도하지 않고 `FAILED`·`failureReason: OUTCOME_UNKNOWN`으로 끝난다(ADR-0015 결정 7). 시도 횟수 소진과 만료보다 먼저 정해진다. 작업 행의 `on_uncertain`이 `fail`이다. 값은 등록 때 고정되고 바뀌지 않는다.
+
+```sql
+-- OUTCOME_UNKNOWN으로 끝난 작업과 불명을 만든 시도의 분류
+SELECT j.id, j.caller_id, j.attempts, j.finished_at,
+       (SELECT a.classification FROM mail_attempts a WHERE a.job_id = j.id ORDER BY a.id DESC LIMIT 1) AS last_classification
+  FROM mail_jobs j
+ WHERE j.failure_reason = 'OUTCOME_UNKNOWN'
+ ORDER BY j.finished_at DESC LIMIT 20;
+```
+
+| 관찰 | 원인 | 확인 |
+| ---- | ---- | ---- |
+| 마지막 시도가 `LEASE_EXPIRED`다 | 전송 중 프로세스가 죽었거나 결과 기록이 lease 안에 끝나지 않았다. 점유 직후 죽어 전송 전이었을 수도 있다 | `mailo_lease_recovered_total`, `drain_timeout`, `lease_lost`. 배포(종료)마다 늘면 `stop_grace_period`가 lease보다 짧은지 본다(`deployment.md` "종료와 stop_grace_period") |
+| 마지막 시도가 `TRANSIENT`이고 `stage = 'DATA'`, 응답 코드 없음 | DATA 단계 타임아웃·연결 끊김이다 | `mailo_attempt_errors_total{stage="data",result="transient"}`, `MAILO_SMTP_TIMEOUT_SECONDS` |
+| `mailo_jobs_outcome_unknown_total`이 갑자기 늘었다 | 위 두 원인 중 하나가 반복된다. 호출처·계정 라벨로 범위를 좁힌다 | `by (caller_id, account_id)`로 본다. 한 계정에 몰리면 SMTP 연결 문제, 전 계정이면 배포·프로세스 종료다 |
+
+- 메일이 나갔는지는 Mailo가 알지 못한다. SMTP 서버의 보낸편지함·수신 로그로 확인하는 수단은 Mailo에 없다. 호출처가 확인한 뒤 새 `Idempotency-Key`로 다시 보낸다(`caller-onboarding.md` "결과 불명이면 재시도하지 않기").
+- 운영자가 `on_uncertain`을 바꾸는 방법은 없다. 새 요청에서 `onUncertainOutcome`을 `retry`로 보내거나 생략한다.
 
 ## 작업 취소
 
@@ -571,7 +593,8 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 | `mailo_attempt_errors_total`의 `stage="data"`가 늘고 `result="transient"` | DATA 단계 일시 오류·타임아웃이다. 타임아웃이면 결과 불명일 수 있다 | "결과 불명 실패" |
 | `mailo_attempt_errors_total`의 `result="internal"`이 늘고 `stage="worker"` | Mailo 내부 오류(복호화 실패, 잘못된 작업 데이터)다. SMTP에 닿지 않았고 차단기는 바뀌지 않는다 | `job_internal_error` 로그의 `error`(이름·코드만). 키 설정(`key-management.md`)을 확인한다 |
 | `mailo_lease_recovered_total`이 늘었다 | 전송 중 프로세스가 죽었거나 결과 기록이 lease 안에 끝나지 않았다. 같은 메일이 두 번 갈 수 있다(RQ-013) | "lease 만료" |
-| `mailo_jobs_finished_total{status="failed"}` 비율이 높다 | 영구 오류나 시도 소진이다 | `result="permanent"`의 `stage`, 이벤트의 `failureReason`. 호출처별로 `by (caller_id)`를 본다 |
+| `mailo_jobs_finished_total{status="failed"}` 비율이 높다 | 영구 오류, 시도 소진, `OUTCOME_UNKNOWN`이다 | `result="permanent"`의 `stage`, 이벤트의 `failureReason`, `mailo_jobs_outcome_unknown_total`. 호출처별로 `by (caller_id)`를 본다 |
+| `mailo_jobs_outcome_unknown_total`이 늘었다 | `onUncertainOutcome: fail` 요청이 결과 불명으로 끝났다. 메일이 나갔을 수도 있다 | "결과 불명 실패"의 `OUTCOME_UNKNOWN` 종결 |
 | `mailo_jobs_finished_total{status="expired"}`가 늘고 정지·할당이 걸려 있다 | 정지 중에도 TTL이 흘러 `EXPIRED`가 쌓인다 | "발송 정지", "호출처 할당 초과" |
 | `mailo_caller_latest_event_age_seconds`가 크다 | 그 호출처의 새 종결 이벤트가 오래 없었다. 소비자의 처리 지연이 아니다 | "피드 지연 해석" |
 | `mailo_event_cursor_gap_total`이 늘었다 | 호출처가 보존 기간(기본 30일)보다 오래 폴링하지 않았다 | "이벤트 피드 공백" |

@@ -40,7 +40,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0012](../adr/0012-metrics-endpoint.md): `GET /metrics`(읽기 토큰만, 관리 토큰 403), 전역 gauge와 인스턴스 counter 구분, 라벨 규칙과 시리즈 상한, TTL 캐시·단일 비행, 수동 텍스트 직렬화, 감사 행 수 지표. 구현했다(RQ-049~052).
 - [ADR-0013](../adr/0013-multiple-smtp-accounts.md): 다중 SMTP 계정(`MAILO_SMTP_ACCOUNTS_FILE`, `default` 출처 규칙), 호출처의 `accountId`와 작업의 등록 때 계정 고정, 계정 단위 점유·차단기·정지·24시간 할당, 마이그레이션 `0010`~`0016`, 관측과 운영 표면, 발신 주소 허용 집합. 구현 묶음 A(RQ-053~056)와 B(RQ-057~059)를 구현했고 C·D는 구현 전이다.
 - [ADR-0014](../adr/0014-caller-tools-and-docs.md): 호출처 도구와 문서. 프로토콜 적합성 벡터(`docs/api/conformance/vectors.json`, 공개 가짜 키와 production 거부), Java 샘플 연동(선택), 키 분실·유출 대응 절차, DB 유지보수 안내, 레지스트리 변경 반영 절차. 레지스트리 재로드와 파티셔닝은 구현하지 않는다. 구현 묶음 B(RQ-064·065)를 구현했고 A(RQ-067~069) 문서를 작성했다(문서 검토 남음). C(RQ-066)는 구현 전이다.
-- [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md): 개인정보 최소화와 결과 불명 정책. 종결 때 본문·수신자·봉투 즉시 비움, 이벤트·시도 수신자의 유예(기본 7일) 뒤 비움과 `recipientsRedacted`, 요청별 `onUncertainOutcome`(`retry`·`fail`)과 `OUTCOME_UNKNOWN` 종결, 호출처 보존 현황 문서. 승인됐고(2026-11-24) 묶음 A(RQ-070)는 문서를 작성했고(검토 남음) 묶음 B(RQ-071)와 묶음 C(RQ-072)를 구현했다. 나머지(RQ-073·074)는 구현 전이다.
+- [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md): 개인정보 최소화와 결과 불명 정책. 종결 때 본문·수신자·봉투 즉시 비움, 이벤트·시도 수신자의 유예(기본 7일) 뒤 비움과 `recipientsRedacted`, 요청별 `onUncertainOutcome`(`retry`·`fail`)과 `OUTCOME_UNKNOWN` 종결, 호출처 보존 현황 문서. 승인됐고(2026-11-24) 묶음 A(RQ-070)는 문서를 작성했고(검토 남음) 묶음 B(RQ-071), 묶음 C(RQ-072), 묶음 D(RQ-073·074)를 구현했다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
@@ -105,7 +105,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 | 8단계 | 관측성(ADR-0012). `GET /metrics`(RQ-049), 이름·라벨 규칙(RQ-050), 전역 gauge(RQ-051), 인스턴스 counter·gauge(RQ-052). 마이그레이션 없음 |
 | 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-075 이후를 해당 묶음에서 추가한다(RQ-070~074는 10단계가 쓴다) |
 | 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했고 A 문서(RQ-067~069: 키 사고 대응, DB 유지보수, 레지스트리 변경 반영)를 작성했다(코드 변경 없음, 문서 검토 남음). C Java 샘플 연동(선택, RQ-066)은 구현 전이다 |
-| 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨). 묶음 A 보존 현황 문서(RQ-070, 문서 작성 완료·검토 남음), B 종결 때 비움(RQ-071, 마이그레이션 없음, 구현 완료·미검증 항목 있음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개, 구현 완료·미검증 항목 있음), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 1개). A·B를 먼저 한다 |
+| 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨). 묶음 A 보존 현황 문서(RQ-070, 문서 작성 완료·검토 남음), B 종결 때 비움(RQ-071, 마이그레이션 없음, 구현 완료·미검증 항목 있음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개, 구현 완료·미검증 항목 있음), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 `0019` 하나, 구현 완료·미검증 항목 있음) |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -529,6 +529,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 - SMTP는 exactly-once 전달을 보장하지 않는다.
 - SMTP 서버가 메일을 수락한 직후 장애가 나면 재시도로 같은 메일이 다시 발송될 수 있다.
 - 요청 중복 방지와 SMTP 전송 중복 방지는 구분해서 설계하고 문서화해야 한다.
+- 요청이 `onUncertainOutcome: fail`을 고르면 결과 불명 구간(lease 만료 회수, DATA 단계 응답 없는 일시 오류)에서는 재발송하지 않는다. 정확히 한 번은 보장하지 않는다(RQ-073·074, ADR-0015 결정 6).
 
 **수용 조건:**
 
@@ -1695,7 +1696,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
   - `classification = 'TRANSIENT'`이고 `stage = 'DATA'`이고 `response_code IS NULL`(DATA 단계 타임아웃·연결 끊김, ADR-0007 결정 3).
   그 밖에는 `false`다. SMTP 응답 코드가 있는 실패, DATA 이전 단계, Mailo 내부 오류(`stage = 'WORKER'`), 시도가 없는 작업이 해당한다.
 - 새 컬럼과 마이그레이션은 없다. 단건 조회는 `mail_attempts_job_idx`를 쓰는 `EXISTS`, 이벤트 피드는 한 페이지의 `JOB_FAILED`·`JOB_EXPIRED` 작업 ID를 한 쿼리로 읽는다.
-- 표시만 한다. 재시도 정책(ADR-0001 결정 5, ADR-0007 결정 3)은 바꾸지 않는다. 운영자 재시도 API는 만들지 않는다. 호출처가 새 Key로 다시 제출하고 중복 발송 위험은 호출처가 판단한다.
+- 표시 자체는 재시도 정책(ADR-0001 결정 5, ADR-0007 결정 3)을 바꾸지 않는다. 요청이 `onUncertainOutcome: fail`을 고르면 같은 판정(`queue/uncertain.ts`)으로 재시도 없이 끝낸다(RQ-073·074). 운영자 재시도 API는 만들지 않는다. 호출처가 새 Key로 다시 제출하고 중복 발송 위험은 호출처가 판단한다.
 - 수신자·본문·SMTP 응답 텍스트·Key(운영자 읽기)는 이 표시로 노출하지 않는다(RQ-027).
 - `openapi.yaml`의 `Job`·`OpsJob`은 `additionalProperties: false`라 필드 추가는 호출처 계약 변경이다. 문서에 명시하고, 호출처는 모르는 필드를 무시한다(`docs/api/README.md` "호출처가 모르는 값을 만났을 때").
 - 한계: 서버가 응답했지만 Mailo가 받지 못한 경우처럼 위 두 조건 밖의 불명은 잡지 못한다. 시도 이력은 작업과 함께 보존 기간(기본 30일) 뒤 지워진다.
@@ -1829,9 +1830,10 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
   - `mailo_attempts_total{caller_id,account_id,result}`: 결과 기록이 적용됐을 때(`LEASE_LOST`로 버린 결과는 세지 않는다). `internal`은 `AttemptOutcome.internal`이 true인 결과다.
   - `mailo_attempt_errors_total{account_id,result,stage,reason}`: 실패 결과마다. `reason`은 `account`일 때만 `none`이 아니다.
   - `mailo_jobs_finished_total{caller_id,account_id,status}`: 이 인스턴스가 커밋한 종결 전이(결과 기록, 만료 sweep, lease 복구, 호출처·관리 토큰 취소). 멱등 반복 취소는 세지 않는다.
+  - `mailo_jobs_outcome_unknown_total{caller_id,account_id}`: 결과 기록과 lease 복구가 `OUTCOME_UNKNOWN`으로 종결을 커밋했을 때(RQ-074). `mailo_jobs_finished_total`의 `failed`에도 함께 센다. 만료 sweep·취소는 세지 않는다.
   - `mailo_claim_polls_total{result}`, `mailo_claimed_jobs_total`, `mailo_lease_recovered_total`, `mailo_file_channel_files_total{caller_id,result}`, `mailo_event_cursor_gap_total{caller_id}`.
 - `queue/`는 `metrics/`를 import하지 않는다. 종결 전이를 만드는 경로는 반환 형식을 바꾸지 않고 커밋 뒤 관찰자 콜백(`sweepExpired`, `recoverExpiredLeases`, `claim`의 `onLeaseRecovered`)으로 알린다. 취소 결과는 호출처 ID를 담는다. 주입하지 않은 앱은 세지 않는다.
-- 알림 규칙이 쓰는 counter는 시작할 때 0으로 미리 낸다. 시리즈가 처음 생기는 순간의 증가는 `increase()`가 놓치기 때문이다(ADR-0012 구현 중 확정 15). 대상은 `claim_polls`(3개), `lease_recovered`, 레지스트리 호출처마다 `attempts`(5개)·`finished`(4개)·`claimed_jobs`·`cursor_gap`이다. 지표당 시리즈 상한(2000) 안에서만 미리 낸다. `unregistered`, `file_channel_files`, `attempt_errors`는 미리 내지 않는다(첫 증가를 `increase()`가 놓친다).
+- 알림 규칙이 쓰는 counter는 시작할 때 0으로 미리 낸다. 시리즈가 처음 생기는 순간의 증가는 `increase()`가 놓치기 때문이다(ADR-0012 구현 중 확정 15). 대상은 `claim_polls`(3개), `lease_recovered`, 레지스트리 호출처마다 `attempts`(5개)·`finished`(4개)·`outcome_unknown`·`claimed_jobs`·`cursor_gap`이다. 지표당 시리즈 상한(2000) 안에서만 미리 낸다. `unregistered`, `file_channel_files`, `attempt_errors`는 미리 내지 않는다(첫 증가를 `increase()`가 놓친다).
 - 인스턴스 gauge: Worker 상태(원핫)·진행 중 전송·마지막 점유 경과·연속 점유 실패·점유 루프 사망, 파일 폴러 상태, `collect_ok`, `snapshot_age`. `process_start_time_seconds`·`process_resident_memory_bytes`·`process_cpu_seconds_total`을 낸다.
 
 **수용 조건:**
@@ -2336,7 +2338,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 ## 18. 개인정보 최소화와 결과 불명 정책
 
-결정은 [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md)이고 구현은 묶음 A(문서) → B(종결 때 비움) → C(이벤트 수신자 비움), D(결과 불명 opt-in) 순서다. D는 B 뒤에 시작하고 C와 D는 서로 독립이다. RQ-070은 묶음 A, RQ-071은 묶음 B, RQ-072는 묶음 C, RQ-073·074는 묶음 D의 범위다. 마이그레이션은 묶음 C(컬럼 하나, 부분 인덱스 하나)와 묶음 D(컬럼 하나)에만 있다. 새 npm 의존성은 없다. 묶음 A(RQ-070)는 문서를 작성했고 묶음 B(RQ-071)와 묶음 C(RQ-072)를 구현했다. 나머지는 구현 전이다.
+결정은 [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md)이고 구현은 묶음 A(문서) → B(종결 때 비움) → C(이벤트 수신자 비움), D(결과 불명 opt-in) 순서다. D는 B 뒤에 시작하고 C와 D는 서로 독립이다. RQ-070은 묶음 A, RQ-071은 묶음 B, RQ-072는 묶음 C, RQ-073·074는 묶음 D의 범위다. 마이그레이션은 묶음 C(컬럼 하나, 부분 인덱스 하나)와 묶음 D(컬럼 하나)에만 있다. 새 npm 의존성은 없다. 묶음 A(RQ-070)는 문서를 작성했고 묶음 B(RQ-071), 묶음 C(RQ-072), 묶음 D(RQ-073·074)를 구현했다.
 
 ### RQ-070 개인정보 보존 현황 문서와 호출처 안내
 
@@ -2433,47 +2435,69 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 ### RQ-073 `onUncertainOutcome` 요청 필드와 등록 때 고정
 
-- [ ] **진행 상태:** 미착수 (10단계 묶음 D)
+- [ ] **진행 상태:** 진행 중 (10단계 묶음 D, 구현 완료, 롤링 배포·롤백 실행 남음)
 
 **요구사항:**
 
 - 요청의 선택 최상위 평문 필드 `onUncertainOutcome`은 `retry`·`fail`만 받는다. 생략하면 `retry`(현재 동작)다. JWE 평문 안에 있으면 `UNKNOWN_FIELD`다(ADR-0015 결정 6).
 - 지문은 지정했을 때만 `policy.onUncertainOutcome`에 값을 넣는다. 생략과 `retry` 명시는 다른 요청이다. 형식 태그를 올리지 않는다.
-- 작업은 등록 때 `mail_jobs.on_uncertain`(`retry` 기본, CHECK `NOT VALID`)에 값을 고정한다(ADR-0015 결정 9). 배포 순서는 마이그레이션 → 모든 인스턴스 교체 → 호출처 전송 시작이다.
+- 작업은 등록 때 `mail_jobs.on_uncertain`(`retry` 기본, CHECK `NOT VALID`)에 값을 고정한다(ADR-0015 결정 9, 마이그레이션 `0019`). 배포 순서는 마이그레이션 → 모든 인스턴스 교체 → 호출처 전송 시작이다. 이전 버전은 이 필드를 `UNKNOWN_FIELD`로 거부한다.
+- 같은 Key의 기존 행은 값을 바꾸지 않는다. 도입 전에 등록한 행은 `retry`로 읽히고 지문에 이 필드가 없다. 그 Key를 `retry` 명시로 다시 보내면 지문이 달라 409다.
+- 작업 조회(`Job`)와 이벤트에는 이 값을 내지 않는다.
 
 **수용 조건:**
 
-- [ ] 허용 값과 오류(REST 400, 파일 수집 거부)가 맞고 오류에 요청 값이 없다.
-- [ ] 도입 전 지문이 바이트 단위로 같다(골든). 같은 Key에 다른 값은 REST 409, 파일 지문 불일치 거부다.
-- [ ] 등록한 작업의 `on_uncertain`이 요청 값이고 생략하면 `retry`다.
+- [x] 허용 값과 오류(REST 400, 파일 수집 거부)가 맞고 오류에 요청 값이 없다.
+- [x] 도입 전 지문이 바이트 단위로 같다(골든). 같은 Key에 다른 값은 REST 409, 파일 지문 불일치 거부다. 생략과 `retry` 명시도 서로 409다.
+- [x] 등록한 작업의 `on_uncertain`이 요청 값이고 생략하면 `retry`다. 컬럼 없이 만든 구버전 행도 `retry`다.
+- [x] 도입 전 행(0001~0016 schema에 만든 행, 도입 전 지문)의 같은 Key 재요청은 생략이면 200, 값을 명시하면 409이고 기존 행은 그대로다.
+- [x] 마이그레이션이 기존 행을 백필 없이 `retry`로 두고 표를 다시 쓰지 않으며(`relfilenode` 불변) 허용 값 밖은 `NOT VALID` CHECK로 새 행에서 거부한다.
+- [ ] 롤링 배포(구·신 인스턴스 혼용)·롤백을 실행해 확인했다. (실행하지 않았다. 이전 버전이 필드를 `UNKNOWN_FIELD`로 거부하는 것은 이전 코드의 `parseRequestSchema`를 실행해 확인했다.)
 
 **판정 근거:**
 
-- 구현 전이다.
+- `envelope/open-request.spec.ts`(단위, 21건 추가): 생략의 정규화 문자열·지문 골든 값, `retry`·`fail`의 `policy` 값과 서로 다른 지문, `policy` 키 이름 순서(priority·ttlSeconds와 함께), 잘못된 값(REST·파일), 파일 JWS 서명 대상, JWE 바깥 값 보존·평문 안 `UNKNOWN_FIELD`, 값 canary 비노출, 등록 입력 변환.
+- `http/rest-uncertain-outcome.integration-spec.ts`(PostgreSQL, 실제 앱, 11건): 도입 전 행(0001~0016 schema, 도입 전 지문)의 재요청, 등록 값 고정, 같은 Key 재요청의 200·409, 잘못된 값의 400과 canary.
+- `file-channel/poller.integration-spec.ts`의 "결과 불명 처리 정책"(4건): 평문 JSON·JWS·JWE 파일의 값 고정, 거부와 canary, 서명 변조, 같은 Key의 중복·`FINGERPRINT_MISMATCH`.
+- `db/job-on-uncertain-migration.integration-spec.ts`(6건): 0019 적용, 기존 행 `retry`와 `relfilenode` 불변, 컬럼 정의, `NOT VALID` CHECK, 구버전 INSERT, 허용 값.
+- `queue/uncertain-outcome.integration-spec.ts`의 "등록 때 고정": `register`의 저장 값과 재등록 불변, 컬럼 없이 만든 행의 `retry` 판정.
+- RED 확인(2026-11-24): 마이그레이션 테스트는 0019 파일이 없어 6건 모두 실패했다. `open-request.spec.ts`는 추가한 21건 중 19건이 구현 전에 실패했다. REST 테스트는 구현을 빼고 돌려 11건 중 9건이, 파일 채널 테스트는 4건 중 2건이 실패했다(잘못된 값 거부와 서명 변조는 구현 전에도 `UNKNOWN_FIELD`로 거부돼 통과하는 특성 테스트다).
+- 구현: `envelope/request-schema.ts`, `envelope/open-request.ts`(`requestPolicy`), `envelope/register-input.ts`, `queue/register.ts`, `queue/uncertain.ts`, `migrations/0019_job_on_uncertain.sql`.
+- 이전 버전의 거부(2026-11-24): 이 변경 전 코드(dev `fe7157b`)의 `parseRequestSchema`에 `onUncertainOutcome: "fail"`을 넣어 실행하니 REST·파일 모두 `{ pointer: "", code: "UNKNOWN_FIELD" }`로 거부했다.
+- 한계: 롤링 배포·롤백을 실행하지 않았다. 저장소 밖 호출처가 새 필드를 보내거나 `onUncertainOutcome`을 `Job`에서 읽는지는 확인하지 않았다. `docs/api/conformance/vectors.json`에는 이 필드의 벡터를 더하지 않았다.
 
 ### RQ-074 결과 불명 `fail` 종결과 계약
 
-- [ ] **진행 상태:** 미착수 (10단계 묶음 D)
+- [ ] **진행 상태:** 진행 중 (10단계 묶음 D, 구현 완료, 롤링 배포·롤백 실행과 실제 Gmail 확인 남음)
 
 **요구사항:**
 
 - `on_uncertain`이 `fail`이고 시도가 결과 불명(`LEASE_EXPIRED`, 또는 `TRANSIENT`·DATA 단계·응답 코드 없음)이면 `retryOrFinish`보다 먼저 `FAILED`와 `failureReason: OUTCOME_UNKNOWN`으로 종결하고 `JOB_FAILED` 이벤트를 쓴다. 만료·소진과 겹쳐도 이 사유가 우선한다(ADR-0015 결정 5·7·8).
-- 시도 횟수와 차단기 처리는 기존 분기 그대로다. 불명 정의는 `outcomeUncertain`(RQ-048)과 같은 조건을 쓴다.
+- 시도 횟수와 차단기 처리는 기존 분기 그대로다. 불명 정의는 `outcomeUncertain`(RQ-048)과 같은 조건을 쓴다. 조건은 `queue/uncertain.ts`의 `isUncertainOutcome`(TypeScript)과 `UNCERTAIN_ATTEMPT_SQL`(읽기 SQL) 한 곳에 있고 둘이 같은 시도에서 같은 값을 내는 것을 통합 테스트가 확인한다.
 - `FailureReason`에 `OUTCOME_UNKNOWN`을 더하고 `docs/api/README.md`·`caller-onboarding.md`·`troubleshooting.md`를 갱신한다. 사용 기준 표와 한계(보내지 않은 메일이 종결될 수 있다, 정확히 한 번은 아니다)를 쓴다.
 - 인스턴스 counter `mailo_jobs_outcome_unknown_total`(라벨 `caller_id`, `account_id`)을 더한다(ADR-0015 결정 10).
 
 **수용 조건:**
 
-- [ ] `retry`는 현재 판정과 같다(회귀).
-- [ ] `fail`이고 불명이면 `FAILED`·`OUTCOME_UNKNOWN`·`outcomeUncertain: true`이고 재발송이 없다(실제 Worker와 가짜 SMTP).
-- [ ] `fail`이어도 응답 코드가 있는 실패, DATA 이전 단계 오류, 내부 오류는 기존 판정이다.
-- [ ] 만료·소진과 겹쳐도 `OUTCOME_UNKNOWN`이다.
-- [ ] 지표가 종결 때 늘고 라벨은 닫힌 집합이다.
-- [ ] 로그·이벤트·응답에 본문·주소 canary가 없다(RQ-027).
+- [x] `retry`는 현재 판정과 같다(회귀). 생략과 `retry` 명시가 모두 `RETRY_WAIT`이다.
+- [x] `fail`이고 불명이면 `FAILED`·`OUTCOME_UNKNOWN`·`outcomeUncertain: true`이고 재발송이 없다(실제 Worker와 가짜 SMTP: DATA 뒤 연결 끊김, lease 만료 회수, 파일 채널 요청).
+- [x] `fail`이어도 응답 코드가 있는 실패, DATA 이전 단계 오류, 내부 오류, 계정 상태 오류는 기존 판정이다.
+- [x] 만료·소진과 겹쳐도 `OUTCOME_UNKNOWN`이다(결과 기록·lease 회수 두 경로). 불명이 아닌 결과의 소진·만료는 기존 사유다.
+- [x] 차단기 영향이 `retry`와 같다. 대표 작업의 DATA 단계 불명 `TRANSIENT`는 차단기를 닫고, lease 회수와 내부 오류 `TRANSIENT`는 차단기를 건드리지 않는다. `closed` 차단기의 연속 실패 수는 불명 `TRANSIENT`가 0으로 되돌린다.
+- [x] 지표가 종결 때 늘고 라벨은 닫힌 집합이다. 불명이 아닌 `FAILED`와 재시도 대기는 올리지 않는다.
+- [x] 로그·지표·작업 조회 응답에 본문·제목·수신자 canary가 없고 이벤트에는 설계상 있는 수신자(RQ-017) 외에 제목·본문이 없다(RQ-027). 종결 UPDATE가 본문·수신자·봉투를 비운다(RQ-071).
+- [ ] 롤링 배포·롤백 실행과 실제 Gmail·Workspace의 DATA 단계 타임아웃에서 확인했다. (실행하지 않았다. 연결 끊김은 로컬 `smtp-server`의 `dropAfterData`로 흉내 냈다.)
 
 **판정 근거:**
 
-- 구현 전이다.
+- `queue/uncertain.spec.ts`(단위, 9건): 불명 판정 함수의 모양별 값(`LEASE_EXPIRED`, DATA 응답 없음, 응답 코드 있음, DATA 이전, 단계 없음, 내부 오류, 계정 오류, `SENT`).
+- `queue/uncertain-outcome.integration-spec.ts`(PostgreSQL, 36건): 결과 기록과 lease 회수(`recoverExpiredLeases`와 `claim` 앞단) 각각의 `retry`·`fail`, 이벤트·시도 기록·비움, 소진·만료와의 우선순위, 두 조건 밖의 결과, 차단기 영향(대표 작업의 닫힘, lease 회수·내부 오류의 불변, 연속 실패 수), 판정 함수와 SQL 조각의 일치(9개 모양), 구버전 행.
+- `e2e/uncertain-outcome.integration-spec.ts`(실제 Worker, 로컬 `smtp-server`, 6건): `fail`의 DATA 뒤 연결 끊김(재발송 없음, DATA 1회, 이벤트·지표·canary), `retry` 회귀, 550·RCPT 450은 기존 판정, 프로세스 사망 흉내 뒤 lease 회수의 재발송 없음, 파일 채널 요청.
+- `worker/metrics.spec.ts`·`metrics/catalog.spec.ts`·`metrics/store.spec.ts`: 카운터 라벨과 증가 조건, 카탈로그 규칙, 시작 시 0 시리즈.
+- RED 확인(2026-11-24): 구현 전 `queue/uncertain-outcome.integration-spec.ts`는 `queue/uncertain.js` 모듈이 없어 스위트가 로드되지 않았다. 지표 테스트는 6건이 실패했다. 변이 확인: `applyOutcome`의 `fail` 판정을 꺼 보니 `queue/uncertain-outcome`과 `e2e/uncertain-outcome`에서 13건이 실패했고 되돌렸다.
+- 구현: `queue/complete.ts`(`applyOutcome`의 판정과 `outcomeUnknown` 결과·전이 표시), `queue/uncertain.ts`, `queue/read.ts`(SQL 조각을 `uncertain.ts`로 옮김, 조건은 그대로), `metrics/catalog.ts`, `worker/metrics.ts`, `intake/presenters.ts`.
+- 계약 문서: `docs/api/openapi.yaml`(요청 스키마, `FailureReason`, 예시), `docs/api/README.md`, `caller-onboarding.md`, `troubleshooting.md`, `deployment.md`(배포 순서와 위험도·롤백).
+- 한계: 롤링 배포·롤백을 실행하지 않았다. 실제 Gmail·Workspace에서 DATA 단계 타임아웃의 빈도와 같은 `Message-ID`의 중복 제거는 확인하지 않았다. 컨테이너 종료(SIGTERM·SIGKILL) 경로는 L3 스크립트로 실행하지 않았다(종료 순서·Dockerfile 변경 없음). 저장소 밖 호출처가 `OUTCOME_UNKNOWN`을 처리하는지 확인하지 않았다. Java 샘플은 `failureReason`을 문자열로 읽어 새 값을 그대로 쓴다(코드 읽기, 샘플 테스트는 실행하지 않았다).
 
 ## 확정한 항목
 

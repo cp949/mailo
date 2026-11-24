@@ -201,6 +201,42 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 롤백: 호출처 전송을 끊은 뒤 앱만 이전 버전으로 되돌린다
 ```
 
+### 결과 불명 정책 도입 배포 순서
+
+근거: RQ-073·074, ADR-0015 결정 8~10.
+
+새 환경 변수는 없다. 마이그레이션 `0019_job_on_uncertain.sql`이 `mail_jobs`에 `on_uncertain text NOT NULL DEFAULT 'retry'`와 `CHECK (on_uncertain IN ('retry','fail')) NOT VALID`를 더한다. 상수 DEFAULT 컬럼 추가라 PostgreSQL 11 이상에서 테이블을 다시 쓰지 않는다(통합 테스트 `test/db/job-on-uncertain-migration.integration-spec.ts`가 `relfilenode` 불변을 확인했다). `ALTER TABLE`의 `ACCESS EXCLUSIVE` 잠금 대기는 대용량 테이블에서 측정하지 않았다. `0017`·`0018`은 이벤트 수신자 비움(RQ-072)의 마이그레이션이고 `0019`는 그 뒤에 이름 순으로 적용된다(`test/db/job-on-uncertain-migration.integration-spec.ts`가 전체 폴더 적용 순서를 확인한다).
+
+1. `pg_dump`를 받는다("백업과 복구"). `0019`를 적용한다(기동 때 자동 또는 `mailo-migrate`). 새 버전의 등록 INSERT가 `on_uncertain`을 쓰므로 새 버전 인스턴스를 띄우기 전에 적용한다.
+2. 모든 Mailo 인스턴스를 새 버전으로 바꾼다. 이전 버전은 컬럼을 열거해 읽고 쓰므로 마이그레이션 직후에도 동작한다. 이전 버전의 INSERT는 DEFAULT `retry`가 된다.
+3. 호출처가 `onUncertainOutcome` 전송을 시작한다(`caller-onboarding.md` "결과 불명이면 재시도하지 않기"). 2가 끝나기 전에는 시작하지 않는다.
+
+3이 2 뒤여야 하는 이유(코드로 확인한 동작):
+
+- 이전 버전은 `onUncertainOutcome`을 정의되지 않은 필드로 거부한다. REST는 400 `UNKNOWN_FIELD`, 파일 채널은 `VALIDATION_FAILED` 거부다. 이전 버전의 `parseRequestSchema`에 이 필드를 넣어 두 경로가 `UNKNOWN_FIELD`를 내는 것을 실행해 확인했다(2026-11-24).
+- 롤링 중에 새 인스턴스가 `fail`로 등록한 작업을 이전 버전 Worker가 점유해 결과를 기록하면 `on_uncertain`을 읽지 않으므로 `retry`처럼 재시도한다. 같은 메일이 두 번 갈 수 있다.
+- 종료(배포) 때 drain 상한을 넘긴 전송은 lease 회수로 `LEASE_EXPIRED`가 되고 `fail` 작업은 그대로 종결한다. `stop_grace_period`가 lease 이상인지 확인한다("종료와 stop_grace_period"). 어기면 `fail` 요청의 손실이 배포마다 생긴다.
+
+롤백:
+
+1. 호출처가 `onUncertainOutcome` 전송을 먼저 끊는다. 끊지 않으면 이전 버전에서 REST는 400, 파일은 수집 거부다.
+2. 같은 Key로 이미 등록한 요청을 필드를 빼고 다시 보내지 않는다. 지문의 `policy.onUncertainOutcome`이 달라져 REST는 409, 파일은 `FINGERPRINT_MISMATCH`다(확인 절차는 "우선순위 도입 배포 순서"의 롤백 2~3과 같다).
+3. 처리 중인 `fail` 작업을 확인한다. 이전 버전으로 바꾸면 이 작업은 `retry`처럼 처리된다. 비는 것을 기다리거나 중복 가능성을 받아들인다.
+
+   ```sql
+   SELECT status, count(*) FROM mail_jobs
+    WHERE on_uncertain = 'fail' AND status IN ('PENDING','SENDING','RETRY_WAIT')
+    GROUP BY status;
+   ```
+
+4. 이전 버전으로 되돌린다. `on_uncertain` 컬럼과 CHECK는 남겨도 무해하다. 이전 버전이 열거하지 않고 DEFAULT가 `retry`다.
+5. 이미 `OUTCOME_UNKNOWN`으로 끝난 작업은 `FAILED`로 남는다. 이전 버전은 사유 문자열을 그대로 낸다(`failureReasonOf`의 `?? stored`). 호출처가 모르는 `failureReason`을 처리하는지는 호출처 책임이다. 이 저장소 밖 호출처는 확인하지 못했다.
+
+```txt
+위험도: 높음 (판정 순서와 큐 SQL 변경, 요청 계약과 failureReason enum 변경. 마이그레이션은 컬럼 하나)
+롤백: 호출처가 onUncertainOutcome 전송을 먼저 끊고 이전 버전으로 교체한다. 컬럼은 남긴다. 처리 중이던 fail 작업은 이전 버전이 retry로 처리한다. OUTCOME_UNKNOWN으로 끝난 작업은 FAILED로 남는다
+```
+
 ### 작업 취소 도입 배포 순서
 
 근거: RQ-040·041, ADR-0011 결정 4·10.
@@ -734,6 +770,7 @@ DB 상태와 DB `now()`로 계산한다. 인스턴스마다 `MAILO_METRICS_CACHE
 | `mailo_attempts_total` | `caller_id`, `account_id`, `result`=`sent`·`transient`·`permanent`·`account`·`internal` | 기록한 시도 결과. `LEASE_LOST`로 버린 결과는 세지 않는다. `internal`은 SMTP에 닿기 전 Mailo 내부 오류다 |
 | `mailo_attempt_errors_total` | `account_id`, `result`, `stage`=`conn`·`tls`·`auth`·`mail_from`·`rcpt`·`data`·`worker`·`unknown`, `reason`=`none`·`daily_limit`·`rate_limit`·`connection`·`tls`·`auth`·`other` | 실패 시도의 분류. `reason`은 `result`가 `account`일 때만 `none`이 아니다 |
 | `mailo_jobs_finished_total` | `caller_id`, `account_id`, `status`=`sent`·`failed`·`expired`·`canceled` | 이 프로세스가 커밋한 종결 전이(결과 기록, 만료 sweep, lease 복구, 취소) |
+| `mailo_jobs_outcome_unknown_total` | `caller_id`, `account_id` | 이 프로세스가 커밋한 `OUTCOME_UNKNOWN` 종결 수(요청이 `onUncertainOutcome: fail`을 골랐고 결과 불명 시도 뒤 재시도 없이 끝난 작업). `mailo_jobs_finished_total`의 `failed`에도 함께 센다 |
 | `mailo_claim_polls_total` | `result`=`claimed`·`empty`·`error` | 점유 루프의 점유 호출 |
 | `mailo_claimed_jobs_total` | `caller_id`, `account_id` | 점유한 작업 수 |
 | `mailo_lease_recovered_total` | `account_id` | lease 만료로 회수한 작업 수. 중복 발송 가능성의 신호다(RQ-013) |
@@ -751,7 +788,7 @@ DB 상태와 DB `now()`로 계산한다. 인스턴스마다 `MAILO_METRICS_CACHE
 
 - counter는 커밋한 뒤에 오른다. 커밋과 증가 사이에 프로세스가 죽으면 그 한 건을 놓친다.
 - 시리즈가 처음 생기는 순간의 증가는 `increase()`·`rate()`가 놓친다(처음 보는 값이 1이면 증가량을 알 수 없다). 그래서 알림 규칙이 쓰는 counter는 시작할 때 0으로 미리 낸다.
-  - 미리 내는 것: `mailo_claim_polls_total`(3개), `mailo_lease_recovered_total`, 그리고 레지스트리 호출처마다 `mailo_attempts_total`(5개)·`mailo_jobs_finished_total`(4개)·`mailo_claimed_jobs_total`·`mailo_event_cursor_gap_total`. 호출처 400개까지 지표당 2000개 안이다. 호출처가 더 많으면 앞의 2000개만 미리 낸다.
+  - 미리 내는 것: `mailo_claim_polls_total`(3개), `mailo_lease_recovered_total`, 그리고 레지스트리 호출처마다 `mailo_attempts_total`(5개)·`mailo_jobs_finished_total`(4개)·`mailo_jobs_outcome_unknown_total`·`mailo_claimed_jobs_total`·`mailo_event_cursor_gap_total`. 호출처 400개까지 지표당 2000개 안이다. 호출처가 더 많으면 앞의 2000개만 미리 낸다.
   - 미리 내지 못하는 것: `caller_id="unregistered"` 시리즈(레지스트리에서 뺀 호출처), `mailo_file_channel_files_total`, `mailo_attempt_errors_total`(조합이 불가능한 값이 많다). 이 시리즈의 첫 증가는 `increase()`가 놓친다. 이후 증가는 센다. 부록의 알림 규칙 중 이 시리즈에만 생기는 증가를 보는 것은 없다. `MailoFailedRatioHigh`는 `unregistered` 호출처의 첫 종결 하나를 놓칠 수 있다.
 - 종결 건수는 DB로 세지 않는다(상태별 `count(*)`를 받치는 인덱스가 없다). `mailo_jobs_finished_total`의 `increase`로 본다. 재시작과 인스턴스 교체를 `rate`·`increase`가 처리한다.
 - 평균 발송 처리 시간은 히스토그램이 필요해 정하지 않았다.

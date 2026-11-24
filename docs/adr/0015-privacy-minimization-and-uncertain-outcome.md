@@ -6,7 +6,7 @@
 
 2026-11-24에 초안을 쓰고 같은 날 사용자가 결정 1~10의 권고안 전체를 승인했다. 열린 질문이던 8건도 모두 권고대로 승인했다. 확정한 답은 "구현 중 확정"의 2026-11-24 승인 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 10. 개인정보 최소화와 결과 불명 정책"이다. 범위는 그 표의 두 항목(수신자 주소 보존 단축, 결과 불명 처리 opt-in)이고 넓히지 않았다.
 
-구현 상태(2026-11-24): 묶음 A(문서, 결정 1, RQ-070)를 작성했다(문서 검토 남음). 묶음 B(결정 2, RQ-071)를 구현했다(미검증 항목 있음). 묶음 C(결정 3, RQ-072)를 구현했다(미검증 항목 있음). 묶음 D는 시작하지 않았다.
+구현 상태(2026-11-24): 묶음 A(문서, 결정 1, RQ-070)를 작성했다(문서 검토 남음). 묶음 B(결정 2, RQ-071)를 구현했다(미검증 항목 있음). 묶음 C(결정 3, RQ-072)를 구현했다(미검증 항목 있음). 묶음 D(결정 5~10, RQ-073·074)를 구현했다(미검증 항목 있음).
 
 검증 범위는 코드·문서 읽기다(2026-11-24). 테스트, 스크립트, 쿼리, 측정을 실행하지 않았다. "배경"의 "확인한 사실"은 코드와 문서에서 읽은 것이고 그 밖의 것은 "미결정·확인하지 않은 것"에 모았다. 문서에는 줄 번호 대신 파일·함수 이름으로 근거를 적었다(`docs/agents/writing-styles.md`).
 
@@ -410,6 +410,21 @@
 - 안전망 `deleteExpiredBodies`는 본문 세 열만 비운다. 이전 버전이 종결한 행과 배포 전에 이미 종결된 행의 `recipients`·`envelope`는 보존 삭제(`MAILO_RECORD_RETENTION_SECONDS`)까지 남는다. 결정 2는 "종결 전이의 같은 UPDATE"만 정했으므로 충돌하지 않는다. 앞당겨 비우는 선택 절차(배치 SQL, 위험도·롤백)를 `docs/operations/db-maintenance.md`에 두었다. 안전망 자체를 수신자·봉투까지 넓히는 코드 변경은 하지 않았다.
 - 테스트를 더했다: 취소가 `claim`에 졌을 때 값 유지, `ACCOUNT_REPEATED`·계정 오류 `EXPIRED`·`internal: true` 종결의 비움, `from`·`replyTo` canary가 로그·응답·이벤트·시도 기록·작업 행에 없음.
 - 같은 종류의 오래된 서술("본문은 종결 후 1일 지워진다")을 `.env.example`, `docs/operations/`, `mail-sending.md`, `roadmap.md`에서 이전 버전이 종결한 행 한정으로 고쳤다.
+
+### 2026-11-24 묶음 D(결정 5~10)
+
+결정 문구는 바꾸지 않는다. 코드는 `queue/uncertain.ts`, `queue/complete.ts`, `queue/register.ts`, `envelope/request-schema.ts`, `envelope/open-request.ts`, `envelope/register-input.ts`, `worker/metrics.ts`, `metrics/catalog.ts`, 마이그레이션 `0019_job_on_uncertain.sql`이다.
+
+- 마이그레이션 번호는 `0019`다. `0017`·`0018`은 묶음 C(결정 3)가 쓰고 `0019`는 그 뒤에 이름 순으로 적용된다. 통합 테스트가 전체 폴더를 새 schema에 적용해 세 파일이 이 순서로 적용됨을 확인한다. 컬럼은 결정 9의 A안(`on_uncertain text NOT NULL DEFAULT 'retry'`, `CHECK ... NOT VALID`)이다.
+- 불명 조건(결정 5)은 `queue/uncertain.ts`의 `isUncertainOutcome`(TypeScript)과 `UNCERTAIN_ATTEMPT_SQL`(읽기용 SQL 조각)에 있다. `read.ts`의 `outcomeUncertain` 도출이 같은 SQL 조각을 쓰고, 통합 테스트가 아홉 모양의 시도에서 두 값이 같음을 확인한다. 내부 오류(`internal`)는 `stage`가 `WORKER`라 두 쪽 모두 불명이 아니다.
+- 판정(결정 8)은 `applyOutcome`의 `TRANSIENT`·`LEASE_EXPIRED` 분기에서 `recordAccountOk`(일반 `TRANSIENT`만) 호출 뒤, `retryOrFinish` 앞이다. 차단기 처리를 정책 분기 앞에 두어 `fail`이어도 `retry`와 같은 차단기 영향을 갖는다. 잠금 순서(작업 행 → 차단기 행)와 시각 규칙(DB `now()`)은 바뀌지 않았다.
+- 지문(결정 6)은 지정했을 때만 `policy.onUncertainOutcome`을 넣는다. 생략과 `retry` 명시는 다른 요청이다. 그 결과 도입 전에 등록한 행(`retry`)의 같은 Key를 `retry`로 명시해 다시 보내면 지문이 달라 409다. 생략한 재요청은 도입 전 지문과 바이트 단위로 같아 200이다(골든 테스트).
+- 작업 조회(`Job`)와 이벤트에는 `onUncertainOutcome`을 내지 않는다. 결정 문구가 정하지 않았고 필드를 더하면 `additionalProperties: false`인 `Job`의 계약 변경이 더해진다. 호출처는 자기가 보낸 값을 안다.
+- 이전 버전은 이 필드를 `UNKNOWN_FIELD`로 거부한다. 이 변경 전 코드의 `parseRequestSchema`를 실행해 REST·파일 모두 확인했다. 롤링 배포·롤백은 실행하지 않았다.
+- 신규 지표(결정 10)는 `mailo_jobs_outcome_unknown_total{caller_id,account_id}`다. 알림 규칙이 쓰는 counter라 시작할 때 0으로 미리 낸다. 결과 기록과 lease 회수가 커밋한 종결에서만 오르고 `mailo_jobs_finished_total`의 `failed`에도 함께 센다.
+- `failureReason` 변환표(`intake/presenters.ts`)에 `OUTCOME_UNKNOWN`을 명시했다. 저장 값과 응답 이름이 같다.
+- 호출처 문서는 `docs/api/openapi.yaml`, `docs/api/README.md`, `caller-onboarding.md`, `troubleshooting.md`, `deployment.md`를 같은 변경에서 갱신했다. 적합성 벡터(`docs/api/conformance/vectors.json`)에는 이 필드의 벡터를 더하지 않았다. Java 샘플은 바꾸지 않았다(`failureReason`을 문자열로 읽는다).
+- 설계에서 ADR과 어긋난 점은 없다. 실제 Gmail의 DATA 단계 타임아웃 빈도, 롤링 배포·롤백, 컨테이너 종료 경로, 저장소 밖 호출처의 새 필드·`OUTCOME_UNKNOWN` 처리는 확인하지 않았다.
 
 ### 2026-11-24 묶음 A(결정 1)
 

@@ -35,7 +35,7 @@
 | 유일성 | `(caller_id, Key)`. REST와 파일 채널이 같은 범위를 쓴다 |
 | 같은 Key, 같은 내용 | 200, 기존 작업 반환 |
 | 같은 Key, 다른 내용 | 409. 두 번째 메일은 등록하지 않는다 |
-| 내용 동일 판정 | 복호화한 평문의 지문. to, cc, bcc, from, replyTo, 제목, text, html, priority, ttlSeconds가 범위다. `priority` 생략과 `NORMAL`은 같다(RQ-034). `ttlSeconds` 생략과 기본 TTL 값 명시는 다르다(RQ-039). 암호문은 비교하지 않는다 |
+| 내용 동일 판정 | 복호화한 평문의 지문. to, cc, bcc, from, replyTo, 제목, text, html, priority, ttlSeconds, onUncertainOutcome이 범위다. `priority` 생략과 `NORMAL`은 같다(RQ-034). `ttlSeconds` 생략과 기본 TTL 값 명시는 다르다(RQ-039). `onUncertainOutcome` 생략과 `retry` 명시도 다르다(RQ-073). 암호문은 비교하지 않는다 |
 | 보존 | 작업 종결 후 30일(추정). 종결되지 않은 작업의 Key는 지우지 않는다. 지난 뒤 같은 Key는 새 요청이다 |
 | Key로 쓸 값 | 요청 단위로 고유한 값. outbox 행 ID 등. 사용자 ID처럼 공유되는 값은 409를 일으킨다 |
 
@@ -61,6 +61,7 @@
 - `SENT`는 SMTP 서버의 수락이다. 받은편지함 도착이 아니고, 일부 수신자가 거부됐을 수 있다. `rejectedRecipients`를 확인한다.
 - 이벤트는 `GET /events`를 약 30초(추정) 간격으로 폴링해 받는다. cursor를 저장하고 `eventId`로 멱등하게 처리한다.
 - `FAILED`·`EXPIRED`이고 `outcomeUncertain`이 `true`이면 메일이 이미 나갔을 수 있다. 다시 보내려면 새 Key(새 outbox 행)로 등록한다. 같은 내용이 수신자에게 이미 갔을 수 있어 중복 수신 위험은 호출처가 판단한다(아래 "결과 불명 실패"). 운영자가 대신 재시도하는 API는 없다.
+- `failureReason`이 `OUTCOME_UNKNOWN`이면 요청이 `onUncertainOutcome: fail`을 골랐고 서버가 재시도 없이 끝냈다. 메일이 나갔을 수도, 나가지 않았을 수도 있다. 호출처가 확인한 뒤 새 Key로 다시 보낼지 정한다(아래 "결과 불명이면 재시도하지 않기").
 - 호출처가 취소한 작업은 `CANCELED`이고 `JOB_CANCELED` 이벤트가 온다. 실패가 아니므로 재시도하지 않는다. 같은 Key로 다시 보내면 취소된 작업이 돌아오므로 다시 보내려면 새 Key를 쓴다(아래 "작업 취소").
 - 파일 채널 호출처는 `GET /jobs?idempotencyKey=`가 404이면 이벤트 피드에서 같은 Key의 `INTAKE_REJECTED`를 찾는다.
 
@@ -75,9 +76,28 @@
 
 - `Job`에서는 모든 상태에 항상 있다. 이벤트에서는 `JOB_FAILED`·`JOB_EXPIRED`에만 있고 이 둘에는 항상 있다. `JOB_SENT`·`JOB_CANCELED`에는 없다. 같은 작업의 이벤트 값과 `GET /jobs` 값은 같다.
 - 서버가 응답했지만 Mailo가 받지 못한 경우처럼 두 조건에 없는 불명은 잡지 못한다. `false`가 "메일이 나가지 않았다"를 보장하지 않는다. at-least-once 한계(RQ-013)는 그대로다.
-- 표시만 한다. 재시도 정책은 바뀌지 않는다(ADR-0001 결정 5, ADR-0007 결정 3).
+- 이 표시 자체는 재시도 정책을 바꾸지 않는다(ADR-0001 결정 5, ADR-0007 결정 3). 요청이 `onUncertainOutcome: fail`을 보내면 정책이 바뀐다(아래 "결과 불명이면 재시도하지 않기").
 - 운영자 재시도 API는 없다. 호출처는 Key로 결과를 매칭하고, 본문은 종결 때 지워지며(RQ-071), 암호문은 작업 ID가 AAD라 새 작업으로 복사할 수 없다. 다시 보내는 책임은 호출처에 있다.
 - 호출처 지침(ADR-0011 결정 5): 다시 보낼 때는 새 `Idempotency-Key`로 등록한다. 같은 내용이 수신자에게 이미 갔을 수 있으므로 중복 수신 위험은 호출처가 판단한다.
+
+### 결과 불명이면 재시도하지 않기
+
+요청의 선택 필드 `onUncertainOutcome`(`retry` 또는 `fail`)은 위 "알 수 없는 시도" 뒤의 처리를 정한다(RQ-073·074, ADR-0015).
+
+| 값 | 동작 |
+| -- | ---- |
+| 생략, `retry` | 재시도한다. 같은 메일이 두 번 갈 수 있다. 기존 동작이다 |
+| `fail` | 재시도하지 않고 `FAILED`·`failureReason` `OUTCOME_UNKNOWN`으로 끝낸다. `outcomeUncertain`은 `true`다 |
+
+- 위치는 `priority`·`ttlSeconds`와 같은 최상위 평문 필드다. 암호화 모드에서도 `content` 바깥에 둔다. 파일 채널에서는 요청 JSON 안의 같은 필드이고 서명 대상이다.
+- 값은 등록 때 작업에 고정된다. 같은 Key로 값을 바꾸거나 생략과 `retry`를 바꿔 보내면 409다.
+- `OUTCOME_UNKNOWN`은 시도 횟수 소진(`MAX_ATTEMPTS_EXCEEDED`)과 만료(`EXPIRED`)보다 먼저 정해진다. 마지막 시도나 만료 시각을 넘긴 시도가 알 수 없는 시도여도 이 값이다.
+- 응답 코드가 있는 실패(`550` 등)와 DATA 이전 단계의 오류는 `fail`이어도 기존대로 처리한다.
+- 한계: `fail`은 정확히 한 번을 보장하지 않는다.
+  - 점유 직후 프로세스가 죽어 전송 전이었던 시도도 알 수 없는 시도로 본다. 보내지 않은 메일이 `OUTCOME_UNKNOWN`으로 끝날 수 있다.
+  - 메일이 나갔는데 `OUTCOME_UNKNOWN`이 올 수 있다.
+  - 서버 배포 중 전송이 끊기면(종료 대기 시간 초과) `fail` 요청이 종결된다.
+- 모든 Mailo 인스턴스를 교체한 뒤에 이 필드를 보내기 시작한다. 이전 버전은 이 필드를 400 `UNKNOWN_FIELD`로 거부한다(파일 채널은 수집 거부). 절차는 `docs/operations/deployment.md`와 `caller-onboarding.md`에 있다.
 - 이 필드는 `openapi.yaml`의 `Job`·`OpsJob`(`additionalProperties: false`)에 더한 것이라 계약 변경이다. 모르는 필드는 무시해야 한다(위 "호출처가 모르는 값을 만났을 때"). 보존 기간(종결 후 30일)이 지나 작업이 지워지면 값은 조회할 수 없다.
 
 ## 작업 취소
@@ -155,6 +175,7 @@
    - `openapi.yaml`의 `Job`, `Event`, `EventPage`, `ReadyResponse` 스키마는 지금 `additionalProperties: false`이다. 현재 응답의 모양일 뿐이고 이후 버전이 필드를 더하지 않는다는 약속이 아니다.
    - 더해진 필드의 예: `outcomeUncertain`(`Job`의 모든 응답과 `JOB_FAILED`·`JOB_EXPIRED` 이벤트). 모르는 호출처는 무시해도 안전하다. 이 필드는 판단을 돕는 표시이고 상태 해석을 바꾸지 않는다.
    - 더해진 필드의 예: `recipientsRedacted`(`JOB_*` 이벤트, RQ-072). 모르는 호출처는 무시해도 안전하다. 다만 유예 뒤 이벤트의 수신자가 비어 있다는 값 변화는 필드를 모르는 호출처에도 보인다("수신자 비움").
+   - 더해진 값의 예: `failureReason`의 `OUTCOME_UNKNOWN`. 상태는 `FAILED`라 종결로 처리하는 호출처는 그대로 동작한다. 사유 값을 `switch`로 닫아 둔 호출처는 모르는 값을 성공으로 처리하지 않고 "확인 필요"로 둔다. 이 값은 요청이 `onUncertainOutcome: fail`을 보낼 때만 나온다.
 
 `GET /events`가 200이 아니면 같은 요청을 말없이 반복하지 않는다. 상태 코드를 기록하고 알린다. 401은 자격 문제이므로 고치기 전에 반복하지 않는다.
 
@@ -192,17 +213,18 @@ ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다
 - 등록(202, 200)과 조회는 같은 `Job` 스키마를 쓰고 `Location: /jobs/{jobId}`를 반환한다. 본문과 수신자는 포함하지 않는다.
 - `Job` 필드: `jobId`, `idempotencyKey`, `status`, `priority`, `attempts`, `createdAt`, `expiresAt`, `sentAt`, `failedAt`, `failureReason`, `canceledAt`, `canceledBy`, `lastError`, `outcomeUncertain`, `rejectedRecipients`. `CANCELED`에서 `sentAt`·`failedAt`·`failureReason`은 `null`이고 `canceledAt`·`canceledBy`가 값을 가진다. 다른 상태에서 `canceledAt`·`canceledBy`는 `null`이다.
 - `attempts`는 차단기를 연 계정 상태 오류 시도를 뺀 횟수다. 차단기가 `closed`로 남은 계정 상태 오류는 포함한다(ADR-0007 구현 중 확정 8).
-- `failureReason`은 `PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`, `EXPIRED`다.
+- `failureReason`은 `PERMANENT_ERROR`, `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_ERROR_REPEATED`, `EXPIRED`, `OUTCOME_UNKNOWN`이다.
 - `lastError`는 `category`(`TRANSIENT`, `PERMANENT`, `ACCOUNT`, `LEASE_EXPIRED`), `smtpCode`, `enhancedCode`, `occurredAt`이다. SMTP 응답 텍스트는 API에 노출하지 않는다.
 - `rejectedRecipients`는 `address`, `smtpCode`, `enhancedCode`다. 응답 텍스트는 없다.
 - `outcomeUncertain`은 불리언이고 모든 상태에서 항상 있다(위 "결과 불명 실패").
 - 오류 `type`은 `urn:mailo:problem:<이름>` 11종이다. `forbidden`(403)은 읽기 토큰으로 `/ops`의 변경 endpoint를 호출한 경우다. `cursor-expired`(410)는 `GET /events?onGap=error`에서만 나온다. `job-not-cancelable`(409)은 `jobStatus`(작업의 현재 상태)를 더한다. RFC 9457의 `status`(HTTP 상태 코드)와 이름이 겹치지 않게 했다. 401은 `WWW-Authenticate: Bearer`를 반환한다.
 - 예상하지 못한 서버 오류(DB 장애 포함)는 모두 503(`service-unavailable`)이다. 500은 쓰지 않는다. 호출처는 같은 Key로 재시도한다(ADR-0005 결정 5).
 - `priority`(선택, `LOW`·`NORMAL`·`HIGH`·`URGENT`, 대소문자 구분, 생략은 `NORMAL`)가 그 밖의 값이면 `/priority` `INVALID_FORMAT`이다. 암호화 평문 안의 `priority`는 `/content` `UNKNOWN_FIELD`다(RQ-033).
+- `onUncertainOutcome`(선택, `retry`·`fail`, 대소문자 구분, 생략은 `retry`)이 그 밖의 값이면 `/onUncertainOutcome` `INVALID_FORMAT`이다. 암호화 평문 안의 `onUncertainOutcome`은 `/content` `UNKNOWN_FIELD`다(RQ-073).
 - `ttlSeconds`(선택, 정수 60 이상 서버 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS` 이하, 생략은 서버 기본 TTL)가 정수가 아니면 `/ttlSeconds` `INVALID_FORMAT`, 범위 밖 정수면 `/ttlSeconds` `OUT_OF_RANGE`다. 만료 시각은 응답의 `expiresAt`이다. 암호화 평문 안의 `ttlSeconds`는 `/content` `UNKNOWN_FIELD`다(RQ-039).
 - 정의되지 않은 필드(`UNKNOWN_FIELD`)의 `pointer`는 빈 문자열(본문 전체)이다. 필드 이름도 요청에서 온 값이라 되돌려 주지 않는다.
 - `content`의 형식(점으로 구분한 다섯 부분)이 틀리면 복호화 전에 `INVALID_FORMAT`이다. 형식은 맞지만 헤더를 해석할 수 없으면 `DECRYPTION_FAILED`다.
-- 큐 내부의 실패 원인은 `failureReason`으로 변환한다. `PERMANENT`는 `PERMANENT_ERROR`, `ATTEMPTS_EXHAUSTED`는 `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_REPEATED`는 `ACCOUNT_ERROR_REPEATED`다. `EXPIRED`는 그대로다.
+- 큐 내부의 실패 원인은 `failureReason`으로 변환한다. `PERMANENT`는 `PERMANENT_ERROR`, `ATTEMPTS_EXHAUSTED`는 `MAX_ATTEMPTS_EXCEEDED`, `ACCOUNT_REPEATED`는 `ACCOUNT_ERROR_REPEATED`다. `EXPIRED`와 `OUTCOME_UNKNOWN`은 그대로다.
 - 404는 없는 ID, 다른 호출처의 작업, 보존 기간이 지나 삭제된 작업을 구분하지 않는다.
 - 409 응답에 먼저 등록된 작업의 `jobId`를 넣는다(같은 호출처 작업이다).
 - 검증 오류 코드는 `REQUIRED`, `INVALID_FORMAT`, `TOO_LONG`, `TOO_MANY`, `TOO_LARGE`, `CONTROL_CHARACTER`, `UNKNOWN_FIELD`, `ATTACHMENTS_NOT_SUPPORTED`, `CONFLICTING_FIELDS`, `DECRYPTION_FAILED`, `KID_UNKNOWN`, `CALLER_MISMATCH`, `FROM_NOT_ALLOWED`, `RECIPIENT_DOMAIN_NOT_ALLOWED`, `OUT_OF_RANGE`다. `FROM_NOT_ALLOWED`는 `from`이 호출처의 허용 발신 주소(호출처 SMTP 계정의 기본 발신 주소 + `allowedFrom`)가 아닐 때이고 위치는 `/from`이다. `RECIPIENT_DOMAIN_NOT_ALLOWED`는 수신자(`to`·`cc`·`bcc`)의 도메인이 호출처의 `allowedRecipientDomains`에 없을 때이고 어긴 주소마다 `/to/0` 같은 위치를 준다. 하나라도 어기면 요청 전체를 거부한다. 주소와 도메인 값은 응답에 없다. `replyTo`는 제한하지 않는다.
