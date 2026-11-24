@@ -430,9 +430,10 @@ describe("PostgreSQL 통합: 이벤트·시도 수신자 비움(RQ-072, ADR-0015
     await expectRedacted(locked);
   });
 
-  it("보존 삭제와 동시에 돌려도 교착 없이 끝나고 남은 이벤트는 모두 비워져 있다", async () => {
+  it("보조: 보존 삭제와 동시에 돌려도 교착 없이 끝나고 남은 이벤트는 모두 비워져 있다", async () => {
     // 같은 행이 비움 대상이자 삭제 대상인 경우(유예 = 보존)를 겹쳐 돌린다.
-    // 작업 행 잠금이 없으면 이쪽(이벤트 → 시도)과 삭제의 cascade(시도 → 이벤트)가 교착해 이 크기에서 매번 실패했다(PostgreSQL 17).
+    // 확률적 테스트다. 작업 행 잠금이 없으면 이쪽(이벤트 → 시도)과 삭제의 cascade(시도 → 이벤트)가 교착할 수 있지만
+    // 항상 재현되지는 않는다(잠금을 뺀 변형을 30라운드 돌렸을 때 5번 교착, 리뷰 측정). 잠금의 존재는 위의 "작업 행을 다른 트랜잭션이 잠그고 있으면" 테스트가 결정적으로 지킨다.
     await db.pool.query(
       `INSERT INTO mail_jobs
          (id, caller_id, idempotency_key, fingerprint, fingerprint_key_version, recipients, expires_at, status, finished_at)
