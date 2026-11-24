@@ -58,3 +58,7 @@ try {
   }
   process.exit(1);
 }
+
+// 성공: 어댑터가 남긴 타이머·소켓 같은 핸들이 있어도 프로세스가 끝나야 한다(compose `migrate-cli && exec main`이 멈추지 않게).
+// 앞서 쓴 출력이 stdout에 모두 나간 뒤(빈 쓰기의 콜백) 종료한다. 실패는 위 catch가 종료 코드 1로 끝낸다.
+process.stdout.write("", () => process.exit(0));

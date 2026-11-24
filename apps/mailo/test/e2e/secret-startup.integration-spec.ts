@@ -333,6 +333,8 @@ export default {
   scheme: "fake",
   async resolve(ref) {
     const values = JSON.parse(readFileSync(process.env.FAKE_ADAPTER_VALUES_FILE, "utf8"));
+    // 해석 뒤에도 남는 핸들(닫지 않은 타이머·소켓을 흉내 낸다). 진입점은 이 핸들과 무관하게 끝나야 한다.
+    if (process.env.FAKE_ADAPTER_LEAVE_HANDLE) setInterval(() => {}, 60_000);
     if (!(ref in values)) throw Object.assign(new Error("not found"), { code: "not-found" });
     return values[ref];
   },
@@ -423,7 +425,7 @@ export default {
       status: 0,
       err: "",
     });
-    expect(result.stdout).toMatch(/마이그레이션 적용 \d+건/);
+    expect(result.stdout).toMatch(/^마이그레이션 적용 \d+건\n$/);
     for (const canary of [SMTP_PASSWORD, OPS_TOKEN, schemaUrl])
       expect(`${result.stdout}${result.stderr}`).not.toContain(canary);
     const client = new pg.Client({ connectionString: schemaUrl });
@@ -437,6 +439,36 @@ export default {
       await client.end();
     }
   }, 90_000);
+
+  it("마이그레이션 CLI: 어댑터가 핸들(타이머)을 남겨도 성공하면 종료 코드 0으로 끝나고 출력은 그대로다", () => {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(outDir, "db", "migrate-cli.js")],
+      {
+        cwd: outDir,
+        env: {
+          PATH: process.env["PATH"] ?? "",
+          NODE_ENV: "test",
+          ...refEnv(),
+          FAKE_ADAPTER_LEAVE_HANDLE: "1",
+        },
+        encoding: "utf8",
+        // 핸들 때문에 끝나지 않으면 이 제한 시간에 죽고 status가 null이다(compose의 `migrate && exec main`이 멈추는 경우).
+        timeout: 20_000,
+      },
+    );
+    expect({
+      status: result.status,
+      signal: result.signal,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }).toEqual({
+      status: 0,
+      signal: null,
+      stdout: "마이그레이션 적용 0건\n",
+      stderr: "",
+    });
+  }, 40_000);
 
   it("main: 모든 비밀을 X_REF로 받아 기동하고 해석값이 설정·DB·개인키·운영 토큰에 쓰인다", async () => {
     const app = await startMain(refEnv());
