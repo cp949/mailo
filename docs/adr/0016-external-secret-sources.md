@@ -6,7 +6,7 @@
 
 구현 상태: 묶음 A(코어)와 B(AWS 어댑터, 변형 이미지, CI·릴리스) 구현(2026-11-24). 묶음 B의 `adapter`·`variants` 잡은 GitHub에서 성공했다(2026-11-24, "구현 중 확정"의 v0.6.0 절). 묶음 C(운영 가이드 `docs/operations/aws-secrets-manager.md`와 LocalStack 수동 시나리오 `scripts/secrets-localstack/`)는 작성했고(2026-11-24) 문서 검토(독립 리뷰)가 남았다. 이 문서 본문에 "승인 전"·"구현하지 않았다"로 쓰인 문구는 작성 시점의 것이고 현재 상태는 이 줄과 "구현 중 확정"이 정한다.
 
-검증 범위는 코드·문서 읽기다(2026-11-24). 테스트, 스크립트, 이미지 빌드, 외부 서비스 호출을 실행하지 않았다. "배경"의 "확인한 사실"은 Mailo와 형제 프로젝트 storix의 코드·문서에서 읽은 것이다. 그 밖의 것은 "가정"과 "미결정·확인하지 않은 것"에 모았다. 문서에는 줄 번호 대신 파일·함수 이름으로 근거를 적었다(`docs/agents/writing-styles.md`).
+검증 범위는 코드·문서 읽기다(2026-11-24, 제안 작성 시점의 범위이고 구현 뒤 검증은 위 구현 상태와 "구현 중 확정"이 정한다). 테스트, 스크립트, 이미지 빌드, 외부 서비스 호출을 실행하지 않았다. "배경"의 "확인한 사실"은 Mailo와 형제 프로젝트 storix의 코드·문서에서 읽은 것이다. 그 밖의 것은 "가정"과 "미결정·확인하지 않은 것"에 모았다. 문서에는 줄 번호 대신 파일·함수 이름으로 근거를 적었다(`docs/agents/writing-styles.md`).
 
 입력은 "외부 시크릿 저장소(AWS Secrets Manager 등)에서 비밀값을 읽는 기능" 요청이다. `docs/requirements/roadmap.md`에는 이 항목이 없다. 범위는 비밀값 읽기이고 넓히지 않는다. 비밀 자체의 생성, 암호화 저장, 실행 중 갱신, 저장소 쓰기는 하지 않는다("하지 않는 것").
 
@@ -526,3 +526,9 @@ storix와 구조가 달라서 그대로 옮기지 않는 부분은 "storix와 �
 - `ci.yml` `adapter` 잡: run 45376736296(dev `5965730`, 수동)과 run 45379361922(main `50596b3`, push)에서 성공했다. 러너의 `docker build`가 로컬 태그를 `FROM`으로 쓰는 변형 빌드가 통과했다.
 - GHCR manifest digest(manifest 조회만, pull 없음): `v0.6.0-aws` `sha256:e616ac34ce4bcb834b6f4ded3dfa39c680b6a88169ab34a5fea7fe15290c1f3c`, `v0.6.0`·`latest` `sha256:9c621a4e7f81d510da20777f92fae072a8e41157b39c4dbabd12aabe90fef62c`.
 - 여전히 확인하지 않은 것: 발행된 `-aws` 이미지를 pull해 실행하는 검증, 실제 AWS, 변형 이미지의 취약점 스캔, `variants` 잡 실패 경로의 GitHub 실행, 롤링 배포·롤백.
+
+### 2026-11-24 문서 위치 정리
+
+결정 문구는 바꾸지 않았다.
+
+- 묶음 C 확정의 "`docs/agents/testing.md`의 L3 표"는 지금 `docs/agents/verification.md`의 L3 표다. `scripts/secrets-localstack/run.sh` 행은 거기에 있고 `testing.md`의 "테스트 종류" 표도 같은 스크립트를 가리킨다.

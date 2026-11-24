@@ -335,6 +335,7 @@
     - Prometheus가 인스턴스를 처음 스크레이프하기 전의 증가는 이 방법으로도 보이지 않는다.
 16. **`mailo_caller_quota_used`는 한도를 넘을 수 있다(결정 4의 "값은 한도에서 멈춘다"와 다르다).** 사용량 쿼리는 시도 쪽을 `LIMIT 할당`으로 세어 한도에서 멈추지만 점유 중(`SENDING`) 수를 더한다. 시도가 한도에 닿은 호출처에 점유 중 작업이 있으면 사용량이 한도보다 크다. 지표 의미는 바꾸지 않았다(`claim`과 같은 문장). HELP·문서·알림 설명이 "한도를 넘을 수 있고 사용량/한도가 1을 넘을 수 있다"로 바뀌었다. `MailoCallerQuotaNearLimit`(`>= 0.9`)은 1을 넘는 값도 조건에 든다. 한도 2에서 시도 2건과 점유 중 1건이면 사용량 3이다(`http/metrics-gauges.integration-spec.ts`).
 17. **`/metrics` 인증과 `MAILO_OPS_TOKEN` 없음 정정.** `docs/api/openapi.yaml`의 `/metrics` 설명이 "`MAILO_OPS_TOKEN`이 없으면 어떤 값도 401"이라고만 적었으나 코드는 구현 중 확정 4와 같다(관리 토큰만 설정된 서버에서 관리 토큰은 403). openapi.yaml과 `deployment.md`를 고쳤다.
+18. **"검증 계획"의 참조 위치(2026-11-24 문서 정리).** "검증 계획"이 `docs/agents/testing.md`를 따른다고 쓴 검증 단계(L0~L3)와 L3 표는 `docs/agents/verification.md`로 옮겼다. `testing.md`는 테스트 작성 기준을 소유한다. 이 ADR의 `scripts/container/verify-metrics.sh`는 `verification.md`의 L3 표에 있다. "검증 계획" 문구는 작성 시점의 것이다.
 
 ## 검토한 대안
 
