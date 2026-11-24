@@ -69,7 +69,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
-- 검증 수치(2026-11-24 11단계 묶음 B AWS 어댑터·변형 이미지·CI 반영 뒤, 1회): `pnpm test` 단위 1196건(57개 파일, 새 파일 `config/adapter-image.spec.ts` 6건), `pnpm test:integration` 통합 954건(68개 파일, 실제 PostgreSQL 17), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. `apps/mailo/src`를 바꾸지 않아 통합 수치는 묶음 A와 같다. 어댑터 `adapters/secret-source-aws`는 워크스페이스 밖이라 위 명령에 포함되지 않는다: 어댑터 `pnpm test` 74건(독립 리뷰 반영 뒤. 반영 전 54건)(`test/index.test.mjs` 가짜 클라이언트, `test/sdk.test.mjs` 실제 SDK와 로컬 HTTP fixture), 실패 0건. L3 스크립트 `image-smoke/verify-base.sh`·`run.sh`를 로컬 빌드 이미지로 실행해 통과했다. 루트 `Dockerfile`은 주석만 바꿨고(이미지 레이어 diff_id 일치 확인) `scripts/container/`·`scripts/volume/`는 실행하지 않았다. 실제 AWS와 GitHub 러너의 `adapter`·`variants` 잡은 실행하지 않았다.
+- 검증 수치(2026-11-24 11단계 묶음 B AWS 어댑터·변형 이미지·CI 반영 뒤, 1회): `pnpm test` 단위 1196건(57개 파일, 새 파일 `config/adapter-image.spec.ts` 6건), `pnpm test:integration` 통합 954건(68개 파일, 실제 PostgreSQL 17), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. `apps/mailo/src`를 바꾸지 않아 통합 수치는 묶음 A와 같다. 어댑터 `adapters/secret-source-aws`는 워크스페이스 밖이라 위 명령에 포함되지 않는다: 어댑터 `pnpm test` 74건(독립 리뷰 반영 뒤. 반영 전 54건)(`test/index.test.mjs` 가짜 클라이언트, `test/sdk.test.mjs` 실제 SDK와 로컬 HTTP fixture), 실패 0건. L3 스크립트 `image-smoke/verify-base.sh`·`run.sh`를 로컬 빌드 이미지로 실행해 통과했다. 루트 `Dockerfile`은 주석만 바꿨고(이미지 레이어 diff_id 일치 확인) `scripts/container/`·`scripts/volume/`는 실행하지 않았다. 실제 AWS는 실행하지 않았다. GitHub 러너의 `adapter`·`variants` 잡은 이 시점에 실행하지 않았고 이후 성공했다(RQ-080 판정 근거).
 - 검증 수치(2026-11-24 11단계 묶음 A 외부 시크릿 소스 코어 반영 뒤, 2차 리뷰 지적 처리 뒤 1회): `pnpm test` 단위 1190건(56개 파일), `pnpm test:integration` 통합 954건(68개 파일, 실제 PostgreSQL과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. L3 스크립트(컨테이너·볼륨·NFS·Java 샘플)는 `Dockerfile`·compose·종료 순서·파일 채널·서명 형식을 바꾸지 않아 실행하지 않았다. 어댑터는 모두 가짜다.
 - 검증 수치(2026-11-24 10단계 묶음 D 결과 불명 opt-in 반영 뒤, 묶음 C 위에 rebase한 뒤 1회): `pnpm test` 단위 1074건(52개 파일), `pnpm test:integration` 통합 933건(66개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`(경고·오류 0건)·`pnpm build` 통과. 새 파일은 `queue/uncertain.spec.ts`(단위 10건), `queue/uncertain-outcome.integration-spec.ts`(36건), `db/job-on-uncertain-migration.integration-spec.ts`(7건, 전체 폴더 적용에서 `0017`·`0018` 다음에 `0019`가 적용되는 순서 확인 포함), `http/rest-uncertain-outcome.integration-spec.ts`(11건), `e2e/uncertain-outcome.integration-spec.ts`(6건)다. 기존 파일에는 테스트를 더했다(`envelope/open-request.spec.ts` 21건, `file-channel/poller.integration-spec.ts` 4건, `worker/metrics.spec.ts`, `metrics/catalog.spec.ts`, `metrics/store.spec.ts`). 기존 테스트의 단언은 바꾸거나 지우지 않았고 카탈로그 접두 목록과 이름 목록, 시작 시 0 시리즈 검사에 새 지표를 더했다. rebase 전 같은 코드에서 전체 통합의 첫 실행에 `http/rest-intake.integration-spec.ts` 1건과 `http/ops.integration-spec.ts` 여러 건이 실패했고, 두 파일만 다시 돌리니 통과했으며 이어진 전체 실행은 모두 통과했다. 다른 jest 프로세스가 같은 PostgreSQL을 쓰는 동안 실행하면 advisory lock 때문에 실패하므로(리뷰어가 재현) 이번 최종 실행은 `pgrep`으로 다른 jest가 없음을 확인하고 돌렸다. 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 모든 검증에 `FORCE_RETEST=1`을 썼다. 컨테이너·볼륨·NFS·샘플 스크립트(`scripts/container/`, `scripts/volume/`, `pnpm test:nfs`, `samples/spring-boot-relay/verify/run-e2e.sh`)는 실행하지 않았다(종료 순서·Dockerfile·compose·파일 채널 I/O·봉투 형식은 바꾸지 않았다). 변이 확인: `applyOutcome`의 `fail` 판정을 꺼서 13건이 실패함을 확인하고 되돌렸다.
 - 검증 수치(2026-11-24 10단계 묶음 C 이벤트·시도 수신자 비움 반영 뒤): `pnpm test` 단위 1038건(51개 파일), `pnpm test:integration` 통합 869건(62개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 최종 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 새 파일은 `queue/redact-event-recipients.integration-spec.ts`(12건), `db/event-recipients-migration.integration-spec.ts`(10건), `http/rest-recipients-redacted.integration-spec.ts`(4건), `intake/event-presenter.spec.ts`(9건)이고 기존 파일에 단위 11건(`config/load-config.spec.ts` 5건, `worker/worker.spec.ts` 6건)과 통합 1건(`worker/worker.integration-spec.ts`)을 더했다. 전체 통합 첫 실행에서 1건이 실패했다: `http/rest-cancel.integration-spec.ts`의 `JOB_CANCELED` 이벤트 키 목록 단언이 새 필드 `recipientsRedacted`를 몰랐다. 계약 변경의 결과이고 기대 키 목록에 `recipientsRedacted`를 더했다(assertion을 지우거나 약화하지 않았다). 해당 파일만 다시 돌려 22건 통과했다. 독립 리뷰 반영(같은 날) 뒤 전체를 다시 돌려 단위 1038건, 통합 869건(`db/event-recipients-migration` 테스트 1건 증가), 실패 0건이다. 그 밖의 기존 테스트 변경은 `retention` 옵션 리터럴에 필수 필드 `recipientSeconds`를 더한 것(`worker/worker.spec.ts`, `worker/worker.integration-spec.ts`, `worker/worker-accounts.integration-spec.ts`)과 기본 설정 기대값에 `recipientRetentionSeconds: 604800`을 더한 것(`config/load-config.spec.ts`)이다. 모두 필수 필드 추가이고 시험 목적은 그대로다. 컨테이너·볼륨·NFS·샘플 스크립트는 실행하지 않았다(해당 영역 변경 없음).
@@ -110,7 +110,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 | 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-082 이후를 해당 묶음에서 추가한다(RQ-070~074는 10단계가, RQ-075~081은 11단계가 쓴다) |
 | 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했고 A 문서(RQ-067~069: 키 사고 대응, DB 유지보수, 레지스트리 변경 반영)를 작성했다(코드 변경 없음, 문서 검토 남음). C Java 샘플 연동(선택, RQ-066)은 구현 전이다 |
 | 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨). 묶음 A 보존 현황 문서(RQ-070, 문서 작성 완료·검토 남음), B 종결 때 비움(RQ-071, 마이그레이션 없음, 구현 완료·미검증 항목 있음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개, 구현 완료·미검증 항목 있음), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 `0019` 하나, 구현 완료·미검증 항목 있음) |
-| 11단계 | 외부 시크릿 소스(ADR-0016, 승인됨). 묶음 A 코어(RQ-075~078, `X_REF` 규약·기동 전 해석·어댑터 계약과 로더·실패 정책, 구현 완료·롤링 배포·롤백 미실행), B AWS 어댑터와 변형 이미지(RQ-079·080, 어댑터 단위 테스트·로컬 이미지 스모크 완료, `variants` 잡의 GitHub 실행 미확인), C 운영 가이드와 수동 시나리오(RQ-081, 문서 작성과 LocalStack 4.12 수동 시나리오 실행 완료, 문서 검토 남음). 마이그레이션 없음 |
+| 11단계 | 외부 시크릿 소스(ADR-0016, 승인됨). 묶음 A 코어(RQ-075~078, `X_REF` 규약·기동 전 해석·어댑터 계약과 로더·실패 정책, 구현 완료·롤링 배포·롤백 미실행), B AWS 어댑터와 변형 이미지(RQ-079·080, 어댑터 단위 테스트·로컬 이미지 스모크 완료, `adapter`·`variants` 잡은 GitHub 실행 성공, 실제 AWS·취약점 스캔 미확인), C 운영 가이드와 수동 시나리오(RQ-081, 문서 작성과 LocalStack 4.12 수동 시나리오 실행 완료, 문서 검토 남음). 마이그레이션 없음 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -1004,7 +1004,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 ### RQ-029 단순성과 외부 의존성 최소화
 
-- [x] **진행 상태:** 검증 완료 (1단계, 11단계 ADR-0016 예외의 이미지 조건은 로컬 이미지 검사로 확인. GitHub 실행은 없다)
+- [x] **진행 상태:** 검증 완료 (1단계, 11단계 ADR-0016 예외의 이미지 조건은 로컬 이미지 검사와 GitHub 실행 `adapter`·`variants` 잡의 `verify-base.sh` 단계로 확인)
 
 **요구사항:**
 
@@ -1025,7 +1025,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 - `config/compose-consistency.spec.ts` "개발용 Mailpit profile": `profiles:`는 `mailpit` 서비스에만 있고(postgres·mailo에는 없음), 이미지 태그·digest 고정, 공개 포트는 UI 하나, non-root·`read_only`·`cap_drop`·`no-new-privileges`를 글자로 검사한다.
 - `docker compose config --services`(compose v5.5.1, 2026-11-23): profile 없이 `postgres`·`mailo`, `--profile mailpit`이면 `mailpit`이 더해진다. 수동 확인이다.
 - 11단계 묶음 A: `secrets/boundary.spec.ts`가 `apps/mailo/package.json`에 `@aws-sdk/*`와 시크릿 어댑터 패키지 의존성이 없음을 확인한다(코어). 기본 이미지 안의 부재는 묶음 B가 확인했다(아래).
-- 11단계 묶음 B(2026-11-24): `adapters/secret-source-aws/image-smoke/verify-base.sh <이미지>`가 이미지 루트 파일시스템 전체(`find / -xdev`)에서 `@aws-sdk*`·`@smithy*`·`*mailo-secret-source*`·`aws-sdk*` 이름을 찾고 하나라도 있으면 실패한다. 로컬에서 루트 `Dockerfile`로 빌드한 기본 이미지는 통과했고 변형 이미지를 넣으면 실패한다(검사가 비어 있지 않음). `ci.yml` `adapter` 잡과 `release.yml` `variants` 잡(발행된 기준 이미지 digest 대상)이 같은 스크립트를 부른다. 이 스크립트는 자동 테스트가 아니라 L3 스크립트이고 GitHub 실행은 아직 없다. `apps/mailo/test/config/adapter-image.spec.ts`가 두 Dockerfile의 base digest 일치, 루트 `Dockerfile`이 `adapters`를 복사하지 않음, 루트 `.dockerignore`의 `adapters` 제외를 글자로 검사한다.
+- 11단계 묶음 B(2026-11-24): `adapters/secret-source-aws/image-smoke/verify-base.sh <이미지>`가 이미지 루트 파일시스템 전체(`find / -xdev`)에서 `@aws-sdk*`·`@smithy*`·`*mailo-secret-source*`·`aws-sdk*` 이름을 찾고 하나라도 있으면 실패한다. 로컬에서 루트 `Dockerfile`로 빌드한 기본 이미지는 통과했고 변형 이미지를 넣으면 실패한다(검사가 비어 있지 않음). `ci.yml` `adapter` 잡과 `release.yml` `variants` 잡(발행된 기준 이미지 digest 대상)이 같은 스크립트를 부른다. 이 스크립트는 자동 테스트가 아니라 L3 스크립트다. GitHub에서는 `adapter` 잡(run 45376736296, 45379361922)과 `variants` 잡(run 45380436731, 발행된 기준 이미지 대상)의 해당 단계가 성공했다(2026-11-24). `apps/mailo/test/config/adapter-image.spec.ts`가 두 Dockerfile의 base digest 일치, 루트 `Dockerfile`이 `adapters`를 복사하지 않음, 루트 `.dockerignore`의 `adapters` 제외를 글자로 검사한다.
 - 2단계에서 npm 의존성 `jose` 6.2.18를 추가했다. JWE·JWS 암호 형식을 직접 만들지 않기 위해서다(ADR-0008 구현 중 확정 8). 운영 의존성(Mailo, PostgreSQL)은 늘지 않았다.
 
 ### RQ-030 요청 입력 검증
@@ -2513,7 +2513,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 ## 19. 외부 시크릿 소스
 
-결정은 [ADR-0016](../adr/0016-external-secret-sources.md)이고 구현은 묶음 A(코어) → B(AWS 어댑터와 변형 이미지) → C(운영 가이드와 수동 시나리오) 순서다. RQ-075~078은 묶음 A, RQ-079·080은 묶음 B, RQ-081은 묶음 C의 범위다. 마이그레이션은 없다. 코어 `apps/mailo`에는 새 npm 의존성이 없다. AWS SDK는 묶음 B의 어댑터 패키지에만 들어간다. 묶음 A(RQ-075~078)와 B(RQ-079·080)는 구현했고 묶음 C(RQ-081)는 문서와 수동 시나리오를 작성했다(코드 변경 없음). 묶음 B의 `variants` 잡은 GitHub에서 실행한 적이 없다.
+결정은 [ADR-0016](../adr/0016-external-secret-sources.md)이고 구현은 묶음 A(코어) → B(AWS 어댑터와 변형 이미지) → C(운영 가이드와 수동 시나리오) 순서다. RQ-075~078은 묶음 A, RQ-079·080은 묶음 B, RQ-081은 묶음 C의 범위다. 마이그레이션은 없다. 코어 `apps/mailo`에는 새 npm 의존성이 없다. AWS SDK는 묶음 B의 어댑터 패키지에만 들어간다. 묶음 A(RQ-075~078)와 B(RQ-079·080)는 구현했고 묶음 C(RQ-081)는 문서와 수동 시나리오를 작성했다(코드 변경 없음). 묶음 B의 `adapter`·`variants` 잡은 GitHub에서 성공했다(RQ-080 판정 근거).
 
 ### RQ-075 `X_REF` 규약과 알 수 없는 `*_REF` 거부
 
@@ -2640,7 +2640,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 ### RQ-080 변형 이미지 `-aws`와 릴리스
 
-- [ ] **진행 상태:** 진행 중 (11단계 묶음 B, 구현 완료. 로컬 이미지 스모크 통과, `adapter`·`variants` 잡의 GitHub 실행 남음)
+- [x] **진행 상태:** 검증 완료 (11단계 묶음 B. 로컬 이미지 스모크와 GitHub 실행 `adapter`·`variants` 잡 성공. 실제 AWS·취약점 스캔·발행 이미지 pull 실행은 한계)
 
 **요구사항:**
 
@@ -2652,15 +2652,16 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 - [x] 기본 이미지에 `adapters/`의 패키지와 `@aws-sdk`가 없다.
 - [x] 변형 이미지가 `read_only`·`cap_drop: [ALL]`로 해석 스모크를 통과한다.
-- [ ] `ci.yml` `adapter` 잡과 `release.yml` `variants` 잡이 GitHub에서 성공한다. (실행한 적이 없다)
+- [x] `ci.yml` `adapter` 잡과 `release.yml` `variants` 잡이 GitHub에서 성공한다.
 
 **판정 근거:**
 
 - 기본 이미지 부재: RQ-029 판정 근거의 `verify-base.sh`(2026-11-24, 로컬 빌드 이미지, L3 스크립트).
 - 변형 스모크(2026-11-24, `adapters/secret-source-aws/image-smoke/run.sh`, 로컬 빌드 이미지, L3 스크립트이고 자동 테스트가 아니다): `--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --network none`으로 실행했다. `uid=1000(node)`, `/repo`·`/opt/mailo-secret-source-aws`에 root 소유가 아니거나 누구나 쓸 수 있는 경로가 없음, 어댑터 링크와 SDK 존재를 확인한 뒤 이미지 안 `smoke.mjs`가 컨테이너 안 `127.0.0.1`의 가짜 Secrets Manager로 해석, JSON 키, 없는 비밀·키·문자열 아닌 값·`AccessDenied`·`Throttling`·서버 오류의 닫힌 코드, 다른 이름 어댑터의 `not-found` 로드 오류를 확인했고 출력에 시험 값이 없다. 환경 변수 자격 증명 경로에서 SDK가 필수로 쓰는 쓰기 경로는 없었다.
-- 워크플로: `actionlint` 1.7.7 오류 0건. `variants` 잡의 `run` 본문을 로컬 레지스트리(`registry:2`)로 순서대로 실행해 통과했고 태그 커밋이 다르면 기준 이미지 라벨 확인에서 실패한다(`ci.md` "로컬에서 확인한 범위"). GitHub 러너에서 실행하지 않았다. 발행·태그 push는 하지 않았다.
+- 워크플로: `actionlint` 1.7.7 오류 0건. `variants` 잡의 `run` 본문을 로컬 레지스트리(`registry:2`)로 순서대로 실행해 통과했고 태그 커밋이 다르면 기준 이미지 라벨 확인에서 실패한다(`ci.md` "로컬에서 확인한 범위"). 로컬 확인은 이 단계의 것이고 GitHub 실행은 아래 항목이다.
+- GitHub 실행(2026-11-24, `gh run view`로 잡·단계 결과 확인): `ci.yml` `adapter` 잡이 run 45376736296(dev `5965730`, 수동)과 run 45379361922(main `50596b3`, push)에서 성공했다(어댑터 단위 테스트, 기본 이미지 빌드와 `verify-base.sh`, 변형 빌드, 스모크 단계 모두 성공). `release.yml` `variants` 잡은 `v0.6.0` 태그 push의 run 45380436731에서 성공했고 처음 GitHub에서 실행된 것이다(`verify`·`release`·`variants` 모두 성공. `variants`는 어댑터 단위 테스트, 기준 이미지 pull·부재 확인, 변형 빌드, 스모크, GHCR push와 config digest 확인 단계 모두 성공). GHCR `v0.6.0-aws` manifest digest `sha256:e616ac34ce4bcb834b6f4ded3dfa39c680b6a88169ab34a5fea7fe15290c1f3c`, `v0.6.0`·`latest` `sha256:9c621a4e7f81d510da20777f92fae072a8e41157b39c4dbabd12aabe90fef62c`는 manifest 조회만 했다. `variants` 잡의 실패 경로(`ci.md`의 재실행 표)는 GitHub에서 실행하지 않았다.
 - `apps/mailo/test/config/adapter-image.spec.ts`: 두 Dockerfile의 base digest 일치, `packageManager` 일치(sha512), `MAILO_BASE_IMAGE` 기본값 없음과 마지막 `USER node`, 의존성 정확한 버전과 devDependency 없음, 어댑터가 루트 워크스페이스 밖.
-- 한계: 취약점 스캔이 없다(AWS SDK 취약점은 이 저장소가 소유한다). 실제 AWS와 `--network none`이 아닌 DNS·TLS 경로, 변형 이미지의 compose 기동은 확인하지 않았다.
+- 한계: 취약점 스캔이 없다(AWS SDK 취약점은 이 저장소가 소유한다). 발행된 `-aws` 이미지를 pull해 실행한 검증, 실제 AWS와 `--network none`이 아닌 DNS·TLS 경로, 변형 이미지의 compose 기동, `variants` 잡 실패 경로의 GitHub 실행은 확인하지 않았다.
 
 ### RQ-081 운영 문서와 수동 시나리오
 

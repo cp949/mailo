@@ -201,7 +201,7 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 1. dev에서 루트 `package.json`과 `apps/mailo/package.json`의 `version`을 같은 값(`X.Y.Z`)으로 올려 커밋한다.
 2. dev를 main에 병합하고 push한다. main push의 `ci.yml` 실행이 성공했는지 확인한다.
 3. main의 그 커밋에 태그를 달고 push한다: `git tag vX.Y.Z origin/main && git push origin vX.Y.Z`.
-4. `Release` 워크플로 결과와 GHCR 패키지, GitHub Release를 확인한다. `variants` 잡이 성공해 `vX.Y.Z-aws`가 있는지도 본다(첫 실행 전에는 GitHub에서 한 번도 실행되지 않았다). 첫 발행이면 "GHCR 공개 범위"를 확인한다.
+4. `Release` 워크플로 결과와 GHCR 패키지, GitHub Release를 확인한다. `variants` 잡이 성공해 `vX.Y.Z-aws`가 있는지도 본다(v0.6.0에서 run 45380436731로 처음 실행해 성공했다). 첫 발행이면 "GHCR 공개 범위"를 확인한다.
 
 ## 로컬에서 확인한 범위 (2026-11-23)
 
@@ -227,7 +227,9 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 
 ## 확인하지 않은 것
 
-- `ci.yml` `adapter` 잡과 `release.yml` `variants` 잡은 GitHub에서 실행한 적이 없다. 위 로컬 확인은 `run` 본문을 로컬 레지스트리로 실행한 것이다. `variants` 잡이 GHCR에서 기준 이미지를 digest로 pull하는 단계, `GITHUB_TOKEN`의 `packages: write`로 `-aws` 태그를 push하는 단계, 러너의 `docker build`가 로컬 태그(`mailo:adapter-base`)를 `FROM`으로 쓰는지는 확인하지 않았다.
+- `release.yml` `variants` 잡은 `v0.6.0` 태그 push의 run 45380436731(2026-11-24)에서 처음 GitHub에서 실행했고 `verify`·`release`·`variants` 세 잡이 모두 성공했다. `variants`의 어댑터 단위 테스트, 기준 이미지 pull·부재 확인, 변형 빌드, 스모크, GHCR push와 config digest 확인 단계가 모두 성공했다. `v0.6.0-aws`의 manifest digest는 `sha256:e616ac34ce4bcb834b6f4ded3dfa39c680b6a88169ab34a5fea7fe15290c1f3c`, `v0.6.0`·`latest`는 `sha256:9c621a4e7f81d510da20777f92fae072a8e41157b39c4dbabd12aabe90fef62c`다(GHCR manifest 조회만 했고 이미지를 pull하지 않았다).
+- `ci.yml` `adapter` 잡은 run 45376736296(dev `5965730`, 수동)과 run 45379361922(main `50596b3`, push)에서 성공했다.
+- 위 두 실행에서 `variants`의 기준 이미지 digest pull, `GITHUB_TOKEN`의 `packages: write`로 `-aws` 태그 push, `adapter`의 `docker build`가 로컬 태그(`mailo:adapter-base`)를 `FROM`으로 쓰는 단계가 통과했다. `variants` 잡의 실패 경로("재실행" 표)는 GitHub에서 실행하지 않았다.
 - 변형 이미지에 취약점 스캔 단계가 없다. AWS SDK 취약점은 이 저장소가 소유하고 감시 수단이 정해지지 않았다.
 - `variants` 잡 push 뒤 변형 이미지를 실제로 pull해 기동한 적이 없다.
 - `ci.yml`: `static`·`integration`·`container` 잡은 러너에서 성공했다(위 실행 기록). 러너의 Docker·compose 버전, 이미지 pull·빌드 시간, `timeout-minutes` 여유는 기록하지 않았다.

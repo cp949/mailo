@@ -4,7 +4,7 @@
 
 승인 (2026-11-24). 결정 1~10과 "사용자가 판단할 질문" 9개의 권고안을 모두 승인했다. 질문의 확정 답은 "구현 중 확정"에 적었다.
 
-구현 상태: 묶음 A(코어)와 B(AWS 어댑터, 변형 이미지, CI·릴리스) 구현(2026-11-24). 묶음 B의 `adapter`·`variants` 잡은 GitHub에서 실행하지 않았다. 묶음 C(운영 가이드 `docs/operations/aws-secrets-manager.md`와 LocalStack 수동 시나리오 `scripts/secrets-localstack/`)는 작성했고(2026-11-24) 문서 검토(독립 리뷰)가 남았다. 이 문서 본문에 "승인 전"·"구현하지 않았다"로 쓰인 문구는 작성 시점의 것이고 현재 상태는 이 줄과 "구현 중 확정"이 정한다.
+구현 상태: 묶음 A(코어)와 B(AWS 어댑터, 변형 이미지, CI·릴리스) 구현(2026-11-24). 묶음 B의 `adapter`·`variants` 잡은 GitHub에서 성공했다(2026-11-24, "구현 중 확정"의 v0.6.0 절). 묶음 C(운영 가이드 `docs/operations/aws-secrets-manager.md`와 LocalStack 수동 시나리오 `scripts/secrets-localstack/`)는 작성했고(2026-11-24) 문서 검토(독립 리뷰)가 남았다. 이 문서 본문에 "승인 전"·"구현하지 않았다"로 쓰인 문구는 작성 시점의 것이고 현재 상태는 이 줄과 "구현 중 확정"이 정한다.
 
 검증 범위는 코드·문서 읽기다(2026-11-24). 테스트, 스크립트, 이미지 빌드, 외부 서비스 호출을 실행하지 않았다. "배경"의 "확인한 사실"은 Mailo와 형제 프로젝트 storix의 코드·문서에서 읽은 것이다. 그 밖의 것은 "가정"과 "미결정·확인하지 않은 것"에 모았다. 문서에는 줄 번호 대신 파일·함수 이름으로 근거를 적었다(`docs/agents/writing-styles.md`).
 
@@ -517,3 +517,12 @@ storix와 구조가 달라서 그대로 옮기지 않는 부분은 "storix와 �
 - AWS 동작 확인(2026-11-24, AWS 공식 문서를 읽음. 실제 계정에서 실행하지 않음): `GetSecretValue`는 비밀 ARN에, 고객 관리형 키는 `kms:Decrypt`를 키 ARN에 허용하는 정책 예시가 있고(Secrets Manager 사용 설명서 "Identity-based policies"), ARN 끝 6자는 AWS가 붙이며 이름 끝 `-??????`로 맞출 수 있다. `kms:ViaService` 조건은 `secretsmanager.<리전>.amazonaws.com`이다("Secret encryption and decryption"). `aws/secretsmanager` 키의 키 정책은 계정 주체가 Secrets Manager를 거칠 때의 사용을 허용하고 교차 계정은 지원하지 않는다. IMDSv2 `PUT` 응답 hop limit 기본값은 1이고 `modify-instance-metadata-options`로 올릴 수 있다(EC2 사용 설명서). SDK 공통 자격 증명 체인은 처음 찾은 자격 증명에서 멈춘다(SDKs and Tools 참조 가이드). 운영 문서는 읽은 것과 기억을 구분해 표시한다. 읽지 않은 것: ECS 태스크 역할과 execution role의 구분, EKS IRSA·Pod Identity의 세부, Docker bridge 컨테이너에 필요한 hop limit 값(2), JavaScript SDK 체인의 정확한 순서.
 - 구현 중 관찰: 해석 실패 메시지의 변수 칸은 `X_REF`가 아니라 `X`(예: `MAILO_SMTP_PASSWORD(ref:aws-sm)`)로 나온다. `unknown-name`만 참조 변수 이름을 쓴다(묶음 A의 확정과 같다). DNS로 닿지 못하는 엔드포인트는 SDK 재시도 3회를 거쳐도 `MAILO_SECRET_RESOLVE_TIMEOUT_MS` 안에 `adapter-error:unavailable`로 끝났다(`timeout`이 아니다).
 - `docs/agents/testing.md`의 L3 표에 `scripts/secrets-localstack/`를 더했다.
+
+### 2026-11-24 v0.6.0 릴리스에서 GitHub 실행 확인
+
+결정 문구는 바꾸지 않았다. 묶음 B의 "확인하지 않은 것" 중 GitHub 실행 항목을 확인했다. 아래 절의 "확인하지 않은 것"과 결정 4의 "위험" 줄(변형 잡을 실행한 적이 없다)은 작성 시점의 서술이다.
+
+- `release.yml` `variants` 잡: `v0.6.0` 태그 push의 run 45380436731에서 `verify`·`release`·`variants`가 모두 성공했다. 이 잡이 GitHub에서 실행된 첫 사례다. 기준 이미지 digest pull, 라벨 확인, 어댑터·SDK 부재 확인, 변형 빌드, 스모크, `packages: write` push와 config digest 비교 단계가 통과했다.
+- `ci.yml` `adapter` 잡: run 45376736296(dev `5965730`, 수동)과 run 45379361922(main `50596b3`, push)에서 성공했다. 러너의 `docker build`가 로컬 태그를 `FROM`으로 쓰는 변형 빌드가 통과했다.
+- GHCR manifest digest(manifest 조회만, pull 없음): `v0.6.0-aws` `sha256:e616ac34ce4bcb834b6f4ded3dfa39c680b6a88169ab34a5fea7fe15290c1f3c`, `v0.6.0`·`latest` `sha256:9c621a4e7f81d510da20777f92fae072a8e41157b39c4dbabd12aabe90fef62c`.
+- 여전히 확인하지 않은 것: 발행된 `-aws` 이미지를 pull해 실행하는 검증, 실제 AWS, 변형 이미지의 취약점 스캔, `variants` 잡 실패 경로의 GitHub 실행, 롤링 배포·롤백.

@@ -628,7 +628,7 @@ AWS Secrets Manager의 비밀을 `X_REF`로 읽는 이미지다(ADR-0016 결정 
 - 오류 코드(`troubleshooting.md` "기동 시 비밀값 해석 실패"): `not-found`(비밀 없음), `access-denied`(권한·자격 증명 없음·서명·KMS 복호화 거부), `throttled`, `unavailable`(서비스 오류, 네트워크, 시간 초과), `invalid-value`(참조 형식 오류, `AWS_REGION` 없음, `SecretBinary`만 있음, JSON이 아니거나 키가 없거나 값이 문자열이 아님). SDK의 오류 메시지·SecretId·값은 오류에 싣지 않는다.
 - 재시도: SDK 기본값은 한 번의 해석에 최대 3회 시도한다(첫 요청 포함, 재시도 2회. SDK 3.1146.0에서 로컬 fixture 서버의 요청 수 3으로 확인). 이 시도는 해석 제한 시간 안에서 일어난다. 코어는 재시도하지 않는다.
 - `read_only: true`·`cap_drop: [ALL]`·`--network none` 컨테이너에서 환경 변수 자격 증명으로 해석 스모크가 통과했다(`adapters/secret-source-aws/image-smoke/run.sh`). 이 경로에서 SDK가 필수로 쓰는 쓰기 경로는 없었다(`HOME`은 `/home/node`이고 `~/.aws`가 없어도 오류가 아니다). 다른 자격 증명 경로(인스턴스·작업 역할, 웹 ID 토큰, SSO 캐시)는 실행하지 않았다.
-- 검증하지 않은 것: 실제 AWS 계정(IAM, KMS, 자격 증명 체인, IMDSv2, 네트워크 제한, 실제 지연·제한), 변형 이미지의 취약점 스캔(스캔 단계가 없다), `variants` 잡의 GitHub 실행. IAM 정책 예시, KMS 설정, 자격 증명 체인, 값 교체, 롤백 절차는 `aws-secrets-manager.md`다.
+- 검증하지 않은 것: 실제 AWS 계정(IAM, KMS, 자격 증명 체인, IMDSv2, 네트워크 제한, 실제 지연·제한), 변형 이미지의 취약점 스캔(스캔 단계가 없다), 발행된 `-aws` 이미지를 pull해 실행하는 검증. `variants` 잡은 `v0.6.0` 태그의 run 45380436731에서 GitHub 실행에 성공했다(`ci.md`). IAM 정책 예시, KMS 설정, 자격 증명 체인, 값 교체, 롤백 절차는 `aws-secrets-manager.md`다.
 
 ```txt
 위험도: 중간 (비밀 저장소 장애가 새 인스턴스의 기동을 막는다. 변형 이미지는 AWS SDK와 그 취약점을 이 저장소가 소유한다)
@@ -1040,7 +1040,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
 - 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패·성공 경로(프로세스 수준)를 확인했다. 이 절의 compose override 예시(DB 비밀번호 `_REF`)와 `docker-compose.migrate-once.yml`의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복은 확인하지 않았다. 변형 이미지의 compose 기동(독립 compose 파일)과 초기 프로세스 환경(`/proc/1/environ`)의 값 부재는 LocalStack 수동 시나리오가 확인한다(아래 줄).
-- AWS 어댑터와 변형 이미지(ADR-0016 묶음 B, 2026-11-24): 어댑터 단위 테스트(가짜 SDK 클라이언트, 로컬 HTTP fixture를 거치는 실제 SDK), 로컬에서 빌드한 기본 이미지의 어댑터·SDK 부재 확인(`image-smoke/verify-base.sh`), 변형 이미지를 `read_only`·`cap_drop: [ALL]`·`--network none`으로 실행한 해석 스모크(`image-smoke/run.sh`: bare 패키지 이름 로드, 해석, JSON 키, 닫힌 코드, 로드 오류)를 실행했다. 실제 AWS(IAM, KMS, 자격 증명 체인, IMDSv2, throttling), 취약점 스캔, `release.yml` `variants` 잡의 GitHub 실행, 발행된 `-aws` 이미지의 pull과 compose 기동은 확인하지 않았다.
+- AWS 어댑터와 변형 이미지(ADR-0016 묶음 B, 2026-11-24): 어댑터 단위 테스트(가짜 SDK 클라이언트, 로컬 HTTP fixture를 거치는 실제 SDK), 로컬에서 빌드한 기본 이미지의 어댑터·SDK 부재 확인(`image-smoke/verify-base.sh`), 변형 이미지를 `read_only`·`cap_drop: [ALL]`·`--network none`으로 실행한 해석 스모크(`image-smoke/run.sh`: bare 패키지 이름 로드, 해석, JSON 키, 닫힌 코드, 로드 오류)를 실행했다. 실제 AWS(IAM, KMS, 자격 증명 체인, IMDSv2, throttling), 취약점 스캔, 발행된 `-aws` 이미지의 pull과 compose 기동은 확인하지 않았다. `release.yml` `variants` 잡은 이후 GitHub에서 성공했다(`v0.6.0`, run 45380436731, `ci.md`).
 - LocalStack 수동 시나리오(ADR-0016 묶음 C, 2026-11-24, `scripts/secrets-localstack/run.sh`, LocalStack 4.12): 로컬 빌드한 변형 이미지를 `read_only`·`cap_drop: [ALL]` compose 컨테이너로 띄워 `run.sh`가 통과했다(2026-11-24). 실제 AWS와 LocalStack 최신 이미지(Auth Token 필요)는 실행하지 않았다(`aws-secrets-manager.md`).
 - `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).
 - TLS를 켠 PostgreSQL 서버에 대한 `MAILO_DB_SSLMODE` 접속.

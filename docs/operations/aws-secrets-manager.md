@@ -249,5 +249,5 @@ scripts/secrets-localstack/run.sh --skip-build # 이미 만든 로컬 이미지�
 - EC2의 IMDSv2 hop limit 설정이 컨테이너 자격 증명에 미치는 영향과 미설정 때의 증상.
 - Secrets Manager 자동 교체와 `X_REF`를 함께 쓴 재시작 절차.
 - LocalStack 최신 이미지(Auth Token 필요) 경로. 4.12 고정 이미지만 실행했다.
-- 변형 이미지의 취약점 스캔, `.github/workflows/release.yml` `variants` 잡의 GitHub 실행(`ci.md`).
+- 변형 이미지의 취약점 스캔, 발행된 `-aws` 이미지를 pull해 실행하는 검증(`.github/workflows/release.yml` `variants` 잡의 GitHub 실행은 `v0.6.0`의 run 45380436731에서 성공했다, `ci.md`).
 - 이 문서의 "기억" 표기 항목(플랫폼의 비밀 주입 기능, 키 정책 위임, CloudTrail, NAT·VPC 엔드포인트, hop limit 2, 환경 변수 키의 우선순위).

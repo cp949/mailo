@@ -172,7 +172,7 @@ RQ-001~052 이후의 장기 방향이다. 확정한 요구사항이 아니라 �
 
 ## 단계 11. 외부 시크릿 소스
 
-상태: ADR-0016 승인(2026-11-24). 묶음 A(코어, RQ-075~078)와 B(AWS 어댑터와 변형 이미지, RQ-079·080)를 구현했다(롤링 배포·롤백, `adapter`·`variants` 잡의 GitHub 실행, 실제 AWS 미확인). 묶음 C(운영 가이드 `aws-secrets-manager.md`와 LocalStack 수동 시나리오)는 작성했고 문서 검토(독립 리뷰)가 남았다. 결정은 [ADR-0016](../adr/0016-external-secret-sources.md)이 소유하고 요구사항은 RQ-075~081(RQ-075~078·080·081 진행 중, RQ-079 검증 완료)이다. 구현은 묶음 A(코어, RQ-075~078) → B(AWS 어댑터와 변형 이미지, RQ-079·080) → C(운영 가이드와 수동 시나리오, RQ-081) 순서다. 작업 방식은 `rubber-workflow`의 LEG다.
+상태: ADR-0016 승인(2026-11-24). 묶음 A(코어, RQ-075~078)와 B(AWS 어댑터와 변형 이미지, RQ-079·080)를 구현했다(`adapter`·`variants` 잡은 GitHub에서 성공했다. 롤링 배포·롤백, 실제 AWS 미확인). 묶음 C(운영 가이드 `aws-secrets-manager.md`와 LocalStack 수동 시나리오)는 작성했고 문서 검토(독립 리뷰)가 남았다. 결정은 [ADR-0016](../adr/0016-external-secret-sources.md)이 소유하고 요구사항은 RQ-075~081(RQ-075~078·081 진행 중, RQ-079·080 검증 완료)이다. 구현은 묶음 A(코어, RQ-075~078) → B(AWS 어댑터와 변형 이미지, RQ-079·080) → C(운영 가이드와 수동 시나리오, RQ-081) 순서다. 작업 방식은 `rubber-workflow`의 LEG다.
 
 11단계 결과 요약(2026-11-24, 승인 시점):
 
@@ -180,9 +180,9 @@ RQ-001~052 이후의 장기 방향이다. 확정한 요구사항이 아니라 �
 - 어댑터는 구조적 계약과 bare 패키지 이름 로더로 불러온다. AWS Secrets Manager 어댑터 하나만 공식으로 만들고 독립 패키지와 변형 이미지(`-aws`)로 둔다. 기본 이미지는 SDK가 없다. 마이그레이션이 없고 코어에 새 npm 의존성이 없다.
 - 호출처 계약은 바뀌지 않는다. RQ-029에 opt-in 예외를 더했다.
 - 묶음 A 결과(2026-11-24): `secrets/` leaf 모듈, 기동 전 `resolveSecrets`(앱과 마이그레이션 CLI), 허용 목록 조립(`secret-names.ts`)을 구현하고 가짜 어댑터로 단위·통합(실제 PostgreSQL)·canary를 검증했다. 새 npm 의존성이 없다. 컨테이너·compose 기동, 롤링 배포·롤백, 실제 저장소 어댑터는 이 시점에 확인하지 않았다.
-- 묶음 B 결과(2026-11-24): AWS 어댑터와 변형 이미지(`-aws`)를 구현하고 가짜 SDK 클라이언트·로컬 HTTP fixture·로컬 이미지 스모크로 검증했다(실제 AWS, `adapter`·`variants` 잡의 GitHub 실행 없음).
+- 묶음 B 결과(2026-11-24): AWS 어댑터와 변형 이미지(`-aws`)를 구현하고 가짜 SDK 클라이언트·로컬 HTTP fixture·로컬 이미지 스모크로 검증했다. `adapter` 잡(run 45376736296·45379361922)과 `variants` 잡(`v0.6.0` 태그의 run 45380436731)은 GitHub에서 성공했다(2026-11-24). 실제 AWS와 발행된 `-aws` 이미지의 pull 실행은 없다.
 - 묶음 C 결과(2026-11-24): `docs/operations/aws-secrets-manager.md`(IAM·KMS·자격 증명·비밀 형식·시작 실패·롤백)와 LocalStack 수동 시나리오(`scripts/secrets-localstack/`)를 작성했다. LocalStack은 2026.03.0부터 Auth Token을 요구해 토큰 없이 시작하는 4.12 고정 이미지로 실행했고 `run.sh`가 통과했다(2026-11-24). 실제 AWS와 LocalStack 최신 이미지 경로는 실행하지 않았다.
-- 남은 미검증 항목은 ADR-0016 "확인하지 않은 것"이다(실제 AWS의 IAM·KMS·자격 증명 체인·throttling, 변형 잡의 실제 태그 실행, SDK 취약점 감시).
+- 남은 미검증 항목은 ADR-0016 "확인하지 않은 것"이다(실제 AWS의 IAM·KMS·자격 증명 체인·throttling, 발행된 `-aws` 이미지 pull 실행, SDK 취약점 감시).
 
 ## 보류하는 항목
 
