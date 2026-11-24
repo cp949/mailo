@@ -540,6 +540,8 @@ describe("resolveSecrets: timeout (RQ-078, ADR-0016 결정 5)", () => {
       { "fake-adapter": { default: src } },
     );
     expect(result["MAILO_OPS_TOKEN"]).toBe("v");
+    // timeout(100ms)이 지난 뒤에도 abort되지 않는다(성공한 호출의 타이머를 해제한다).
+    await new Promise((r) => setTimeout(r, 250));
     expect(src.calls[0]!.signal.aborted).toBe(false);
   });
 

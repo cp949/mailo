@@ -56,14 +56,12 @@ describe("어댑터 로더: 지정자 규칙 (RQ-077)", () => {
   it("거부 사유에 지정자 원문을 싣지 않는다(URL의 자격 증명 방지)", async () => {
     const failures = await loadFailures("https://user:CANARY-URL-PW@host/a.js");
     expect(JSON.stringify(failures)).not.toContain("CANARY-URL-PW");
-    try {
-      await loadSecretAdapters(
+    await expect(
+      loadSecretAdapters(
         "https://user:CANARY-URL-PW@host/a.js",
         async () => ({}),
-      );
-    } catch (error) {
-      expect((error as Error).message).not.toContain("CANARY-URL-PW");
-    }
+      ),
+    ).rejects.toThrow(/^(?!.*CANARY-URL-PW)/s);
   });
 
   it.each(["pkg", "@cp949/mailo-secret-source-aws", "my-adapter.v2", "a1_b"])(
@@ -118,13 +116,11 @@ describe("어댑터 로더: 로드 실패 종류 (RQ-077)", () => {
     const error = new SyntaxError("CANARY-IMPORT-MESSAGE");
     const failures = await loadFailures("pkg", { pkg: error });
     expect(failures).toEqual([{ label: "pkg", kind: "import-failed" }]);
-    try {
-      await loadSecretAdapters("pkg", async () => {
+    await expect(
+      loadSecretAdapters("pkg", async () => {
         throw error;
-      });
-    } catch (e) {
-      expect((e as Error).message).not.toContain("CANARY-IMPORT-MESSAGE");
-    }
+      }),
+    ).rejects.toThrow(/^(?!.*CANARY-IMPORT-MESSAGE)/s);
   });
 
   const brokenExports: Array<[string, unknown]> = [
