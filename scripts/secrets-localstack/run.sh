@@ -2,7 +2,7 @@
 # AWS Secrets Manager 어댑터를 LocalStack으로 확인하는 수동 시나리오(ADR-0016 결정 9, RQ-081). 자동 테스트와 CI가 아니다.
 # 변형 이미지(-aws)를 로컬에서 만들고 전용 compose 프로젝트로 LocalStack·PostgreSQL·Mailpit·Mailo를 띄운다.
 # 확인: (1) _REF만으로 기동하고 /health/ready(운영 토큰), 작업 등록, 발송(Mailpit이 SMTP 비밀번호를 검사). DB 비밀번호·운영 토큰·SMTP 비밀번호는 값이 맞아야 통과하고 키는 형식만 본다
-#       (2) secrets_resolved 로그 (3) 로그·Config.Env·/proc/1/environ에 값이 없음 (4) 값 없는 기동 실패 5종(비밀 없음, JSON 키 없음, 어댑터 없음, 저장소 접근 불가, 충돌)
+#       (2) secrets_resolved 로그 (3) 로그·Config.Env·초기 프로세스 환경(/proc/1/environ)에 해석 값이 없고 참조만 있음 (4) 값 없는 기동 실패 5종(비밀 없음, JSON 키 없음, 어댑터 없음, 저장소 접근 불가, 충돌)
 # 한계: LocalStack은 IAM·KMS를 검사하지 않는다. 실제 AWS의 권한·자격 증명 체인·네트워크는 확인하지 않는다.
 # LocalStack 이미지: 기본은 Auth Token 없이 시작하는 고정 태그(4.12). 최신 이미지는 토큰이 필요하다
 #   LOCALSTACK_IMAGE=<이미지> LOCALSTACK_AUTH_TOKEN=<토큰> 으로 준다. 토큰은 LocalStack 컨테이너에만 전달하고 이 저장소에 두지 않는다.
@@ -68,16 +68,21 @@ export LS_OPS_TOKEN_REF="aws-sm://pending"
 
 dc() { docker compose -p "$PROJECT" --env-file "$WORK/empty.env" -f "$here/compose.localstack.yml" "$@"; }
 
+# 신호가 `dc up ... >파일` 실행 중에 오면 trap이 그 리디렉션 안에서 돌아 로그가 사라지므로 원래 표준 출력(3번)으로 쓴다.
+exec 3>&1
 cleanup() {
   if [ "$keep" -eq 1 ]; then
-    log "프로젝트 유지: project=$PROJECT (정리: docker compose -p $PROJECT down -v)"
+    log "프로젝트 유지: project=$PROJECT (정리: docker compose -p $PROJECT down -v)" >&3
   else
     dc down -v --remove-orphans >/dev/null 2>&1 || true
-    log "정리 완료: project=$PROJECT"
+    log "정리 완료: project=$PROJECT" >&3
   fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT
+# 신호로 끝날 때도 EXIT trap(cleanup)이 일반 종료 경로에서 돌고 "정리 완료" 줄을 남기게 한다.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 log "project=$PROJECT localstack=$localstack_image"
 
@@ -147,13 +152,18 @@ for value in "$LS_DB_PASSWORD" "$LS_SMTP_PASSWORD" "$LS_DB_KEY" "$LS_FINGERPRINT
   printf '%s' "$mailo_logs" | grep -qF -- "$value" && leak=$((leak + 1))
 done
 printf '%s' "$mailo_logs" | grep -qF -e 'mailo/localstack' -e "$ops_arn" && leak=$((leak + 1))
-[ "$leak" -eq 0 ]; check "Mailo 로그에 값, 참조 문자열(SecretId·ARN)이 없다" $?
-config_env="$(docker inspect --format '{{json .Config.Env}}' "$cid")"
+# 로그가 비어 있으면 통과하지 않는다(secrets_resolved 줄이 있어야 한다).
+[ -n "$resolved_line" ] && [ "$leak" -eq 0 ]; check "Mailo 로그(secrets_resolved 포함)에 값, 참조 문자열(SecretId·ARN)이 없다" $?
+config_env=""
+[ -n "$cid" ] && config_env="$(docker inspect --format '{{json .Config.Env}}' "$cid" 2>/dev/null)"
 leak=0
 for value in "$LS_DB_PASSWORD" "$LS_SMTP_PASSWORD" "$LS_DB_KEY" "$LS_FINGERPRINT_KEY" "$LS_OPS_TOKEN"; do
   printf '%s' "$config_env" | grep -qF -- "$value" && leak=$((leak + 1))
 done
-[ "$leak" -eq 0 ]; check "docker inspect의 Config.Env에 해석한 값이 없다(참조만 있다)" $?
+# 조회가 실패했거나 참조 변수가 없으면 통과하지 않는다.
+printf '%s' "$config_env" | grep -qF 'MAILO_DB_PASSWORD_REF=' && [ "$leak" -eq 0 ]; check "docker inspect의 Config.Env에 해석한 값이 없고 참조(_REF)만 있다" $?
+# 한계: /proc/1/environ은 프로세스가 시작할 때의 환경이다. 앱이 process.env를 바꿔도 이 파일은 바뀌지 않고 compose도 해석값을 환경으로 주지 않으므로,
+# 이 검사는 "시작 환경에 해석 값이 없고 참조만 있다"만 확인한다. 앱이 process.env를 바꾸지 않는 성질은 단위 테스트(test/secrets/)가 보증하고 메모리 노출은 시험하지 않는다.
 proc_result="$(printf '%s\n%s\n%s\n%s\n%s\n' "$LS_DB_PASSWORD" "$LS_SMTP_PASSWORD" "$LS_DB_KEY" "$LS_FINGERPRINT_KEY" "$LS_OPS_TOKEN" |
   dc exec -T mailo node -e '
     const { readFileSync } = require("node:fs");
@@ -163,11 +173,12 @@ proc_result="$(printf '%s\n%s\n%s\n%s\n%s\n' "$LS_DB_PASSWORD" "$LS_SMTP_PASSWOR
       const environ = readFileSync("/proc/1/environ", "utf8");
       const cmd = readFileSync("/proc/1/cmdline", "utf8").split("\0")[1] ?? "";
       const leaked = input.split("\n").filter(Boolean).some((v) => environ.includes(v));
-      process.stdout.write(`${leaked ? "leaked" : "absent"} pid1=${cmd}`);
+      const hasRef = environ.includes("MAILO_DB_PASSWORD_REF=");
+      process.stdout.write(`${leaked ? "leaked" : hasRef ? "absent" : "no-ref"} pid1=${cmd}`);
     });
   ' 2>&1)"
 case "$proc_result" in absent*) rc=0 ;; *) rc=1 ;; esac
-check "컨테이너 PID 1의 /proc/1/environ에 해석한 값이 없다($proc_result)" $rc
+check "초기 프로세스 환경(/proc/1/environ)에 해석 값이 없고 참조만 있다. 시작 환경만 본다($proc_result)" $rc
 [ "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$cid")" = true ]; check "컨테이너 루트가 읽기 전용이다" $?
 
 # 4. 값 없는 기동 실패. 어떤 줄에도 값·참조가 없어야 한다.

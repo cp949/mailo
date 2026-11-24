@@ -22,7 +22,7 @@ MAILO_SMTP_PASSWORD_REF=aws-sm://prod/mailo/smtp#password
 - `#<키>`가 있으면 `SecretString`을 JSON 객체로 읽어 그 키의 문자열 값만 돌려준다. 키는 `[A-Za-z0-9_.-]+`이고 `#`은 하나만 쓴다. compose `.env`에서는 `#` 바로 앞에 공백을 두지 않으면 값의 일부다(공백이 있으면 주석으로 잘린다. `docker compose config`와 `docker run --env-file`로 확인했다).
 - `AWS_REGION`은 필수다. 자격 증명은 AWS SDK 기본 체인에서 얻는다.
 - 호환 서버(LocalStack 등)는 SDK 표준 환경 변수 `AWS_ENDPOINT_URL_SECRETS_MANAGER`(또는 `AWS_ENDPOINT_URL`)로 지정한다.
-- 요청마다 SDK 클라이언트를 만들고 해석이 끝나면 `destroy()`한다. 그래서 `X_REF` 변수가 N개면 클라이언트 생성과 자격 증명 조회도 N번이다(같은 `SecretId`를 가리켜도 합치지 않는다). SDK 기본 재시도(3회)를 쓴다.
+- 요청마다 SDK 클라이언트를 만들고 해석이 끝나면 `destroy()`한다. 그래서 `X_REF` 변수가 N개면 클라이언트 생성과 자격 증명 조회도 N번이다(같은 `SecretId`를 가리켜도 합치지 않는다). SDK 기본 재시도를 쓴다(한 번의 해석에 최대 3회 시도, 첫 요청 포함).
 
 ## 오류
 

@@ -2615,7 +2615,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 - `secrets/resolve.spec.ts`: `signal`을 무시하는 어댑터의 timeout 확정과 `abort`, timeout 뒤 늦은 거부의 미처리 거부 없음(`Promise.race`가 거부를 구독하므로 이 테스트는 구조적 성질을 확인한다), 닫힌 코드 5종의 `adapter-error:<코드>` 통과와 그 밖 코드·비객체 던짐의 `adapter-error`, 해석 실패 종류별 메시지, 오류에 canary(값, 어댑터 메시지, 참조) 없음, `secrets_resolved`의 건수·scheme만, 설정 오류(`MAILO_SECRET_RESOLVE_TIMEOUT_MS`)와 어댑터 로드 실패가 해석보다 먼저. `e2e/secret-startup.integration-spec.ts`(컴파일한 `main.js`·`migrate-cli.js` 실행): 종료 코드 1, `startup_failed`의 `error`·`message`, 마이그레이션 CLI의 표준 오류 문구, 출력에 canary 없음, `X_REF`가 없으면 해석 단계가 기존 설정 오류 경로로 간다.
 - 구현: `secrets/resolve.ts`, `secrets/errors.ts`, `main.ts`의 `startup_failed` 클래스 목록, `db/migrate-cli.ts`.
-- 남은 미검증: 롤링 배포·롤백은 실행하지 않았다. 변형 이미지의 `read_only`·`cap_drop` compose 기동과 컨테이너 PID 1 `/proc/1/environ`의 값 비노출은 RQ-081의 수동 시나리오가 확인한다(LocalStack 4.12, 실제 AWS 아님). 어댑터 코드가 코어 밖에서 값을 로그에 쓰는지는 코어가 통제하지 못한다.
+- 남은 미검증: 롤링 배포·롤백은 실행하지 않았다. 변형 이미지의 `read_only`·`cap_drop` compose 기동과 컨테이너 초기 프로세스 환경(`/proc/1/environ`)의 값 부재(참조만 있음)는 RQ-081의 수동 시나리오가 확인한다(LocalStack 4.12, 실제 AWS 아님. 시작 환경만 보고 메모리 노출은 시험하지 않았다). 어댑터 코드가 코어 밖에서 값을 로그에 쓰는지는 코어가 통제하지 못한다.
 
 ### RQ-079 AWS Secrets Manager 어댑터
 
@@ -2679,8 +2679,8 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 **판정 근거:**
 
-- `scripts/secrets-localstack/run.sh`(2026-11-24, `localstack/localstack:4.12`, 로컬 빌드 기본·변형 이미지, L3 스크립트이고 자동 테스트가 아니다): 14건 통과, 실패 0건. 모든 비밀을 `_REF`로 받고(운영 토큰은 ARN 참조, 나머지는 JSON 키 참조) 기동한다. 운영 토큰으로 `/health/ready` 200과 틀린 토큰 401, DB 비밀번호(PostgreSQL 초기 비밀번호와 같은 값)로 DB 접속, Mailpit이 SMTP 비밀번호를 검사해 작업이 `SENT`, DB 본문 키·지문 키가 키 형식으로 해석돼 등록이 202다. `secrets_resolved`가 `count: 5`, `schemes: aws-sm`이다. Mailo 로그에 값·SecretId·ARN이 없고 `docker inspect`의 `Config.Env`와 PID 1의 `/proc/1/environ`에 해석한 값이 없다. 값 없는 기동 실패 5종(`adapter-error:not-found`, `adapter-error:invalid-value`, `conflict`, `adapter-error:unavailable`, 기본 이미지의 `unknown-scheme`)은 종료 코드 1이고 출력에 값이 없다. Mailpit의 기대 비밀번호를 다른 값으로 바꾸면 SMTP 항목이 실패하는 것을 확인했다(변이 확인).
-- LocalStack 정책 확인(2026-11-24): 2026.03.0(2026-03-23)부터 단일 이미지가 Auth Token을 요구한다. 토큰 없이 `localstack-pro:2026.8.2`를 실행하면 종료 코드 55로 끝나고 `4.12`는 시작한다. 출처와 결정은 ADR-0016 "구현 중 확정"과 `aws-secrets-manager.md`.
+- `scripts/secrets-localstack/run.sh`(2026-11-24, `localstack/localstack:4.12`, 로컬 빌드 기본·변형 이미지, L3 스크립트이고 자동 테스트가 아니다): 14건 통과, 실패 0건. 모든 비밀을 `_REF`로 받고(운영 토큰은 ARN 참조, 나머지는 JSON 키 참조) 기동한다. 운영 토큰으로 `/health/ready` 200과 틀린 토큰 401, DB 비밀번호(PostgreSQL 초기 비밀번호와 같은 값)로 DB 접속, Mailpit이 SMTP 비밀번호를 검사해 작업이 `SENT`, DB 본문 키·지문 키가 키 형식으로 해석돼 등록이 202다. `secrets_resolved`가 `count: 5`, `schemes: aws-sm`이다. Mailo 로그에 값·SecretId·ARN이 없고 `docker inspect`의 `Config.Env`와 초기 프로세스 환경(`/proc/1/environ`)에 해석 값이 없고 참조만 있다(시작 환경만 보므로 앱이 `process.env`를 바꾸지 않는 성질은 단위 테스트가 보증하고 메모리 노출은 시험하지 않았다). 값 없는 기동 실패 5종(`adapter-error:not-found`, `adapter-error:invalid-value`, `conflict`, `adapter-error:unavailable`, 기본 이미지의 `unknown-scheme`)은 종료 코드 1이고 출력에 값이 없다. Mailpit의 기대 비밀번호를 다른 값으로 바꾸면 SMTP 항목이 실패하는 것을 확인했다(변이 확인).
+- LocalStack 정책 확인(2026-11-24): 2026.03.0(2026-03-23)부터 단일 이미지가 Auth Token을 요구한다. 토큰 없이 `localstack-pro:2026.08.2`를 실행하면 종료 코드 55로 끝나고 `4.12`는 시작한다. 출처와 결정은 ADR-0016 "구현 중 확정"과 `aws-secrets-manager.md`.
 - 한계: LocalStack은 IAM·KMS를 검사하지 않는다. `access-denied`·`throttled` 경로, 자격 증명 체인, 실제 AWS의 지연·제한은 확인하지 않았다. LocalStack 최신 이미지(토큰 필요) 경로는 토큰이 없어 실행하지 않았다. 롤링 배포·롤백, 문서 검토(독립 리뷰)는 남았다.
 
 ## 확정한 항목

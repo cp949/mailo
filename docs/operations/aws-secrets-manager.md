@@ -33,10 +33,10 @@
    | 변수 | 값 | 비고 |
    | ---- | -- | ---- |
    | `MAILO_SECRET_ADAPTERS` | `@cp949/mailo-secret-source-aws` | 필수. 없으면 `X_REF`가 `unknown-scheme`으로 거부된다 |
-   | `AWS_REGION` | 비밀이 있는 리전(예: `ap-northeast-2`) | 필수. 어댑터는 이 값만 쓴다. ARN의 리전은 읽지 않는다 |
-   | `MAILO_SECRET_RESOLVE_TIMEOUT_MS` | 기본 10000, 범위 100~60000 | 해석 1건과 어댑터 `import()` 1건의 제한 시간. 어댑터 내부의 SDK 재시도(요청당 최대 3회)가 이 안에서 일어난다 |
+   | `AWS_REGION` | 비밀이 있는 리전(예: `ap-northeast-2`) | 필수. 어댑터는 이 값만 쓴다. ARN의 리전은 읽지 않는다. ARN을 쓰면 ARN의 지역이 `AWS_REGION`과 같아야 한다(어긋날 때 서비스 응답의 분류는 추정이다. `troubleshooting.md` 참조) |
+   | `MAILO_SECRET_RESOLVE_TIMEOUT_MS` | 기본 10000, 범위 100~60000 | 해석 1건과 어댑터 `import()` 1건의 제한 시간. 어댑터 내부의 SDK 재시도가 이 안에서 일어난다. SDK 기본값은 한 번의 해석에 최대 3회 시도(첫 요청 포함, 재시도 2회)다 |
    | `X_REF` 변수 | `aws-sm://<SecretId>[#<JSON 키>]` | 변수 이름 목록과 충돌 규칙은 `deployment.md`. 변수마다 `GetSecretValue`가 1회 나간다 |
-   | `AWS_ENDPOINT_URL_SECRETS_MANAGER` | 지정하지 않는다 | LocalStack 같은 호환 서버 전용이다. 운영에서 지정하면 요청이 그 주소로 간다 |
+   | `AWS_ENDPOINT_URL_SECRETS_MANAGER` | 지정하지 않는다 | LocalStack 같은 호환 서버 전용이다. 운영에서 지정하면 요청이 그 주소로 간다. 전역 `AWS_ENDPOINT_URL`도 SDK가 읽는다(어댑터 `README.md`의 설명이고 이 변수는 시험하지 않았다). 운영에서는 둘 다 지정하지 않는다 |
 
 3. 같은 변수에 `X`·`X_FILE`이 남아 있으면 `conflict`다. compose에서는 `X: ""`로 비운다. 예시는 `deployment.md`.
 4. 쓰지 않는 `_REF`를 남기지 않는다. 환경에 있는 `_REF`는 모두 해석하므로 쓰지 않는 비밀의 읽기 권한이 필요하다.
@@ -137,7 +137,7 @@ KMS 키에 따라 달라지는 부분.
 | EC2 | 인스턴스 프로파일에 역할을 붙인다 | 아래 IMDSv2 주의 |
 | AWS 밖(온프레미스, 단일 호스트) | 정적 액세스 키는 마지막 수단이다 | `AWS_ACCESS_KEY_ID` 등은 환경 변수라 `docker inspect`에 보이고 교체 부담이 있다. 최소 권한 IAM 사용자로 한정한다 |
 
-환경 변수의 `AWS_ACCESS_KEY_ID`가 남아 있으면 연결한 역할보다 먼저 쓰일 수 있다. 역할을 쓰려면 환경 변수 키를 주지 않는다.
+환경 변수의 `AWS_ACCESS_KEY_ID`가 남아 있으면 연결한 역할보다 먼저 쓰일 수 있다(기억, JavaScript SDK 체인의 순서는 읽지 않았다). 역할을 쓰려면 환경 변수 키를 주지 않는다.
 
 IMDSv2와 컨테이너(EC2 인스턴스 프로파일을 쓸 때).
 
@@ -166,11 +166,11 @@ docker compose logs --no-log-prefix mailo | jq -c 'select(.event=="startup_faile
 
 | 코드 | AWS 쪽 원인 | 확인과 조치 |
 | ---- | ----------- | ----------- |
-| `adapter-error:not-found` | 이름 오타, 리전 불일치(`AWS_REGION`이 비밀의 리전과 다르다), 비밀이 없음 | 조회 권한이 있는 관리자 자격으로 `aws secretsmanager describe-secret --secret-id <이름> --region <리전>`을 실행해 같은 리전에 있는지 본다(Mailo의 정책에는 `DescribeSecret`이 없다). ARN 참조는 비밀을 재생성하면 바뀐다 |
+| `adapter-error:not-found` | 이름 오타, 리전 불일치(`AWS_REGION`이 비밀의 리전과 다르다), 비밀이 없음. ARN 참조의 지역이 `AWS_REGION`과 다를 때의 분류는 추정이다(`troubleshooting.md`) | 조회 권한이 있는 관리자 자격으로 `aws secretsmanager describe-secret --secret-id <이름> --region <리전>`을 실행해 같은 리전에 있는지 본다(Mailo의 정책에는 `DescribeSecret`이 없다). ARN 참조는 비밀을 재생성하면 바뀐다 |
 | `adapter-error:access-denied` | IAM 정책 없음·`Resource` 불일치, KMS `kms:Decrypt` 없음, 자격 증명을 얻지 못함(역할 미연결, IMDSv2 hop limit) | 정책의 `Resource`가 비밀 ARN과 같은지, 고객 관리형 키면 `kms:Decrypt`와 키 정책을 본다. 컨테이너에 자격 증명이 들어오는지 본다. 어느 쪽이 거부했는지는 CloudTrail(기억) |
 | `adapter-error:throttled` | 요청 제한 | 인스턴스를 한꺼번에 재시작하지 않는다. 같은 비밀을 가리키는 변수가 많으면 호출이 변수 수만큼 나간다 |
 | `adapter-error:unavailable` | Secrets Manager 엔드포인트에 닿지 못함(DNS, 보안 그룹, VPC 엔드포인트 없음), 서비스 오류, 시간 초과 | 컨테이너에서 `secretsmanager.<리전>.amazonaws.com`에 닿는지 본다. 프라이빗 서브넷이면 NAT 또는 VPC 엔드포인트가 필요하다(기억). 이미 실행 중인 인스턴스는 영향이 없다 |
-| `adapter-error:invalid-value` | `AWS_REGION` 없음, 비밀 이름 형식 오류, `SecretBinary`만 있음, JSON이 아님·키가 없음·문자열이 아닌 값, 서비스가 요청을 거부함(삭제 예약된 비밀 등, 기억) | 비밀의 `SecretString`과 `#<키>` 철자를 본다 |
+| `adapter-error:invalid-value` | `AWS_REGION` 없음, ARN 참조의 지역과 `AWS_REGION` 불일치(분류는 추정, `troubleshooting.md`), 비밀 이름 형식 오류, `SecretBinary`만 있음, JSON이 아님·키가 없음·문자열이 아닌 값, 서비스가 요청을 거부함(삭제 예약된 비밀 등, 기억) | 비밀의 `SecretString`과 `#<키>` 철자를 본다 |
 
 - 닫힌 코드는 진단 힌트다. 분류를 잘못 붙이면 원인을 잘못 읽을 수 있다. AWS 쪽 오류 이름과 코드 대응은 어댑터 `README.md`다.
 - 코드 없는 `adapter-error`는 어댑터가 분류하지 못한 오류다. SDK 오류 메시지는 로그에 나오지 않는다.
@@ -186,7 +186,7 @@ docker compose logs --no-log-prefix mailo | jq -c 'select(.event=="startup_faile
 docker compose logs --no-log-prefix mailo | jq -c 'select(.event=="secrets_resolved")'
 ```
 
-로그, 오류, 지표, 헬스 응답에 나오지 않는 것: 비밀 값, 참조 문자열(SecretId·ARN), SDK 오류 메시지, AWS 요청 ID. 컨테이너 환경(`docker inspect`의 `Config.Env`)에는 참조 변수(`X_REF`)와 정적 키를 쓰는 경우의 `AWS_*` 값이 보인다. 해석한 값은 보이지 않는다(LocalStack 시나리오에서 `Config.Env`와 `/proc/1/environ`을 확인했다).
+로그, 오류, 지표, 헬스 응답에 나오지 않는 것: 비밀 값, 참조 문자열(SecretId·ARN), SDK 오류 메시지, AWS 요청 ID. 컨테이너 환경(`docker inspect`의 `Config.Env`)에는 참조 변수(`X_REF`)와 정적 키를 쓰는 경우의 `AWS_*` 값이 보인다. 해석한 값은 보이지 않는다. LocalStack 시나리오에서 `Config.Env`와 초기 프로세스 환경(`/proc/1/environ`)에 해석 값이 없고 참조만 있음을 확인했다. `/proc/<pid>/environ`은 프로세스 시작 때의 환경이라 앱이 `process.env`를 바꿔도 달라지지 않는다. 앱이 `process.env`를 바꾸지 않는 성질은 단위 테스트가 보증하고 메모리 노출은 시험하지 않았다.
 
 ## 롤백
 
@@ -208,7 +208,7 @@ LocalStack 라이선스·이미지 정책(2026-11-24 확인, ADR-0016 "구현 �
 - LocalStack for AWS는 2026-03-23(`2026.03.0`)부터 `localstack/localstack` 이미지 하나로 나오고 시작에 Auth Token이 필요하다(LocalStack 릴리스 노트, 공지 글 2026-03-05, 인증 문서).
 - 무료 Hobby 플랜은 비상업 용도다. 상업 용도는 유료 플랜이다. Hobby 플랜 사용에 LocalStack 계정이 필요한지는 문서에서 확인하지 못했다.
 - 2026-04-06까지는 `LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT=1` 우회가 있었다. 지금은 끝났다.
-- 로컬 실행 결과: `localstack/localstack-pro:2026.8.2`는 토큰 없이 종료 코드 55로 끝난다(`License activation failed`). `localstack/localstack:4.12`(4.12.0, 빌드 2025-12-11)는 토큰 없이 시작하고 `edition: community`를 보고하며 `secretsmanager`가 `available`이다.
+- 로컬 실행 결과: `localstack/localstack-pro:2026.08.2`는 토큰 없이 종료 코드 55로 끝난다(`License activation failed`). `localstack/localstack:4.12`(4.12.0, 빌드 2025-12-11)는 토큰 없이 시작하고 `edition: community`를 보고하며 `secretsmanager`가 `available`이다.
 - 4.12는 갱신이 없는 고정 이미지다(공지 글: 고정 버전은 이후 갱신이 없다). 라이선스 조건은 확인하지 않았다. 이 시나리오는 가짜 값만 쓰고 compose 네트워크 안에서만 연다.
 
 결정: 수동 시나리오를 둔다. 기본값은 토큰 없이 시작하는 `4.12` 고정 이미지(digest 포함)다. 최신 이미지를 쓰려면 `LOCALSTACK_IMAGE`와 `LOCALSTACK_AUTH_TOKEN`을 환경에 준다. 토큰은 LocalStack 컨테이너에만 전달하고 저장소에 두지 않는다. 최신 이미지 경로는 토큰이 없어 실행하지 못했다.
@@ -220,7 +220,7 @@ scripts/secrets-localstack/run.sh              # 이미지를 빌드하고 실�
 scripts/secrets-localstack/run.sh --skip-build # 이미 만든 로컬 이미지를 재사용
 ```
 
-확인하는 것(14건, 2026-11-24 실행 14건 통과, 실패 0건).
+확인하는 것(2026-11-24 `run.sh` 통과, 실패 0건. 건수는 스크립트 출력이 정한다).
 
 - `_REF`만으로(읽기 전용, `cap_drop: [ALL]` 컨테이너) 기동한다. 운영 토큰은 ARN 참조, 나머지는 JSON 키 참조다.
 - 운영 토큰 값이 맞아야 `/health/ready`가 운영자 응답(200)이고 틀린 토큰은 401이다.
@@ -228,7 +228,7 @@ scripts/secrets-localstack/run.sh --skip-build # 이미 만든 로컬 이미지�
 - Mailpit이 SMTP 비밀번호를 검사하고 작업이 `SENT`가 된다. Mailpit의 기대 비밀번호를 다른 값으로 바꾸면 이 항목이 실패하는 것도 확인했다.
 - DB 본문 키와 지문 키는 32바이트 키 형식으로 해석돼 작업 등록이 202다. 값이 같은지는 보지 않는다.
 - `secrets_resolved`가 `count: 5`, `schemes: aws-sm`으로 남는다.
-- Mailo 로그에 값, SecretId, ARN이 없다. `docker inspect`의 `Config.Env`와 PID 1의 `/proc/1/environ`에 해석한 값이 없다.
+- Mailo 로그에 값, SecretId, ARN이 없다(`secrets_resolved` 줄이 있어야 통과한다). `docker inspect`의 `Config.Env`와 초기 프로세스 환경(`/proc/1/environ`)에 해석 값이 없고 참조(`_REF`)만 있다. `/proc/1/environ`은 시작 때의 환경만 보므로 앱이 `process.env`를 바꾸는지는 이 검사로 알 수 없다(단위 테스트가 보증하고 메모리 노출은 시험하지 않았다).
 - 값 없는 기동 실패: 비밀 없음(`adapter-error:not-found`), JSON 키 없음(`adapter-error:invalid-value`), 평문 값과 `_REF` 동시 지정(`conflict`), 저장소 접근 불가(`adapter-error:unavailable`), 기본 이미지에서 같은 `_REF`(`unknown-scheme`). 모두 종료 코드 1이고 출력에 값이 없다.
 
 한계.
@@ -250,4 +250,4 @@ scripts/secrets-localstack/run.sh --skip-build # 이미 만든 로컬 이미지�
 - Secrets Manager 자동 교체와 `X_REF`를 함께 쓴 재시작 절차.
 - LocalStack 최신 이미지(Auth Token 필요) 경로. 4.12 고정 이미지만 실행했다.
 - 변형 이미지의 취약점 스캔, `.github/workflows/release.yml` `variants` 잡의 GitHub 실행(`ci.md`).
-- 이 문서의 "기억" 표기 항목(플랫폼의 비밀 주입 기능, 키 정책 위임, CloudTrail, NAT·VPC 엔드포인트, hop limit 2).
+- 이 문서의 "기억" 표기 항목(플랫폼의 비밀 주입 기능, 키 정책 위임, CloudTrail, NAT·VPC 엔드포인트, hop limit 2, 환경 변수 키의 우선순위).
