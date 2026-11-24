@@ -7,7 +7,6 @@ import {
 import { loadSecretAdapters, type ImportModule } from "./loader.js";
 import {
   RESERVED_SCHEME,
-  SCHEME_PATTERN,
   SECRET_ERROR_CODES,
   type SecretErrorCode,
   type SecretSource,
