@@ -258,10 +258,16 @@ describe("e2e: onUncertainOutcome fail의 결과 불명 종결 (RQ-073·074, ADR
         status: "failed",
       }),
     ).toBe(1);
-    // 수신자·제목·본문이 지표에 없다(RQ-027).
+    // 수신자·제목·본문이 지표와 작업 조회 응답에 없고, 이벤트에는 설계상 있는 수신자 외에 제목·본문이 없다(RQ-027, RQ-017).
     const text = JSON.stringify(samples);
     for (const canary of [CANARY.recipient, CANARY.subject, CANARY.text])
       expect(text).not.toContain(canary);
+    const lookup = JSON.stringify(await getJob(created.jobId));
+    for (const canary of [CANARY.recipient, CANARY.subject, CANARY.text])
+      expect(lookup).not.toContain(canary);
+    const eventText = JSON.stringify(feed);
+    for (const canary of [CANARY.subject, CANARY.text])
+      expect(eventText).not.toContain(canary);
     const logs = app!.logs.lines.join("\n");
     for (const canary of [CANARY.recipient, CANARY.subject, CANARY.text])
       expect(logs).not.toContain(canary);
