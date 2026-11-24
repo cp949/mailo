@@ -122,4 +122,34 @@ describe("PostgreSQL 통합: 0019 on_uncertain 컬럼 (RQ-073, ADR-0015 결정 9
       });
     await expect(insert(null)).rejects.toMatchObject({ code: "23502" });
   });
+
+  it("실제 migrations 폴더 전체를 새 schema에 적용하면 0017·0018(수신자 비움) 다음에 0019가 이 순서로 적용된다", async () => {
+    const other = await createTestDatabase();
+    try {
+      const applied = await runMigrations(other.pool, SOURCE);
+      const names = applied.filter((n) => /^001[789]_/.test(n));
+      expect(names).toEqual([
+        expect.stringMatching(/^0017_/),
+        expect.stringMatching(/^0018_/),
+        MIGRATION,
+      ]);
+      expect(applied.indexOf(names[2]!)).toBe(applied.indexOf(names[1]!) + 1);
+      // 두 묶음의 컬럼이 함께 있다.
+      const { rows } = await other.pool.query(
+        `SELECT table_name, column_name FROM information_schema.columns
+          WHERE table_schema = $1
+            AND ((table_name = 'mail_jobs' AND column_name = 'on_uncertain')
+              OR (table_name = 'mail_events' AND column_name = 'recipients_redacted_at'))
+          ORDER BY table_name`,
+        [other.schema],
+      );
+      expect(rows).toEqual([
+        { table_name: "mail_events", column_name: "recipients_redacted_at" },
+        { table_name: "mail_jobs", column_name: "on_uncertain" },
+      ]);
+      expect(await runMigrations(other.pool, SOURCE)).toEqual([]);
+    } finally {
+      await other.close();
+    }
+  });
 });
