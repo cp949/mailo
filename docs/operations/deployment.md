@@ -606,6 +606,7 @@ services:
       MAILO_DB_PASSWORD_REF: "aws-sm://mailo/example/db#password"
 ```
 
+- `docker-compose.migrate-once.yml`을 쓰면 `mailo-migrate`도 어댑터가 필요하다. `mailo-migrate`에도 같은 변형 이미지(`image`와 `build: !reset null`), `MAILO_SECRET_ADAPTERS`, `AWS_REGION`을 준다. `_REF`만 주고 어댑터를 빼면 마이그레이션 CLI가 `unknown-scheme`으로 거부한다. 마이그레이션 CLI는 `MAILO_DATABASE_URL`·`MAILO_DB_PASSWORD`의 `_REF`만 해석한다.
 - `docker-compose.migrate-once.yml`을 쓰면 `mailo-migrate`도 같은 방식으로 비운다: `MAILO_DB_PASSWORD: ""`와 `MAILO_DB_PASSWORD_REF`(마이그레이션 전용 계정이면 그 계정의 참조)를 `mailo-migrate`에 준다. `MAILO_MIGRATE_DB_PASSWORD`를 쓰는 구성은 이 줄이 대신한다.
 - `postgres` 컨테이너의 `POSTGRES_PASSWORD`는 DB 초기화 값이라 compose가 계속 요구한다. 이 값을 저장소로 옮기는 구성은 다루지 않는다.
 
@@ -622,7 +623,7 @@ AWS Secrets Manager의 비밀을 `X_REF`로 읽는 이미지다(ADR-0016 결정 
 
 - 이미지: `ghcr.io/cp949/mailo:vX.Y.Z-aws`. 같은 릴리스 커밋의 기본 이미지(digest) 위에 어댑터 `@cp949/mailo-secret-source-aws`와 AWS SDK(`@aws-sdk/client-secrets-manager`)만 얹었다. 기본 이미지에는 둘 다 없다. 이동 태그(`latest-aws`)는 없다. 변형은 기본 이미지와 Release를 발행한 뒤 별도 잡이 발행하므로 늦거나 없을 수 있다. 이 경우 기본 이미지는 이미 나가 있다(`ci.md` "variants 잡").
 - 쓰는 법: 위 GHCR 절의 override처럼 `image`를 `-aws` 태그로 주고 `build: !reset null`을 쓴다. `MAILO_SECRET_ADAPTERS=@cp949/mailo-secret-source-aws`, `AWS_REGION`(필수), `X_REF`를 준다.
-- 참조 형식: `aws-sm://<SecretId>[#<JSON 키>]`. `SecretId`는 비밀 이름 또는 ARN이다. `SecretString`을 `AWSCURRENT` 단계로 읽는다. `#<키>`가 있으면 `SecretString`을 JSON 객체로 읽어 그 키의 문자열 값만 쓴다(키는 `[A-Za-z0-9_.-]+`). `SecretBinary`, 버전 지정, 중첩 JSON 키는 지원하지 않는다. 같은 `SecretId`를 가리키는 변수마다 `GetSecretValue`가 한 번씩 나간다.
+- 참조 형식: `aws-sm://<SecretId>[#<JSON 키>]`. `SecretId`는 비밀 이름 또는 ARN이다. `SecretString`을 `AWSCURRENT` 단계로 읽는다. `#<키>`가 있으면 `SecretString`을 JSON 객체로 읽어 그 키의 문자열 값만 쓴다(키는 `[A-Za-z0-9_.-]+`). `SecretBinary`, 버전 지정, 중첩 JSON 키는 지원하지 않는다. 같은 `SecretId`를 가리키는 변수마다 `GetSecretValue`가 한 번씩 나가고, 변수마다 SDK 클라이언트를 따로 만들어 자격 증명도 따로 조회한다. `SecretId`는 이름(영문 대소문자·숫자·`/_+=.@-`, 최대 512자)이나 ARN이어야 하고 공백·제어문자가 있으면 SDK를 부르기 전에 `invalid-value`로 거부한다. ARN을 쓰면 ARN의 지역이 `AWS_REGION`과 같아야 한다(어댑터는 `AWS_REGION`만 쓰고 ARN의 지역을 읽지 않는다).
 - 자격 증명은 AWS SDK 기본 체인에서 얻는다(`AWS_ACCESS_KEY_ID`·`AWS_SECRET_ACCESS_KEY` 같은 환경 변수, 플랫폼 역할 등). 이 값은 `docker inspect`에 보일 수 있다. 호환 서버(LocalStack 등)는 SDK 표준 환경 변수 `AWS_ENDPOINT_URL_SECRETS_MANAGER`로 지정한다. 운영에서는 지정하지 않는다.
 - 오류 코드(`troubleshooting.md` "기동 시 비밀값 해석 실패"): `not-found`(비밀 없음), `access-denied`(권한·자격 증명 없음·서명·KMS 복호화 거부), `throttled`, `unavailable`(서비스 오류, 네트워크, 시간 초과), `invalid-value`(참조 형식 오류, `AWS_REGION` 없음, `SecretBinary`만 있음, JSON이 아니거나 키가 없거나 값이 문자열이 아님). SDK의 오류 메시지·SecretId·값은 오류에 싣지 않는다.
 - 재시도: SDK 기본(요청당 최대 3회)이 해석 제한 시간 안에서 동작한다. 코어는 재시도하지 않는다.

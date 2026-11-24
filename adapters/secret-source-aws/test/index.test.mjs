@@ -445,3 +445,112 @@ describe("abort와 클라이언트 정리(ADR-0016 결정 3·8, 묶음 A 리뷰 
     assert.equal(await source.resolve("aws-sm://x", { signal: signal() }), "v");
   });
 });
+
+describe("SecretId 형식은 SDK를 부르기 전에 거른다(RQ-079, ADR-0016 결정 8)", () => {
+  const NAME_CHARS = "azAZ09/_+=.@-";
+  const ARN = (partition, region, name) =>
+    `arn:${partition}:secretsmanager:${region}:000000000000:secret:${name}`;
+
+  const rejected = [
+    ["끝 공백", "aws-sm://prod/smtp "],
+    ["앞 공백", "aws-sm:// prod/smtp"],
+    ["중간 공백", "aws-sm://prod /smtp"],
+    ["개행", "aws-sm://prod/smtp\n"],
+    ["제어 문자", "aws-sm://prod/\u0000smtp"],
+    ["허용하지 않는 문자(*)", "aws-sm://prod/*"],
+    ["허용하지 않는 문자(비ASCII)", "aws-sm://prod/비밀"],
+    ["길이 513의 이름", `aws-sm://${"a".repeat(513)}`],
+    ["secretsmanager가 아닌 ARN", "aws-sm://arn:aws:s3:::bucket"],
+    [
+      "secret 리소스가 없는 ARN",
+      "aws-sm://arn:aws:secretsmanager:us-east-1:000000000000",
+    ],
+    [
+      "계정 번호가 12자리가 아닌 ARN",
+      "aws-sm://arn:aws:secretsmanager:us-east-1:1234:secret:x-AbCdEf",
+    ],
+    ["끝 공백이 붙은 ARN", `aws-sm://${ARN("aws", "us-east-1", "x-AbCdEf")} `],
+  ];
+  for (const [title, ref] of rejected) {
+    it(`${title}: SDK를 부르기 전에 invalid-value로 거부한다`, async () => {
+      const { source, created } = sourceWith(() => ({ SecretString: "v" }));
+
+      const error = await failureOf(source.resolve(ref, { signal: signal() }));
+
+      assert.equal(error.code, "invalid-value");
+      assertNoCanary(error);
+      assert.equal(created.length, 0);
+    });
+  }
+
+  const accepted = [
+    ["허용 문자 전부", `aws-sm://${NAME_CHARS}`],
+    ["길이 512의 이름", `aws-sm://${"a".repeat(512)}`],
+    ["길이 1의 이름", "aws-sm://a"],
+    [
+      "aws 파티션 ARN",
+      `aws-sm://${ARN("aws", "ap-northeast-2", "prod/x-AbCdEf")}`,
+    ],
+    [
+      "aws-cn 파티션 ARN",
+      `aws-sm://${ARN("aws-cn", "cn-north-1", "x-AbCdEf")}`,
+    ],
+    [
+      "aws-us-gov 파티션 ARN",
+      `aws-sm://${ARN("aws-us-gov", "us-gov-west-1", "x-AbCdEf")}`,
+    ],
+  ];
+  for (const [title, ref] of accepted) {
+    it(`${title}: SDK로 보낸다`, async () => {
+      const { source, created } = sourceWith(() => ({ SecretString: "v" }));
+
+      await source.resolve(ref, { signal: signal() });
+
+      assert.equal(
+        created[0].sent[0].input.SecretId,
+        ref.slice("aws-sm://".length),
+      );
+    });
+  }
+});
+
+describe("클라이언트 생성 실패와 상태 경계(ADR-0016 결정 5)", () => {
+  it("클라이언트를 만들다 던져도 SDK 오류가 아니라 고정 문구의 어댑터 오류로 나간다", async () => {
+    const source = createAwsSecretSource({
+      env: ENV,
+      createClient() {
+        throw Object.assign(new Error(`${SDK_MESSAGE} ${SECRET_ID}`), {
+          name: "CredentialsProviderError",
+        });
+      },
+    });
+
+    const error = await failureOf(
+      source.resolve(`aws-sm://${SECRET_ID}`, { signal: signal() }),
+    );
+
+    assert.equal(error.name, "AwsSecretSourceError");
+    assert.equal(error.code, "access-denied");
+    assertNoCanary(error);
+  });
+
+  it("HTTP 상태만으로 분류할 때 500은 unavailable이고 499는 분류하지 않는다", async () => {
+    for (const [status, code] of [
+      [500, "unavailable"],
+      [499, undefined],
+    ]) {
+      const { source } = sourceWith(() => {
+        throw Object.assign(new Error(SDK_MESSAGE), {
+          name: "Weird",
+          $metadata: { httpStatusCode: status },
+        });
+      });
+
+      const error = await failureOf(
+        source.resolve("aws-sm://x", { signal: signal() }),
+      );
+
+      assert.equal(error.code, code, String(status));
+    }
+  });
+});

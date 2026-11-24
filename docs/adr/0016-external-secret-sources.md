@@ -491,3 +491,11 @@ storix와 구조가 달라서 그대로 옮기지 않는 부분은 "storix와 �
 - 릴리스: `release` 잡이 `outputs`(`digest`, `tag`, `commit`)를 내고 `variants` 잡(`needs: release`, 권한 `contents: read`·`packages: write`)이 그 digest의 기준 이미지를 pull해 `revision` 라벨과 `verify-base.sh`를 확인한 뒤 변형을 빌드·스모크하고 push한다. 변형 빌드는 `docker/build-push-action` 없이 `docker build`를 쓰고 액션은 기존에 SHA로 고정한 `login-action`·`checkout`·`setup-node`만 쓴다(`setup-buildx-action`을 쓰면 docker-container 드라이버가 기본 빌더가 되어 `docker build` 결과가 로컬 docker에 실리지 않는다). push 뒤 config digest 비교는 `release` 잡과 같은 방법이다. 변형 digest는 잡 요약에 남기고 Release 노트에는 쓰지 않는다(변형 잡에 `contents: write`를 주지 않기 위해서). Release 노트의 "변형 이미지" 절이 변형이 별도 잡이고 실패할 수 있음을 알린다(결정 4). 이동 태그는 없다.
 - CI: `ci.yml`의 `adapter` 잡이 어댑터 단위 테스트, 기본 이미지 로컬 빌드와 부재 확인, 변형 로컬 빌드와 스모크를 한다(발행 없음).
 - 검증하지 않은 것: `adapter`·`variants` 잡의 GitHub 실행(`variants`가 GHCR에서 digest로 기준 이미지를 pull하는 단계, `packages: write` push, 러너의 `docker build`가 로컬 태그를 `FROM`으로 쓰는지), 실제 AWS(IAM, KMS, 자격 증명 체인, IMDSv2, 실제 throttling), 변형 이미지의 취약점 스캔(스캔 단계를 두지 않았다), 발행된 변형 이미지의 pull과 compose 기동. 로컬에서는 `actionlint` 1.7.7, 로컬 레지스트리(`registry:2`)를 대상으로 한 `variants` 잡 `run` 본문 실행, 로컬 이미지 빌드·스모크를 확인했다.
+
+### 2026-11-24 묶음 B 독립 리뷰 반영
+
+- `SecretId` 형식 검사: 이름(영문 대소문자·숫자·`/_+=.@-`, 1~512자) 또는 ARN(`arn:aws*:secretsmanager:<지역>:<12자리>:secret:<이름>`, 최대 2048자)이 아니면 SDK를 부르기 전에 `invalid-value`로 거부한다. 참조 끝 공백·개행이 SDK로 나가 서비스 오류가 되는 것을 막는다. 허용 범위는 AWS 문서의 비밀 이름 규칙을 기억에서 옮긴 것이고 실제 AWS에서 확인하지 못했다. 좁다고 판단되면 이 정규식을 넓힌다.
+- ARN의 지역은 읽지 않는다. 호출 지역은 `AWS_REGION`뿐이므로 ARN의 지역과 같아야 한다(운영 문서에 적었다).
+- 클라이언트 생성(`createClient`) 실패도 `try` 안에서 닫힌 코드로 바꾼다(자격 증명 체인 실패 등이 SDK 오류 객체 그대로 나가지 않는다).
+- 변형 이미지 스모크의 권한 검사에 그룹 쓰기(`-perm -0020`)를 더했다.
+- 변수 N개면 클라이언트 생성과 자격 증명 조회가 N번이다(합치지 않는다. 결정 8의 "중복 제거 없음"과 같다).

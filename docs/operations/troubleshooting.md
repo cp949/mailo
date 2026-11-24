@@ -560,13 +560,13 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 | `adapter-error:access-denied` | 저장소가 거부했다 | 인스턴스의 저장소 접근 자격 증명과 권한(정책, 키 권한)을 확인한다 |
 | `adapter-error:throttled` | 저장소가 요청을 제한했다 | 잠시 뒤 재시작한다. 인스턴스를 한꺼번에 다시 시작하지 않는다 |
 | `adapter-error:unavailable` | 저장소에 닿지 못하거나 저장소 오류다 | 네트워크와 저장소 상태를 확인한다. 이미 실행 중인 인스턴스는 영향이 없다(기동 때 한 번만 읽는다) |
-| `adapter-error:invalid-value` | 어댑터가 값을 받을 수 없다고 판정했다(예: JSON 키 없음, 형식) | 저장소 값의 형식과 참조의 키 지정을 확인한다 |
+| `adapter-error:invalid-value` | 어댑터가 값을 받을 수 없다고 판정했다(예: JSON 키 없음, 형식). AWS 어댑터는 서비스가 요청을 거부한 경우(삭제 예약된 비밀 등)도 이 코드로 분류한다. 이 서비스 응답 사례는 기억에 근거하고 실제 AWS에서 확인하지 못했다 | 저장소 값의 형식과 참조의 키 지정을 확인한다 |
 
 닫힌 코드는 진단 힌트다. 어댑터가 분류를 잘못 붙이면 원인을 잘못 읽을 수 있다.
 
 AWS 어댑터(`aws-sm`, 변형 이미지 `-aws`)가 코드를 붙이는 기준은 `deployment.md` "AWS 변형 이미지(`-aws`)"의 오류 코드 줄이다. 이 어댑터 고유의 확인 사항:
 
-- `adapter-error:invalid-value`의 원인이 `AWS_REGION` 없음일 수 있다. 변형 이미지의 컨테이너 환경에 `AWS_REGION`이 있는지 본다.
+- `adapter-error:invalid-value`의 원인이 `AWS_REGION` 없음, 형식이 틀린 `SecretId`, ARN의 지역과 `AWS_REGION`의 불일치(어댑터는 `AWS_REGION`만 쓴다. 이 경우 서비스 응답의 분류는 추정이다)일 수 있다. 변형 이미지의 컨테이너 환경에 `AWS_REGION`이 있는지 본다.
 - `adapter-error:access-denied`는 정책 거부 외에 자격 증명을 얻지 못한 경우(SDK 기본 체인 실패)도 포함한다. 컨테이너에 `AWS_ACCESS_KEY_ID` 같은 변수나 플랫폼 역할이 있는지 본다.
 - `adapter-error`(코드 없음)는 어댑터가 분류하지 못한 오류다. SDK 오류 메시지는 코어와 어댑터 모두 로그에 싣지 않는다.
 

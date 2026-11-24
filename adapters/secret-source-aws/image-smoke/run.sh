@@ -30,9 +30,9 @@ esac
   test -L "$link"
   test -f "$link/index.js"
   test -d /opt/mailo-secret-source-aws/node_modules/@aws-sdk/client-secrets-manager
-  # node 소유이거나 누구나 쓸 수 있는 경로(심볼릭 링크 자체의 모드는 제외)가 없어야 한다. BusyBox find에는 -writable이 없다.
-  bad="$(find /repo /opt/mailo-secret-source-aws \( ! -user root -o \( ! -type l -a -perm -0002 \) \) -print -quit)"
-  if [ -n "$bad" ]; then echo "root 소유가 아니거나 누구나 쓸 수 있는 경로: $bad"; exit 1; fi
+  # root 소유가 아니거나 그룹·누구나 쓸 수 있는 경로(심볼릭 링크 자체의 모드는 제외)가 없어야 한다. BusyBox find에는 -writable이 없다.
+  bad="$(find /repo /opt/mailo-secret-source-aws \( ! -user root -o \( ! -type l -a \( -perm -0002 -o -perm -0020 \) \) \) -print -quit)"
+  if [ -n "$bad" ]; then echo "root 소유가 아니거나 그룹·누구나 쓸 수 있는 경로: $bad"; exit 1; fi
   test ! -w /repo/apps/mailo/node_modules/@cp949
 ' || {
   printf '변형 이미지 구조 확인이 실패했다\n' >&2

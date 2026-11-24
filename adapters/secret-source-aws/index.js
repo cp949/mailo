@@ -20,6 +20,22 @@ const VERSION_STAGE = "AWSCURRENT";
 // SecretId와 ARN에는 `#`이 들어갈 수 없어 첫 `#`이 구분자로 모호하지 않다. 키 안의 `#`은 허용하지 않는다.
 const KEY_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
+// SecretId: 이름(영문 대소문자·숫자·`/_+=.@-`, 최대 512자) 또는 ARN(`arn:<파티션>:secretsmanager:<지역>:<12자리 계정>:secret:<이름>-<접미어>`).
+// 공백·제어문자는 거부한다. 참조 끝에 붙은 공백·개행이 그대로 SDK로 나가 서비스 오류가 되는 일을 막는다.
+// ARN의 지역은 읽지 않는다. 호출 지역은 `AWS_REGION`뿐이다.
+const SECRET_NAME_PATTERN = /^[A-Za-z0-9/_+=.@-]{1,512}$/;
+const SECRET_ARN_PATTERN =
+  /^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+$/;
+const SECRET_ARN_MAX_LENGTH = 2048;
+
+/** @param {string} secretId */
+function isValidSecretId(secretId) {
+  return secretId.startsWith("arn:")
+    ? secretId.length <= SECRET_ARN_MAX_LENGTH &&
+        SECRET_ARN_PATTERN.test(secretId)
+    : SECRET_NAME_PATTERN.test(secretId);
+}
+
 /** @typedef {"not-found" | "access-denied" | "throttled" | "unavailable" | "invalid-value"} ErrorCode */
 
 /** 코드별 고정 메시지. 이 밖의 문구는 오류에 싣지 않는다. */
@@ -119,7 +135,10 @@ function parseRef(ref) {
   const hash = rest.indexOf("#");
   const secretId = hash < 0 ? rest : rest.slice(0, hash);
   const key = hash < 0 ? undefined : rest.slice(hash + 1);
-  if (secretId === "" || (key !== undefined && !KEY_PATTERN.test(key)))
+  if (
+    !isValidSecretId(secretId) ||
+    (key !== undefined && !KEY_PATTERN.test(key))
+  )
     throw new AwsSecretSourceError("invalid-value");
   return { secretId, key };
 }
@@ -179,8 +198,9 @@ export function createAwsSecretSource({
       // 이미 중단됐으면 클라이언트를 만들지 않는다.
       if (signal.aborted) throw new AwsSecretSourceError("unavailable");
 
-      const client = createClient({ region });
+      let client;
       try {
+        client = createClient({ region });
         const result = await client.send(
           new GetSecretValueCommand({
             SecretId: secretId,
@@ -201,7 +221,7 @@ export function createAwsSecretSource({
       } finally {
         // 연 연결을 닫는다. 어댑터가 남긴 핸들은 앱 프로세스(main.ts)에 그대로 붙는다.
         try {
-          client.destroy();
+          client?.destroy();
         } catch {
           // 정리 실패가 해석 결과를 바꾸지 않는다.
         }

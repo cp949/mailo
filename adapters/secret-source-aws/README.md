@@ -16,12 +16,13 @@ AWS_REGION=ap-northeast-2
 MAILO_SMTP_PASSWORD_REF=aws-sm://prod/mailo/smtp#password
 ```
 
-- 참조 형식은 `aws-sm://<SecretId>[#<JSON 키>]`다. `SecretId`는 비밀 이름 또는 ARN이다.
+- 참조 형식은 `aws-sm://<SecretId>[#<JSON 키>]`다. `SecretId`는 비밀 이름(영문 대소문자·숫자·`/_+=.@-`, 최대 512자) 또는 ARN이다. 공백·제어문자가 있거나 형식이 다르면 SDK를 부르기 전에 `invalid-value`로 거부한다.
+- ARN을 쓰면 ARN의 지역이 `AWS_REGION`과 같아야 한다. 코드는 `AWS_REGION`만 쓰고 ARN의 지역을 읽지 않는다.
 - `SecretString`을 `AWSCURRENT` 단계로 읽는다. `SecretBinary`는 지원하지 않는다.
 - `#<키>`가 있으면 `SecretString`을 JSON 객체로 읽어 그 키의 문자열 값만 돌려준다. 키는 `[A-Za-z0-9_.-]+`이고 `#`은 하나만 쓴다. compose `.env`에서는 `#` 바로 앞에 공백을 두지 않으면 값의 일부다(공백이 있으면 주석으로 잘린다. `docker compose config`와 `docker run --env-file`로 확인했다).
 - `AWS_REGION`은 필수다. 자격 증명은 AWS SDK 기본 체인에서 얻는다.
 - 호환 서버(LocalStack 등)는 SDK 표준 환경 변수 `AWS_ENDPOINT_URL_SECRETS_MANAGER`(또는 `AWS_ENDPOINT_URL`)로 지정한다.
-- 요청마다 SDK 클라이언트를 만들고 해석이 끝나면 `destroy()`한다. SDK 기본 재시도(3회)를 쓴다.
+- 요청마다 SDK 클라이언트를 만들고 해석이 끝나면 `destroy()`한다. 그래서 `X_REF` 변수가 N개면 클라이언트 생성과 자격 증명 조회도 N번이다(같은 `SecretId`를 가리켜도 합치지 않는다). SDK 기본 재시도(3회)를 쓴다.
 
 ## 오류
 

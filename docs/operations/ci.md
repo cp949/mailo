@@ -172,6 +172,7 @@ adapters/secret-source-aws/image-smoke/run.sh mailo:adapter-aws
 | `release` push의 `vX.Y.Z` push·config 비교 | `vX.Y.Z`가 GHCR에 있을 수 있다(config 불일치면 있다). `latest`는 이전 이미지 그대로. Release 없음 | 원인을 로그로 확인한 뒤 "Re-run failed jobs". 재실행은 다시 빌드하므로 `vX.Y.Z`가 새 이미지로 덮인다(`created` 라벨이 바뀌어 digest가 달라진다) |
 | `release` push의 `latest` push·digest 비교 | `vX.Y.Z` 있음. `latest`는 이전 이미지이거나 새 이미지. Release 없음 | "Re-run failed jobs". `vX.Y.Z`가 새 이미지로 덮인다 |
 | `release` Release 생성 | 이미지 있음, Release 없음 | "Re-run failed jobs". 이미지는 같은 태그로 다시 push된다(`created` 라벨이 바뀌어 digest가 달라질 수 있다) |
+| `release`의 push 이후 단계(`gh release create` 등) 실패로 `variants`가 건너뛰어짐 | 기본 이미지 `vX.Y.Z`와 `latest`는 이미 발행됐다. `-aws` 태그는 없다. Release는 없을 수 있다 | "Re-run failed jobs"는 `release` 잡부터 다시 돈다. 기본 이미지 `vX.Y.Z`가 새 이미지로 덮이고(`created` 라벨 때문에 digest가 바뀐다) 성공하면 `variants`가 그 새 digest 위에 이어 돈다 |
 
 태그 다시 달기(가드 실패, 이미지 발행 전에만):
 
@@ -214,7 +215,7 @@ git tag vX.Y.Z <main의 커밋> && git push origin vX.Y.Z
 | `release.yml` 가드 | 워크플로의 `run` 본문을 그대로 꺼내 임시 클론에서 실행했다. 조상: main 커밋 태그 성공, dev 커밋 태그 실패. 버전: `v0.1.0` 성공, `v0.2.0` 실패 |
 | `release.yml` 이미지 | Docker 29.8.0(containerd 이미지 저장소), buildx `docker-container` 드라이버(BuildKit v0.35.1)로 `docker buildx build --platform linux/amd64 --load --provenance=false` 성공. 스모크 단계 본문을 그대로 실행해 통과했고 `revision` 라벨이 다르면 실패했다 |
 | `release.yml` push | 로컬 레지스트리(`registry:2`, `localhost:5005`)를 대상으로 push 단계 본문을 그대로 실행했다. `vX.Y.Z`·`latest`가 올라갔고 레지스트리의 config digest가 `docker save`로 읽은 값과 같았다. 비교 값을 다르게 바꾸면 실패했고 `latest`는 올라가지 않았다. 레지스트리 결과는 단일 manifest였다. index 분기는 공개 다중 아키텍처 이미지(`node:24.20.0-alpine`)로 `linux/amd64` config digest를 고르는 것만 확인했다 |
-| `adapter` 잡 명령(2026-11-24) | 어댑터 `pnpm test` 54건 통과. 루트 `Dockerfile`로 기본 이미지 로컬 빌드, `verify-base.sh` 통과(어댑터·SDK 경로 없음), 변형 이미지 빌드, `run.sh` 통과(구조 확인과 스모크). 변형 이미지를 `verify-base.sh`에 넣으면 실패한다(검사가 비어 있지 않음). Docker 29.8.0(containerd 이미지 저장소) |
+| `adapter` 잡 명령(2026-11-24) | 어댑터 `pnpm test` 74건 통과(독립 리뷰 반영 뒤). 루트 `Dockerfile`로 기본 이미지 로컬 빌드, `verify-base.sh` 통과(어댑터·SDK 경로 없음), 변형 이미지 빌드, `run.sh` 통과(구조 확인과 스모크). 변형 이미지를 `verify-base.sh`에 넣으면 실패한다(검사가 비어 있지 않음). Docker 29.8.0(containerd 이미지 저장소) |
 | `release.yml` `variants`(2026-11-24) | `actionlint` 1.7.7 오류 0건. 로컬 레지스트리(`registry:2`, `localhost:5005`)를 대상으로 `variants` 잡의 `run` 본문을 순서대로 실행했다(기준 이미지 pull·라벨 확인·부재 확인, 변형 빌드, 스모크, push와 config digest 비교 모두 통과). 태그 커밋 인자를 다르게 주면 기준 이미지 라벨 확인에서 실패했다. 릴리스 노트 본문은 `gh`를 가짜로 바꿔 출력해 확인했다. 어댑터 단위 테스트 단계(`pnpm`)와 `docker/login-action`·`setup-buildx-action`·`actions/*` 실행은 로컬에서 하지 않았다 |
 | `nfs` | 작성 시에는 실행하지 않았다. 수정 뒤 로컬에서는 먼저 NFS 없이 `CallerClient`의 사본 실행·종료 감지·응답 timeout·`run.sh` timeout을 확인했고, 이어 `nfs-kernel-server`를 설치해 `run.sh` 전체(31건)가 통과했다. GitHub 러너 결과는 위 "NFS 잡"에 적었다 |
 
