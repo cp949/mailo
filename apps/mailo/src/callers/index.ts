@@ -20,6 +20,7 @@ export type {
 } from "./bearer-auth.js";
 export {
   CallerRegistryError,
+  JWS_SECRET_VARIABLE,
   isCallerId,
   loadCallerRegistryFile,
   parseCallerRegistry,

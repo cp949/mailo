@@ -19,6 +19,10 @@ import { loadInstanceId } from "./instance-id.js";
 import { assertDisjointKeyRings, loadKeyRing } from "./key-loader.js";
 import { Secret } from "./secret.js";
 import {
+  DB_ENCRYPTION_KEY_PREFIX,
+  FINGERPRINT_KEY_PREFIX,
+} from "./secret-variables.js";
+import {
   HOSTNAME,
   loadSmtpAccounts,
   type SmtpAccount,
@@ -732,8 +736,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
   );
 
-  const dbEncryption = loadKeyRing(reader, "MAILO_DB_ENCRYPTION_KEY");
-  const fingerprint = loadKeyRing(reader, "MAILO_FINGERPRINT_KEY");
+  const dbEncryption = loadKeyRing(reader, DB_ENCRYPTION_KEY_PREFIX);
+  const fingerprint = loadKeyRing(reader, FINGERPRINT_KEY_PREFIX);
   if (dbEncryption !== undefined && fingerprint !== undefined) {
     assertDisjointKeyRings(
       reader,

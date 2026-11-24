@@ -35,6 +35,7 @@ import {
 } from "../validation/index.js";
 import type { EnvReader } from "./env-reader.js";
 import { Secret } from "./secret.js";
+import { SMTP_ACCOUNT_SECRET_VARIABLE } from "./secret-variables.js";
 
 /** SMTP 계정 하나의 연결·인증·발신 주소 설정. 비밀번호는 `Secret`이다. */
 export interface SmtpAccount {
@@ -87,7 +88,6 @@ export function isAccountId(value: string): boolean {
 /** SMTP 호스트 이름 형식. 설정 오류를 값 없이 알리려고 검사한다. */
 export const HOSTNAME = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 
-const SECRET_VAR = /^MAILO_SMTP_SECRET_[A-Z0-9_]{1,40}$/;
 const ACCOUNT_FIELDS = new Set([
   "id",
   "host",
@@ -538,11 +538,12 @@ function parseAuth(
   const variable = raw["secretVar"];
   if (
     typeof variable !== "string" ||
-    !SECRET_VAR.test(variable) ||
-    variable.endsWith("_FILE")
+    !SMTP_ACCOUNT_SECRET_VARIABLE.test(variable) ||
+    variable.endsWith("_FILE") ||
+    variable.endsWith("_REF")
   ) {
     fail(
-      `${at}.secretVar는 MAILO_SMTP_SECRET_으로 시작하는 대문자 변수 이름이어야 하고 _FILE로 끝날 수 없다`,
+      `${at}.secretVar는 MAILO_SMTP_SECRET_으로 시작하는 대문자 변수 이름이어야 하고 _FILE·_REF로 끝날 수 없다`,
     );
     return undefined;
   }

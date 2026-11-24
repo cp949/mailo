@@ -37,3 +37,12 @@ export {
   loadSmtpAccounts,
   type SmtpAccount,
 } from "./smtp-accounts.js";
+export {
+  DATABASE_SECRET_VARIABLES,
+  DB_ENCRYPTION_KEY_PREFIX,
+  FINGERPRINT_KEY_PREFIX,
+  FIXED_SECRET_VARIABLES,
+  OPS_ADMIN_TOKEN_VARIABLE,
+  SMTP_ACCOUNT_SECRET_VARIABLE,
+  keyRingSecretVariable,
+} from "./secret-variables.js";

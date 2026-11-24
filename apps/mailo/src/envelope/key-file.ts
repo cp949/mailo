@@ -60,7 +60,8 @@ function isPublicSampleJweKey(privateKey: KeyObject): boolean {
   return PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256.includes(hash);
 }
 
-const KEY_VAR = /^MAILO_JWE_KEY_[A-Z0-9_]{1,80}$/;
+/** `privateKeyVar` 형식(ADR-0008 결정 5). `X_REF` 해석의 허용 목록이 이 정규식을 쓴다(ADR-0016 결정 2). */
+export const JWE_KEY_VARIABLE = /^MAILO_JWE_KEY_[A-Z0-9_]{1,80}$/;
 const INSTANT =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 const KEY_FIELDS = new Set(["kid", "privateKeyVar", "retiredAt"]);
@@ -150,9 +151,13 @@ export function parseEnvelopeKeys(
     }
 
     const variable = raw["privateKeyVar"];
-    if (typeof variable !== "string" || !KEY_VAR.test(variable)) {
+    if (
+      typeof variable !== "string" ||
+      !JWE_KEY_VARIABLE.test(variable) ||
+      variable.endsWith("_REF")
+    ) {
       reader.issue(
-        `${where}.privateKeyVar는 MAILO_JWE_KEY_로 시작하는 대문자 변수 이름이어야 한다`,
+        `${where}.privateKeyVar는 MAILO_JWE_KEY_로 시작하는 대문자 변수 이름이어야 하고 _REF로 끝날 수 없다`,
       );
       return;
     }

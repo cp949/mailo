@@ -38,6 +38,7 @@ export {
   type PrivateKeyRing,
 } from "./key-ring.js";
 export {
+  JWE_KEY_VARIABLE,
   PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256,
   loadEnvelopeKeyFile,
   parseEnvelopeKeys,

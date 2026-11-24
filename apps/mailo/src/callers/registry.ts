@@ -134,7 +134,8 @@ const ENTRY_FIELDS = new Set([
 const SIGNATURE_FIELDS = new Set(["mode", "keys"]);
 const SIGNATURE_KEY_FIELDS = new Set(["kid", "secretVar"]);
 const KID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
-const SECRET_VAR = /^MAILO_JWS_SECRET_[A-Z0-9_]{1,80}$/;
+/** 호출처 서명 키의 `secretVar` 형식(RQ-028). `X_REF` 해석의 허용 목록이 이 정규식을 쓴다(ADR-0016 결정 2). */
+export const JWS_SECRET_VARIABLE = /^MAILO_JWS_SECRET_[A-Z0-9_]{1,80}$/;
 const MAX_KEYS_PER_CALLER = 2;
 const MAX_SEND_QUOTA = 10_000_000;
 const MAX_ALLOWED_FROM = 20;
@@ -492,9 +493,13 @@ function parseSignatureKeys(
     }
     kids.add(kid);
     const variable = item["secretVar"];
-    if (typeof variable !== "string" || !SECRET_VAR.test(variable)) {
+    if (
+      typeof variable !== "string" ||
+      !JWS_SECRET_VARIABLE.test(variable) ||
+      variable.endsWith("_REF")
+    ) {
       issues.push(
-        `${here}.secretVar는 MAILO_JWS_SECRET_으로 시작하는 대문자 변수 이름이어야 한다`,
+        `${here}.secretVar는 MAILO_JWS_SECRET_으로 시작하는 대문자 변수 이름이어야 하고 _REF로 끝날 수 없다`,
       );
       return;
     }
