@@ -144,6 +144,7 @@ VACUUM (VERBOSE) mail_jobs;   -- 출력의 "dead but not yet removable"이 0이 
 
 ## 보존·삭제 규칙과의 관계
 
+- 어떤 개인정보가 어디에 얼마나 남는지는 `data-retention.md`가 소유한다. 이 절은 정리 단계의 동작을 적는다.
 - 삭제 순서: 종결 전이의 같은 `UPDATE`가 본문·수신자·봉투를 비운다(RQ-071). 이전 버전이 종결한 행과 배포 전에 이미 종결된 행은 다르다. 안전망(`deleteExpiredBodies`)은 본문 세 열만 비우고 수신자·봉투는 보존 삭제까지 남는다(아래 "배포 전 종결 행의 수신자·봉투 비우기"). 종결 후 본문 유예(`MAILO_BODY_RETENTION_SECONDS`, 기본 1일)가 지나도 본문이 남은 행(이전 버전이 종결한 행)은 별도 `UPDATE`로 비운다(안전망). 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일)가 지나면 작업 행과 시도·이벤트를 지운다(`DELETE`).
 - 두 단계 모두 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌고 한 번에 최대 20배치 × 1000건이다(`MAX_BATCHES_PER_CYCLE`, `SWEEP_BATCH`). 기본값에서 한 인스턴스의 한 단계 처리 상한은 분당 2만 건이다(코드에서 계산한 값). 같은 단계는 한 번에 한 배치만 돌지만(advisory lock) 인스턴스가 여럿일 때의 합산 상한은 확인하지 않았다. 종결 작업이 이보다 오래 빠르게 쌓이면 삭제가 따라가지 못한다.
 - 측정에서 1000건 배치는 본문 삭제 약 28ms, 보존 삭제(시도·이벤트 CASCADE 포함) 약 35ms였다(로컬, 단독 실행). 처리 상한은 시간이 아니라 사이클당 20배치 상한이 정한다.

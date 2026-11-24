@@ -313,6 +313,7 @@ CREATE INDEX mail_outbox_due_idx ON mail_outbox (next_attempt_at) WHERE status =
 ```
 
 - Key는 요청 단위의 고유 값이다. outbox 행 ID가 적합하다. 사용자 ID처럼 여러 요청이 공유하는 값은 409를 만든다(ADR-0005 결정 8). 형식은 1~128자, `[A-Za-z0-9._:-]`다. UUID 문자열은 맞는다.
+- Key와 파일 이름에 사람을 식별하는 값(이메일 주소, 이름, 전화번호 조각)을 넣지 않는다. Key는 작업 행과 이벤트에 평문으로 종결 후 30일 남고, 파일 이름은 수집 거부 때 거부 기록과 `INTAKE_REJECTED` 이벤트에 남는다. Mailo는 형식만 검사하고 내용은 확인하지 못한다. 보존 현황은 `data-retention.md`다(RQ-070).
 - 요청 본문은 `request_json`에 확정해 두고 relay가 그대로 보낸다. 재시도 때 수신자·제목·본문·`from`·`replyTo` 중 하나라도 달라지면 409다. 평문 모드와 JWE 모드는 평문이 같으면 같은 내용이다.
 - 상태 `DELIVERED`는 Mailo가 등록(202·200)했다는 뜻이다. `SENT`는 이벤트 피드로 확인한 SMTP 수락이다.
 - Mailo의 `PENDING`·`SENDING`·`RETRY_WAIT`는 비종결이다. 등록됨(`DELIVERED`)으로 두고 종결 이벤트를 기다린다. 완료로 처리하지 않는다.
@@ -360,7 +361,7 @@ Decision send(HttpClient http, URI base, String apiKey, UUID key, String request
 
 - 응답 본문의 `jobId`는 필요하면 저장한다. 파일 채널은 `jobId`를 돌려주지 않으므로 Key로 조회한다.
 - 401은 자격 설정 문제다. 같은 요청을 계속 보내지 않도록 relay를 멈추고 알리는 방식을 사용처가 정한다(`docs/api/README.md`).
-- 파일 채널로 보내는 relay도 같은 규칙이다. 재시도는 "파일 쓰기"가 대신하고, 등록 확인은 Key 조회와 이벤트 피드로 한다. 파일 이름은 outbox 행 ID로 정하면 이벤트의 `fileName`과 대조할 수 있다.
+- 파일 채널로 보내는 relay도 같은 규칙이다. 재시도는 "파일 쓰기"가 대신하고, 등록 확인은 Key 조회와 이벤트 피드로 한다. 파일 이름은 outbox 행 ID로 정하면 이벤트의 `fileName`과 대조할 수 있다. 파일 이름에 사람을 식별하는 값을 넣지 않는다(`data-retention.md` "호출처 안내").
 
 ### 이벤트 피드 소비와 cursor 저장
 
