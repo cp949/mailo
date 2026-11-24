@@ -61,6 +61,7 @@ SELECT body_key_version, count(*) FROM mail_jobs
 ```
 
 - 본문은 종결 전이의 같은 `UPDATE`에서 비워진다(RQ-071). 이전 버전이 종결한 행은 `MAILO_BODY_RETENTION_SECONDS`(기본 1일) 뒤에 비워진다. 기본값에서 버전 1로 등록된 마지막 작업의 본문이 사라지기까지는 대략 만료 TTL(24시간)이다(계산값, 실행해 확인하지 않았다). 구버전 인스턴스가 종결한 행이 섞이면 TTL + 1일 + 유지 주기(60초)까지 길어진다. SQL 결과를 기준으로 삼는다.
+- 안전망(`deleteExpiredBodies`)은 본문 세 열만 비운다. 수신자·봉투는 비우지 않고 보존 삭제(`MAILO_RECORD_RETENTION_SECONDS`, 기본 30일)까지 남는다. 구버전이 종결한 행의 수신자·봉투를 앞당겨 비우려면 `db-maintenance.md` "배포 전 종결 행의 수신자·봉투 비우기"를 쓴다. 이 키 문서의 본문 키 노출 계산에는 영향이 없다(수신자·봉투는 암호화 대상이 아니다).
 - 이전 키를 너무 일찍 지우면 기동은 되지만 해당 버전 작업의 발송 시 `job_internal_error`(`error=BodyCipherError:UNKNOWN_KEY_VERSION`)가 나고, 같은 작업이 3번째 시도에서 `FAILED`가 된다.
 
 ## 지문 키

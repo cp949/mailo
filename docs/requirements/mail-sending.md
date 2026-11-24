@@ -68,7 +68,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
-- 검증 수치(2026-11-24 10단계 묶음 B 종결 때 비움 반영 뒤): `pnpm test` 단위 1018건(50개 파일), `pnpm test:integration` 통합 835건(59개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 새 파일은 `queue/redact-on-terminal.integration-spec.ts`(13건)와 `http/rest-redacted-terminal.integration-spec.ts`(3건)다. 구현 뒤 전체 통합 첫 실행에서 3건이 실패했다: `queue/maintenance.integration-spec.ts` 2건(종결 행을 `sendOne`으로 만들어 본문 삭제를 시험했는데 새 버전의 종결 행은 이미 비어 있다)과 `worker/worker.integration-spec.ts`의 RQ-027 canary 테스트 1건(종결한 작업의 본문 컬럼이 이제 NULL이라 `includes` 호출이 실패했다). 기존 테스트의 변경은 둘이다. (1) maintenance 2건은 본문이 남은 종결 행을 `terminateLikeLegacyVersion`(새 helper, 이전 버전의 종결 UPDATE를 흉내 낸다)으로 만든다. 시험 목적(안전망 `deleteExpiredBodies`가 유예가 지난 행만 비우고 단계 잠금을 건너뛴다)은 그대로이고 한 테스트의 제목에 "이전 버전이 종결한 행"을 더했다. (2) worker canary 테스트는 종결 작업의 본문 컬럼이 NULL임을 확인하고, 평문 부재 검사는 종결 전(재시도 대기) 작업의 암호문으로 옮겼다. assertion을 지우거나 약화하지 않았고 검사를 더했다. 수정 뒤 해당 2개 파일만 다시 돌려 통과했고 마지막에 전체 통합을 한 번 더 돌렸다. 저장소 밖 훅이 worktree의 소스 변경을 구분하지 못해 `FORCE_RETEST=1`을 썼다. 컨테이너·볼륨·NFS·샘플 스크립트는 실행하지 않았다(해당 영역 변경 없음).
+- 검증 수치(2026-11-24 10단계 묶음 B 종결 때 비움 반영 뒤): `pnpm test` 단위 1018건(50개 파일), `pnpm test:integration` 통합 835건(59개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 새 파일은 `queue/redact-on-terminal.integration-spec.ts`(13건)와 `http/rest-redacted-terminal.integration-spec.ts`(3건)다. 구현 뒤 전체 통합 첫 실행에서 3건이 실패했다: `queue/maintenance.integration-spec.ts` 2건(종결 행을 `sendOne`으로 만들어 본문 삭제를 시험했는데 새 버전의 종결 행은 이미 비어 있다)과 `worker/worker.integration-spec.ts`의 RQ-027 canary 테스트 1건(종결한 작업의 본문 컬럼이 이제 NULL이라 `includes` 호출이 실패했다). 기존 테스트의 변경은 둘이다. (1) maintenance 2건은 본문이 남은 종결 행을 `terminateLikeLegacyVersion`(새 helper, 이전 버전의 종결 UPDATE를 흉내 낸다)으로 만든다. 시험 목적(안전망 `deleteExpiredBodies`가 유예가 지난 행만 비우고 단계 잠금을 건너뛴다)은 그대로이고 한 테스트의 제목에 "이전 버전이 종결한 행"을 더했다. (2) worker canary 테스트는 종결 작업의 본문 컬럼이 NULL임을 확인하고, 평문 부재 검사는 종결 전(재시도 대기) 작업의 암호문으로 옮겼다. assertion을 지우거나 약화하지 않았고 검사를 더했다. 수정 뒤 해당 2개 파일만 다시 돌려 통과했고 마지막에 전체 통합을 한 번 더 돌렸다. 저장소 밖 훅이 worktree의 소스 변경을 구분하지 못해 `FORCE_RETEST=1`을 썼다. 컨테이너·볼륨·NFS·샘플 스크립트는 실행하지 않았다(해당 영역 변경 없음). 리뷰 반영(같은 날) 뒤: 단위 1018건(50개 파일), 통합 842건(59개 파일), 실패 0건, `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 통합은 7건 늘었다(계정 상태 오류·내부 오류 종결 5건, REST canary 1건, worker canary 1건). 취소 경합 테스트에는 assertion만 더했다. 더한 테스트가 실제로 잡는지 `applyOutcome`의 `envelope` 비움을 지워 확인했다(12건 실패, 되돌림).
 - 검증 수치(2026-11-24 9단계 묶음 A 문서 반영 뒤): 코드 변경이 없어 `pnpm test`·`pnpm test:integration`을 실행하지 않았고 앞 줄의 수치(단위 1018건, 통합 819건)가 그대로 유효하다. 실행한 것은 `pnpm format:check` 1회(docs는 oxfmt 대상이 아니라 문서 변경을 검사하지 못한다), 문서 링크·앵커 존재 검사 스크립트, 로컬 compose PostgreSQL 17.11의 임시 schema 측정(`db-maintenance.md` "로컬 측정", 끝난 뒤 그 schema만 삭제)이다.
 - 검증 수치(2026-11-24 9단계 묶음 B 적합성 벡터 반영 뒤): `pnpm test` 단위 1018건(50개 파일, 새 파일 `envelope/conformance-vectors.spec.ts` 128건), `pnpm test:integration` 통합 819건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 기존 테스트 파일은 바꾸지 않았다. 벡터 테스트의 RED는 구현 전 모듈 export 누락(`PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`)으로 스위트가 로드되지 않은 것이다(케이스 단언 실패 RED는 아니다). 변이 확인 2건(`iat` 상한 비교, `KID_UNKNOWN` 매핑)에서 테스트가 케이스 `id`로 실패했고 되돌렸다. 컨테이너·NFS·샘플 스크립트(`scripts/container/`, `verify/run-e2e.sh`, `pnpm test:nfs`)는 실행하지 않았다(해당 영역 변경 없음). 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다.
 - 검증 수치(2026-11-24 7단계 묶음 C 운영 표면 반영 뒤): `pnpm test` 단위 890건(49개 파일), `pnpm test:integration` 통합 816건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 최종 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 3건이 실패했다(`queue/cancel.integration-spec.ts` 2건: 취소 결과에 `accountId`가 더해졌고, `cli/cli.integration-spec.ts` 1건: `sendControls`에 `pausedAccountCount`가 더해졌다). 둘 다 새 필드를 기대값에 더한 뒤 그 파일 2개(25건)만 다시 실행해 통과했다. 기존 테스트의 변경은 모두 새 필드·인자를 반영한 것이고 단언을 약화하지 않았다. (1) `test/queue/send-controls.integration-spec.ts`: `listPauses`가 `account` 행을 내므로 기대 목록에 `{ type: "account", id: "default" }`를 더했고(제목에서 "account 행은 REST 목록에 없다"를 뺐다), `getCallerPauseSummary`가 계정 ID를 세 번째 인자로 받아 호출에 `"default"`를 더했으며 `getSendControlsSummary` 기대값에 `pausedAccountCount`를 더했다. (2) `http/ops.integration-spec.ts`·`cli/cli.integration-spec.ts`의 `sendControls` 기대값에 `pausedAccountCount: 0`을 더했다. (3) `worker/metrics.spec.ts`·`queue/metrics-reads.integration-spec.ts`·`queue/cancel.integration-spec.ts`의 입력·기대값에 `accountId`를 더했다(`JobTransition`·취소 결과가 계정을 가진다). (4) `metrics/catalog.spec.ts`의 전역 접두 목록에 `mailo_account_`를 더했다. 컨테이너: `scripts/container/verify-metrics.sh`(읽기 전용 루트, 응답·토큰 행렬·`promtool check metrics` 통과, 비밀 값 노출 0건)와 `verify-sigterm-file.sh`(1000건, 재기동 뒤 중복·유실 없음)를 각 1회 실행했다. 이 스크립트는 단일 계정(`default`) 구성이다. 다중 계정 컨테이너, 롤링 배포·롤백, 실제 Gmail·Workspace, 외부 호출처의 `/health/ready` 처리, 실제 Prometheus의 새 알림 규칙 평가는 실행하지 않았다. 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다(최종 전체 실행은 한 번이다).
@@ -908,11 +908,11 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 - 메일 큐와 발송 이력은 영속적으로 보관해야 한다.
 - 컨테이너 재시작 후 자동으로 복구돼야 한다.
 - 보존 기간의 기준 시각은 대상마다 다르다(추정 기본값).
-  - 본문은 종결 후 1일(RQ-023).
+  - 본문은 종결 전이에서 바로 비운다(RQ-071). 이전 버전이 종결한 행은 종결 후 1일(RQ-023, 안전망).
   - 시도 기록(`mail_attempts`), 작업 행, Key는 작업 종결 후 30일.
   - 거부 기록과 `INTAKE_REJECTED` 이벤트는 기록 생성 후 30일. 거부에는 종결할 작업이 없다.
   - 작업의 종결 이벤트는 작업 행과 함께 삭제한다.
-  - 순서 규칙은 본문 유예 ≤ 시도·이벤트·거부 보존 = Key·작업 행 보존이다.
+  - 순서 규칙은 본문 유예(안전망 값) ≤ 시도·이벤트·거부 보존 = Key·작업 행 보존이다.
   - 종결되지 않은 작업의 Key는 삭제하지 않는다.
   - 작업 행을 삭제할 때 그 행의 `mail_attempts`와 이벤트 행도 함께 삭제한다. 삭제 뒤 같은 Key는 새 요청이고 Key 조회(RQ-015)는 404다.
 
@@ -2366,7 +2366,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 - 작업이 종결 상태(`SENT`·`FAILED`·`EXPIRED`)가 되는 UPDATE와 같은 문장에서 본문 세 열(`body_ciphertext`·`body_nonce`·`body_key_version`)을 NULL, `body_deleted_at`을 `now()`, `recipients`와 `envelope`를 `'{}'`로 바꾼다(ADR-0015 결정 2). 경로는 결과 기록(`completeAttempt`), lease 회수(`recoverExpiredLeases`), 만료 sweep(`sweepExpired`)이다. 취소(`cancelJob`)는 이미 본문을 비우므로 수신자·봉투를 더한다.
 - 종결 이벤트의 수신자는 갱신 전 값이다. `RETURNING`은 갱신 뒤 값을 주므로 결과 기록은 잠그며 읽은 값을, sweep과 취소는 잠근 CTE에서 읽은 값을 쓴다.
-- `MAILO_BODY_RETENTION_SECONDS`와 `deleteExpiredBodies`는 남긴다(이전 버전이 종결한 행의 안전망). 기본값은 바꾸지 않는다.
+- `MAILO_BODY_RETENTION_SECONDS`와 `deleteExpiredBodies`는 남긴다(이전 버전이 종결한 행의 안전망). 기본값은 바꾸지 않는다. 안전망은 본문 세 열만 비운다. 수신자·봉투는 비우지 않고 보존 삭제(`MAILO_RECORD_RETENTION_SECONDS`)까지 남는다. 이전 버전이 종결한 행과 배포 전에 이미 종결된 행이 해당한다. 앞당겨 비우는 절차는 `db-maintenance.md` "배포 전 종결 행의 수신자·봉투 비우기"다.
 - 행, Key, 지문은 남긴다(ADR-0005 결정 7). 마이그레이션이 없다. 잠금 순서(작업 행 → 차단기 행)와 DB `now()` 규칙은 그대로다.
 
 **수용 조건:**
@@ -2375,8 +2375,10 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 - [x] 종결 이벤트의 `recipients`와 `rejectedRecipients`는 갱신 전 값이다.
 - [x] 비운 행에서 작업 조회(ID·Key), 이벤트 피드, 운영자 읽기, 같은 Key의 재등록(중복 응답, 다른 내용은 409), 본문 정리, 보존 삭제가 오류 없이 동작한다.
 - [x] 이전 버전이 종결한 행(본문 있음)을 `deleteExpiredBodies`가 여전히 비운다.
-- [x] 재시도(`RETRY_WAIT`)로 가는 시도에서는 본문·수신자·봉투를 비우지 않고 다음 점유가 같은 값을 받는다.
-- [x] 로그·오류·이벤트·응답에 본문·제목·`from`·`replyTo` canary가 없다(RQ-027).
+- [x] 재시도(`RETRY_WAIT`)로 가는 시도에서는 본문·수신자·봉투를 비우지 않고 다음 점유가 같은 값을 받는다. 계정 상태 오류가 `RETRY_WAIT`으로 끝나는 경우도 같다.
+- [x] 계정 상태 오류의 `ACCOUNT_REPEATED` `FAILED`와 `EXPIRED`, 내부 오류(`internal: true`)의 영구 실패·소진 `FAILED`도 비운다.
+- [x] 취소가 `claim`에 지면(`SENDING`으로 바뀐 행) 본문·수신자·봉투가 그대로다.
+- [x] 종결 경로의 앱 로그, 시도 기록, 이벤트, 작업 행, 작업 조회·이벤트·운영자 읽기 응답에 본문·제목·`replyTo` canary가 없고 `from`은 응답·이벤트·로그에 없다(RQ-027). 실패 메시지(오류 객체)의 canary 검색은 이 RQ의 테스트에 없다.
 - [ ] 롤링 배포·롤백 실행(구·신 인스턴스 혼용)을 확인했다. (실행하지 않았다. 구버전이 종결한 행은 안전망이 비운다는 점은 통합 테스트로 확인했다.)
 
 **판정 근거:**
@@ -2386,7 +2388,8 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 - `queue/maintenance.integration-spec.ts`: 안전망(이전 버전이 종결한 행). `worker/worker.integration-spec.ts`의 RQ-027 canary 테스트: 종결 작업의 본문 컬럼이 NULL이고 재시도 대기 작업의 암호문에도 평문이 없다.
 - 구현: `queue/complete.ts`(`applyOutcome`의 종결 UPDATE), `queue/maintenance.ts`(`sweepExpired`), `queue/cancel.ts`(`cancelWithin`). 마이그레이션은 없다.
 - RED 확인(2026-11-24): 구현 전 `queue/redact-on-terminal.integration-spec.ts` 13건 중 10건이 실패했다(예: `expect(row.recipients).toEqual({})`에서 원래 수신자 객체를 받음). 통과한 3건은 비우면 안 되는 경로의 검증이다.
-- 한계: 롤링 배포·롤백을 실행하지 않았다. 종결 UPDATE의 쓰기 비용(열 6개 추가)은 측정하지 않았다. 종결 직후 DB 복구본의 본문·수신자는 복원하지 못한다(의도).
+- `queue/redact-on-terminal.integration-spec.ts`는 `ACCOUNT_REPEATED`·계정 오류 `EXPIRED`·`internal: true` 종결과 계정 오류 `RETRY_WAIT`을 더했다. `queue/cancel.integration-spec.ts`의 경합 테스트는 `claim`이 이긴 행의 본문·수신자·봉투가 유지됨을 확인한다. `http/rest-redacted-terminal.integration-spec.ts`는 `replyTo`·제목·본문 canary와 `from` 주소가 응답·앱 로그에 없음을, `worker/worker.integration-spec.ts`는 `from`·`replyTo` canary가 로그·시도 기록·이벤트·작업 행에 없음을 확인한다. `ACCOUNT_REPEATED` 시험은 `account_trips`와 직전 응답을 직접 써서 상태를 만든다.
+- 한계: 안전망 `deleteExpiredBodies`는 본문만 비우므로 이전 버전이 종결한 행과 배포 전 종결 행의 수신자·봉투는 보존 삭제까지 남는다(`db-maintenance.md`의 백필 SQL은 임시 schema에서 한 번 실행해 확인했다). 롤링 배포·롤백을 실행하지 않았다. 종결 UPDATE의 쓰기 비용(열 6개 추가)은 측정하지 않았다. 종결 직후 DB 복구본의 본문·수신자는 복원하지 못한다(의도).
 
 ### RQ-072 이벤트·시도 수신자의 유예 뒤 비움
 

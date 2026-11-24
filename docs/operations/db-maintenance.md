@@ -19,7 +19,7 @@ Mailo의 PostgreSQL 테이블에서 팽창(죽은 행이 쌓여 파일이 커지
 
 | 테이블 | 행을 바꾸는 동작 | 삭제 | 팽창 원인(확인) |
 | ------ | ---------------- | ---- | --------------- |
-| `mail_jobs` | 점유(`PENDING`·`RETRY_WAIT`에서 `SENDING`), 결과 기록(`SENT`·`RETRY_WAIT`·`FAILED`), lease 복구, 만료 sweep, 취소(종결 전이의 같은 `UPDATE`가 본문·수신자·봉투를 비운다, RQ-071), 이전 버전이 종결한 행의 본문 삭제(`UPDATE`로 본문 열을 `NULL`). 재시도마다 점유·결과 기록이 반복된다 | 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일) 뒤 보존 삭제 | 작업 한 건당 갱신 3번 이상(점유, 결과 기록, 본문 삭제, 재시도마다 점유·결과 기록 추가). 측정에서 모두 HOT가 아니었다 |
+| `mail_jobs` | 점유(`PENDING`·`RETRY_WAIT`에서 `SENDING`), 결과 기록(`SENT`·`RETRY_WAIT`·`FAILED`), lease 복구, 만료 sweep, 취소(종결 전이의 같은 `UPDATE`가 본문·수신자·봉투를 비운다, RQ-071), 이전 버전이 종결한 행의 본문 삭제(`UPDATE`로 본문 열을 `NULL`). 재시도마다 점유·결과 기록이 반복된다 | 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일) 뒤 보존 삭제 | 작업 한 건당 갱신 2번 이상(점유, 결과 기록. 종결 전이의 같은 갱신이 본문·수신자·봉투를 비운다(RQ-071). 재시도마다 점유·결과 기록이 추가된다). 이전 버전이 종결한 행은 본문 삭제 갱신이 1번 더 든다. 아래 "로컬 측정"의 HOT 0건은 본문 삭제가 별도 갱신이던 구조의 값이다 |
 | `mail_attempts` | 삽입만 | `mail_jobs` 삭제의 `ON DELETE CASCADE` | 보존 삭제 때 한꺼번에 죽은 행이 생긴다 |
 | `mail_events` | 삽입만(종결 이벤트, 수집 거부) | `mail_jobs`·`mail_intake_rejections` 삭제의 `CASCADE` | 보존 삭제 때 한꺼번에 죽은 행이 생긴다 |
 | `mail_intake_rejections` | 삽입만 | 생성 후 `MAILO_RECORD_RETENTION_SECONDS` 뒤 보존 삭제 | 보존 삭제 때 죽은 행 |
@@ -100,7 +100,7 @@ SELECT now() - min(finished_at) AS oldest_finished_age FROM mail_jobs WHERE fini
 -- 지금 지울 수 있는 행 수. 값은 보존 기간(초)을 직접 넣는다.
 SELECT count(*) AS retention_due FROM mail_jobs
  WHERE finished_at IS NOT NULL AND finished_at <= now() - make_interval(secs => 2592000);
--- 본문을 아직 비우지 못한 종결 작업 수(유예 기본 1일).
+-- 본문을 아직 비우지 못한 종결 작업 수(유예 기본 1일). 이전 버전이 종결한 행만 해당한다(RQ-071).
 SELECT count(*) AS body_due FROM mail_jobs
  WHERE finished_at IS NOT NULL AND body_ciphertext IS NOT NULL
    AND finished_at <= now() - make_interval(secs => 86400);
@@ -144,11 +144,46 @@ VACUUM (VERBOSE) mail_jobs;   -- 출력의 "dead but not yet removable"이 0이 
 
 ## 보존·삭제 규칙과의 관계
 
-- 삭제 순서: 종결 전이의 같은 `UPDATE`가 본문·수신자·봉투를 비운다(RQ-071). 종결 후 본문 유예(`MAILO_BODY_RETENTION_SECONDS`, 기본 1일)가 지나도 본문이 남은 행(이전 버전이 종결한 행)은 별도 `UPDATE`로 비운다(안전망). 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일)가 지나면 작업 행과 시도·이벤트를 지운다(`DELETE`).
+- 삭제 순서: 종결 전이의 같은 `UPDATE`가 본문·수신자·봉투를 비운다(RQ-071). 이전 버전이 종결한 행과 배포 전에 이미 종결된 행은 다르다. 안전망(`deleteExpiredBodies`)은 본문 세 열만 비우고 수신자·봉투는 보존 삭제까지 남는다(아래 "배포 전 종결 행의 수신자·봉투 비우기"). 종결 후 본문 유예(`MAILO_BODY_RETENTION_SECONDS`, 기본 1일)가 지나도 본문이 남은 행(이전 버전이 종결한 행)은 별도 `UPDATE`로 비운다(안전망). 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일)가 지나면 작업 행과 시도·이벤트를 지운다(`DELETE`).
 - 두 단계 모두 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌고 한 번에 최대 20배치 × 1000건이다(`MAX_BATCHES_PER_CYCLE`, `SWEEP_BATCH`). 기본값에서 한 인스턴스의 한 단계 처리 상한은 분당 2만 건이다(코드에서 계산한 값). 같은 단계는 한 번에 한 배치만 돌지만(advisory lock) 인스턴스가 여럿일 때의 합산 상한은 확인하지 않았다. 종결 작업이 이보다 오래 빠르게 쌓이면 삭제가 따라가지 못한다.
 - 측정에서 1000건 배치는 본문 삭제 약 28ms, 보존 삭제(시도·이벤트 CASCADE 포함) 약 35ms였다(로컬, 단독 실행). 처리 상한은 시간이 아니라 사이클당 20배치 상한이 정한다.
 - 본문을 비우는 `UPDATE`는 새 행 버전과 TOAST 죽은 행을 만든다. 종결 전이가 같은 `UPDATE`로 비우면 별도 본문 삭제 `UPDATE`가 새 종결 행에서는 생기지 않는다. 아래 "로컬 측정"은 이 변경 전 구조(본문 삭제가 별도 `UPDATE`)로 쟀고, 변경 뒤 구조는 재측정하지 않았다.
 - 보존 삭제는 한 번에 많은 죽은 행을 만든다(측정: 10만 작업에서 `mail_jobs` 99,770 + `mail_attempts` 109,769 + `mail_events` 99,770). 배치 크기를 키우지 않는다. 1000건 단위는 트랜잭션이 길어져 이벤트 피드 cursor(`xmin`)를 멈추지 않게 정한 값이다(`maintenance.ts`).
+
+## 배포 전 종결 행의 수신자·봉투 비우기
+
+종결 전이가 수신자·봉투를 비우는 버전(RQ-071)을 모든 인스턴스에 배포한 뒤에도, 그 전에 종결된 행의 `recipients`·`envelope`는 보존 삭제(기본 30일)까지 남는다. 안전망(`deleteExpiredBodies`)은 본문만 비우기 때문이다. 앞당겨 비우려면 아래 배치를 쓴다. 필수가 아니다. 쓰지 않으면 해당 행은 보존 기간이 끝날 때 지워진다.
+
+- 모든 인스턴스가 새 버전이 된 뒤에 실행한다. 구버전 인스턴스가 있으면 그 인스턴스가 종결하는 행이 계속 생긴다.
+- 대상은 종결 상태(`SENT`·`FAILED`·`EXPIRED`·`CANCELED`)이고 `recipients`나 `envelope`가 `'{}'`가 아닌 행이다. 종결하지 않은 행은 발송에 쓰이므로 건드리지 않는다.
+- 이벤트(`mail_events`)와 시도 기록(`mail_attempts`)의 수신자는 대상이 아니다(RQ-072의 몫이다).
+- 종결 행의 `recipients`·`envelope`를 읽는 코드는 찾지 못했다(코드 읽기). 지운 값은 복원하지 못한다. 이벤트에는 수신자 사본이 남아 있다.
+
+```sql
+-- 대상 건수
+SELECT count(*) AS backfill_due FROM mail_jobs
+ WHERE status IN ('SENT', 'FAILED', 'EXPIRED', 'CANCELED') AND finished_at IS NOT NULL
+   AND (recipients <> '{}'::jsonb OR envelope <> '{}'::jsonb);
+
+-- 배치 한 번(1000건). 갱신 건수가 0이 될 때까지 반복한다. 잠긴 행은 건너뛴다.
+WITH due AS (
+  SELECT id FROM mail_jobs
+   WHERE status IN ('SENT', 'FAILED', 'EXPIRED', 'CANCELED') AND finished_at IS NOT NULL
+     AND (recipients <> '{}'::jsonb OR envelope <> '{}'::jsonb)
+   LIMIT 1000
+   FOR UPDATE SKIP LOCKED
+)
+UPDATE mail_jobs j SET recipients = '{}'::jsonb, envelope = '{}'::jsonb
+  FROM due WHERE j.id = due.id;
+```
+
+```txt
+위험도: 중간 (종결 행의 수신자·봉투를 영구히 비운다. 읽는 코드는 찾지 못했다)
+롤백: 되돌리지 못한다. 실행 전에 pg_dump를 받아 두면 그 덤프로만 복원한다. 덤프에는 지우려는 평문이 들어 있으므로 보관 기한과 파기를 정한다
+```
+
+- 2026-11-24 PostgreSQL 17.11(로컬 compose)의 임시 schema에 `0001`~`0016`을 적용하고 상태별 행 6개와 이미 비운 행 1개로 실행해 컬럼 이름과 상태 이름이 맞고 종결 4행만 비워지는 것을 확인했다. 임시 schema는 지웠다. 운영 크기와 쓰기 부하 중의 소요 시간, 죽은 행과 WAL 증가, 한 번 더 도는 배치가 이미 비운 행을 훑는 비용은 확인하지 않았다.
+- 한 배치는 `mail_jobs`에 죽은 행 최대 1000건을 만든다. 배치 사이에 간격을 두고 `autovacuum` 지표(점검 쿼리 1)를 본다.
 
 ## 감사 테이블
 

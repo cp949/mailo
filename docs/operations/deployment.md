@@ -886,7 +886,7 @@ groups:
 docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > mailo-$(date +%F).dump
 ```
 
-- 덤프에 들어 있는 것: 작업 행(수신자 평문, 본문 암호문, 지문), 시도 기록, 이벤트, 거부 기록, 차단기 행, `schema_migrations`. 본문은 DB 본문 키로 암호화돼 있다(종결 전이에서 삭제, RQ-071). 종결한 작업 행의 수신자·봉투도 비어 있다. 이전 버전이 종결한 행은 예외다.
+- 덤프에 들어 있는 것: 작업 행(수신자 평문, 본문 암호문, 지문), 시도 기록, 이벤트, 거부 기록, 차단기 행, `schema_migrations`. 본문은 DB 본문 키로 암호화돼 있다(종결 전이에서 삭제, RQ-071). 종결한 작업 행의 수신자·봉투도 비어 있다. 예외는 이전 버전이 종결한 행(배포 전에 이미 종결된 행 포함)이다. 이 행은 본문이 유예(기본 1일) 뒤 비워지지만 수신자·봉투는 보존 삭제(`MAILO_RECORD_RETENTION_SECONDS`, 기본 30일)까지 남는다. 안전망(`deleteExpiredBodies`)이 본문 세 열만 비우기 때문이다. 배포 직후 앞당겨 비우는 SQL은 `db-maintenance.md` "배포 전 종결 행의 수신자·봉투 비우기"다.
 - 복원에 필요한 키:
   - DB 본문 암호화 키: 미종결 작업(과 이전 버전이 종결해 유예(기본 1일) 안에 본문이 남은 작업)의 본문을 읽는 데 필요하다. 해당 `body_key_version`의 키가 없으면 그 작업은 복호화 실패(`BodyCipherError:UNKNOWN_KEY_VERSION`)로 `job_internal_error`를 남기고 3번째 시도에서 `FAILED`가 된다.
   - 지문 키: `fingerprint_key_version`이 남아 있는 모든 작업 행의 버전이 필요하다. 없으면 그 Key로 다시 오는 요청의 비교가 예외가 되어 REST는 503, 파일은 `file_ingest_failed`다(코드 읽기 결과). 현재 버전 키는 기동 조건이다.

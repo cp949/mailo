@@ -402,3 +402,12 @@
 - 마이그레이션이 없다. `recipients`는 `NOT NULL`이라 NULL 대신 `'{}'`를 쓴다. `mail_jobs_body_state` CHECK는 본문 세 열이 함께 NULL인 경우를 허용한다.
 - `MAILO_BODY_RETENTION_SECONDS`와 `deleteExpiredBodies`는 그대로다. 대상은 이전 버전이 종결한 행뿐이다. 기본값, 기동 검사, 로그 이벤트 이름(`bodies_deleted`)은 바뀌지 않았다.
 - 설계에서 ADR과 어긋난 점은 없다. 쓰기량 변화(종결 UPDATE의 열 6개 추가, 본문 삭제용 UPDATE 제거)와 롤링 배포는 측정·실행하지 않았다.
+
+### 2026-11-24 묶음 B 리뷰 반영
+
+결정 문구는 바꾸지 않는다.
+
+- 안전망 `deleteExpiredBodies`는 본문 세 열만 비운다. 이전 버전이 종결한 행과 배포 전에 이미 종결된 행의 `recipients`·`envelope`는 보존 삭제(`MAILO_RECORD_RETENTION_SECONDS`)까지 남는다. 결정 2는 "종결 전이의 같은 UPDATE"만 정했으므로 충돌하지 않는다. 앞당겨 비우는 선택 절차(배치 SQL, 위험도·롤백)를 `docs/operations/db-maintenance.md`에 두었다. 안전망 자체를 수신자·봉투까지 넓히는 코드 변경은 하지 않았다.
+- 테스트를 더했다: 취소가 `claim`에 졌을 때 값 유지, `ACCOUNT_REPEATED`·계정 오류 `EXPIRED`·`internal: true` 종결의 비움, `from`·`replyTo` canary가 로그·응답·이벤트·시도 기록·작업 행에 없음.
+- 같은 종류의 오래된 서술("본문은 종결 후 1일 지워진다")을 `.env.example`, `docs/operations/`, `mail-sending.md`, `roadmap.md`에서 이전 버전이 종결한 행 한정으로 고쳤다.
+
