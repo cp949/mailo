@@ -40,8 +40,9 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0012](../adr/0012-metrics-endpoint.md): `GET /metrics`(읽기 토큰만, 관리 토큰 403), 전역 gauge와 인스턴스 counter 구분, 라벨 규칙과 시리즈 상한, TTL 캐시·단일 비행, 수동 텍스트 직렬화, 감사 행 수 지표. 구현했다(RQ-049~052).
 - [ADR-0013](../adr/0013-multiple-smtp-accounts.md): 다중 SMTP 계정(`MAILO_SMTP_ACCOUNTS_FILE`, `default` 출처 규칙), 호출처의 `accountId`와 작업의 등록 때 계정 고정, 계정 단위 점유·차단기·정지·24시간 할당, 마이그레이션 `0010`~`0016`, 관측과 운영 표면, 발신 주소 허용 집합. 구현 묶음 A(RQ-053~056)와 B(RQ-057~059)를 구현했고 C·D는 구현 전이다.
 - [ADR-0014](../adr/0014-caller-tools-and-docs.md): 호출처 도구와 문서. 프로토콜 적합성 벡터(`docs/api/conformance/vectors.json`, 공개 가짜 키와 production 거부), Java 샘플 연동(선택), 키 분실·유출 대응 절차, DB 유지보수 안내, 레지스트리 변경 반영 절차. 레지스트리 재로드와 파티셔닝은 구현하지 않는다. 구현 묶음 B(RQ-064·065)를 구현했고 A(RQ-067~069) 문서를 작성했다(문서 검토 남음). C(RQ-066)는 구현 전이다.
+- [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md): 개인정보 최소화와 결과 불명 정책. 종결 때 본문·수신자·봉투 즉시 비움, 이벤트·시도 수신자의 유예(기본 7일) 뒤 비움과 `recipientsRedacted`, 요청별 `onUncertainOutcome`(`retry`·`fail`)과 `OUTCOME_UNKNOWN` 종결, 호출처 보존 현황 문서. 승인됐고(2026-11-24) 모두 구현 전이다(RQ-070~074). 구현 묶음 A(문서)와 B(종결 때 비움)를 먼저 한다.
 
-ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
+ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 ## 용어와 진행 상태
 
@@ -100,8 +101,9 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 | 5단계 | 요청별 만료 시간(RQ-039, ADR-0010) |
 | 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041), 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044), 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI(RQ-045~047), 묶음 D 결과 불명 표시(RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다 |
 | 8단계 | 관측성(ADR-0012). `GET /metrics`(RQ-049), 이름·라벨 규칙(RQ-050), 전역 gauge(RQ-051), 인스턴스 counter·gauge(RQ-052). 마이그레이션 없음 |
-| 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-070 이후를 해당 묶음에서 추가한다 |
+| 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-075 이후를 해당 묶음에서 추가한다(RQ-070~074는 10단계가 쓴다) |
 | 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했고 A 문서(RQ-067~069: 키 사고 대응, DB 유지보수, 레지스트리 변경 반영)를 작성했다(코드 변경 없음, 문서 검토 남음). C Java 샘플 연동(선택, RQ-066)은 구현 전이다 |
+| 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨, 구현 전). 묶음 A 보존 현황 문서(RQ-070), B 종결 때 비움(RQ-071, 마이그레이션 없음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 1개). A·B를 먼저 한다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -2329,6 +2331,123 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 - 코드로 확인한 사실: 레지스트리는 `callers.module.ts`의 provider가 기동 때 한 번 읽어 인스턴스 메모리에 둔다. REST 인증(`registry.authenticate`), 파일 폴러의 호출처 목록(`createFilePoller`), 등록 때의 `allowedFrom`·`allowedRecipientDomains`·`accountId`(`intake.service.ts`, `file-channel/ingest.ts`), Worker의 `callerQuotas`(`app.module.ts`)가 그 값을 쓴다. 이전 레지스트리 인스턴스는 새 `kid`를 `SIGNATURE_INVALID`로 거부한다(`envelope/jws.ts`).
 - 남은 미검증: 롤링 재시작 중 실제 동작(다중 인스턴스에서 실행하지 않았다. 이 저장소의 compose는 `mailo` 서비스 하나다), 단일 인스턴스 재시작 중 REST 중단 구간의 길이. 위 체크하지 않은 항목은 문서 검토로만 확인했다.
 
+## 18. 개인정보 최소화와 결과 불명 정책
+
+결정은 [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md)이고 구현은 묶음 A(문서) → B(종결 때 비움) → C(이벤트 수신자 비움), D(결과 불명 opt-in) 순서다. D는 B 뒤에 시작하고 C와 D는 서로 독립이다. RQ-070은 묶음 A, RQ-071은 묶음 B, RQ-072는 묶음 C, RQ-073·074는 묶음 D의 범위다. 마이그레이션은 묶음 C(컬럼 하나, 부분 인덱스 하나)와 묶음 D(컬럼 하나)에만 있다. 새 npm 의존성은 없다. 모두 구현 전이다.
+
+### RQ-070 개인정보 보존 현황 문서와 호출처 안내
+
+- [ ] **진행 상태:** 미착수 (10단계 묶음 A)
+
+**요구사항:**
+
+- `docs/operations/data-retention.md`(새 문서)가 Mailo가 다루는 개인정보 항목(수신자, 발신자, 제목·본문, 호출처가 정한 Key와 파일 이름, SMTP 응답 텍스트에 섞인 주소)이 어디에 얼마나 남고 어떻게 지워지는지 표로 쓴다(ADR-0015 결정 1).
+- 로그 수집기, DB 백업, SMTP 서버, 호출처 저장소는 Mailo 밖이라 Mailo가 지우지 못한다고 쓴다. 복구본은 정리 사이클이 보존 기간을 넘긴 행을 다시 지운다는 점도 쓴다.
+- `docs/operations/caller-onboarding.md`가 Key와 파일 이름에 사람을 식별하는 값을 넣지 말라고 안내한다(ADR-0005 결정 8과 같은 방향).
+- 코드는 바꾸지 않는다. 이후 묶음(RQ-071·072)이 동작을 바꾸면 같은 변경에서 표를 고친다.
+
+**수용 조건:**
+
+- [ ] 표의 모든 항목이 코드·문서 근거와 함께 있고, 코드로 확인하지 않은 것은 확인하지 않았다고 표시한다.
+- [ ] 위험 작업(보존 기간 변경, 수동 삭제)에는 위험도와 롤백 가능 여부가 있다.
+- [ ] `docs/operations/README.md`와 관련 문서가 새 문서를 가리킨다.
+- [ ] `caller-onboarding.md`에 Key·파일 이름 안내가 있다.
+
+**판정 근거:**
+
+- 구현 전이다.
+
+### RQ-071 종결 때 본문·수신자·봉투 즉시 비움
+
+- [ ] **진행 상태:** 미착수 (10단계 묶음 B)
+
+**요구사항:**
+
+- 작업이 종결 상태(`SENT`·`FAILED`·`EXPIRED`)가 되는 UPDATE와 같은 문장에서 본문 세 열(`body_ciphertext`·`body_nonce`·`body_key_version`)을 NULL, `body_deleted_at`을 `now()`, `recipients`와 `envelope`를 `'{}'`로 바꾼다(ADR-0015 결정 2). 경로는 결과 기록(`completeAttempt`), lease 회수(`recoverExpiredLeases`), 만료 sweep(`sweepExpired`)이다. 취소(`cancelJob`)는 이미 본문을 비우므로 수신자·봉투를 더한다.
+- 종결 이벤트의 수신자는 갱신 전 값이다. `RETURNING`은 갱신 뒤 값을 주므로 갱신 전 값을 따로 읽는다.
+- `MAILO_BODY_RETENTION_SECONDS`와 `deleteExpiredBodies`는 남긴다(이전 버전이 종결한 행의 안전망). 기본값은 바꾸지 않는다.
+- 행, Key, 지문은 남긴다(ADR-0005 결정 7). 마이그레이션이 없다. 잠금 순서(작업 행 → 차단기 행)와 DB `now()` 규칙은 그대로다.
+
+**수용 조건:**
+
+- [ ] 결과 기록·lease 회수·만료 sweep·취소 직후 행의 본문 세 열, `body_deleted_at`, `recipients`, `envelope`가 기대 값이다(canary가 남지 않는다).
+- [ ] 종결 이벤트의 `recipients`와 `rejectedRecipients`는 갱신 전 값이다.
+- [ ] 비운 행에서 작업 조회(ID·Key), 이벤트 피드, 운영자 읽기, 같은 Key의 재등록(중복 응답), 보존 삭제가 오류 없이 동작한다.
+- [ ] 이전 버전이 종결한 행(본문 있음)을 `deleteExpiredBodies`가 여전히 비운다.
+- [ ] 재시도(`RETRY_WAIT`)로 가는 시도에서는 본문·수신자·봉투를 비우지 않는다.
+- [ ] 로그·오류·이벤트·응답에 본문·주소 canary가 없다(RQ-027).
+
+**판정 근거:**
+
+- 구현 전이다.
+
+### RQ-072 이벤트·시도 수신자의 유예 뒤 비움
+
+- [ ] **진행 상태:** 미착수 (10단계 묶음 C)
+
+**요구사항:**
+
+- `MAILO_RECIPIENT_RETENTION_SECONDS`(가칭, 기본 7일, 추정, 60 이상 `MAILO_RECORD_RETENTION_SECONDS` 이하, 기동 때 검사) 뒤에 `JOB_*` 이벤트의 `recipients`·`rejected_recipients`와 그 작업의 `mail_attempts.rejected_recipients`를 비운다. 새 정리 단계 `recipients`가 처리하고 표지는 `mail_events.recipients_redacted_at`이다(ADR-0015 결정 3).
+- 이벤트 응답은 `JOB_*` 종류에 `recipientsRedacted`(불리언)를 항상 낸다. 비우면 `true`이고 수신자·거부 수신자는 빈 목록이다. `Job`에는 새 필드를 더하지 않는다.
+- 이벤트 행은 지우지 않는다. 피드 순서와 공백 감지는 바뀌지 않는다.
+- 마이그레이션: 컬럼 하나와 부분 인덱스 하나(`CREATE INDEX CONCURRENTLY`, 별도 파일).
+
+**수용 조건:**
+
+- [ ] 유예가 지난 이벤트만 비워지고 지나지 않은 이벤트는 그대로다.
+- [ ] 시도의 `rejected_recipients`가 함께 비워진다.
+- [ ] 비운 이벤트가 같은 cursor 위치로 읽히고 `recipientsRedacted`가 `true`다. 공백 감지가 바뀌지 않는다.
+- [ ] 설정이 보존 기간을 넘으면 기동을 거부한다.
+- [ ] `openapi.yaml`과 호출처 문서가 갱신돼 있다.
+
+**판정 근거:**
+
+- 구현 전이다.
+
+### RQ-073 `onUncertainOutcome` 요청 필드와 등록 때 고정
+
+- [ ] **진행 상태:** 미착수 (10단계 묶음 D)
+
+**요구사항:**
+
+- 요청의 선택 최상위 평문 필드 `onUncertainOutcome`은 `retry`·`fail`만 받는다. 생략하면 `retry`(현재 동작)다. JWE 평문 안에 있으면 `UNKNOWN_FIELD`다(ADR-0015 결정 6).
+- 지문은 지정했을 때만 `policy.onUncertainOutcome`에 값을 넣는다. 생략과 `retry` 명시는 다른 요청이다. 형식 태그를 올리지 않는다.
+- 작업은 등록 때 `mail_jobs.on_uncertain`(`retry` 기본, CHECK `NOT VALID`)에 값을 고정한다(ADR-0015 결정 9). 배포 순서는 마이그레이션 → 모든 인스턴스 교체 → 호출처 전송 시작이다.
+
+**수용 조건:**
+
+- [ ] 허용 값과 오류(REST 400, 파일 수집 거부)가 맞고 오류에 요청 값이 없다.
+- [ ] 도입 전 지문이 바이트 단위로 같다(골든). 같은 Key에 다른 값은 REST 409, 파일 지문 불일치 거부다.
+- [ ] 등록한 작업의 `on_uncertain`이 요청 값이고 생략하면 `retry`다.
+
+**판정 근거:**
+
+- 구현 전이다.
+
+### RQ-074 결과 불명 `fail` 종결과 계약
+
+- [ ] **진행 상태:** 미착수 (10단계 묶음 D)
+
+**요구사항:**
+
+- `on_uncertain`이 `fail`이고 시도가 결과 불명(`LEASE_EXPIRED`, 또는 `TRANSIENT`·DATA 단계·응답 코드 없음)이면 `retryOrFinish`보다 먼저 `FAILED`와 `failureReason: OUTCOME_UNKNOWN`으로 종결하고 `JOB_FAILED` 이벤트를 쓴다. 만료·소진과 겹쳐도 이 사유가 우선한다(ADR-0015 결정 5·7·8).
+- 시도 횟수와 차단기 처리는 기존 분기 그대로다. 불명 정의는 `outcomeUncertain`(RQ-048)과 같은 조건을 쓴다.
+- `FailureReason`에 `OUTCOME_UNKNOWN`을 더하고 `docs/api/README.md`·`caller-onboarding.md`·`troubleshooting.md`를 갱신한다. 사용 기준 표와 한계(보내지 않은 메일이 종결될 수 있다, 정확히 한 번은 아니다)를 쓴다.
+- 인스턴스 counter `mailo_jobs_outcome_unknown_total`(라벨 `caller_id`, `account_id`)을 더한다(ADR-0015 결정 10).
+
+**수용 조건:**
+
+- [ ] `retry`는 현재 판정과 같다(회귀).
+- [ ] `fail`이고 불명이면 `FAILED`·`OUTCOME_UNKNOWN`·`outcomeUncertain: true`이고 재발송이 없다(실제 Worker와 가짜 SMTP).
+- [ ] `fail`이어도 응답 코드가 있는 실패, DATA 이전 단계 오류, 내부 오류는 기존 판정이다.
+- [ ] 만료·소진과 겹쳐도 `OUTCOME_UNKNOWN`이다.
+- [ ] 지표가 종결 때 늘고 라벨은 닫힌 집합이다.
+- [ ] 로그·이벤트·응답에 본문·주소 canary가 없다(RQ-027).
+
+**판정 근거:**
+
+- 구현 전이다.
+
 ## 확정한 항목
 
 2026-11-23 판정으로 미결정에서 확정한 항목이다. 값은 해당 RQ와 ADR이 정한다.
@@ -2348,6 +2467,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 | 발송 우선순위           | RQ-033~038, ADR-0009                                   |
 | 요청별 만료 시간        | RQ-039, ADR-0010                                       |
 | 다중 SMTP 계정(묶음 A·B·C) | RQ-053~063, ADR-0013                                |
+| 개인정보 최소화와 결과 불명(10단계) | RQ-070~074, ADR-0015 |
 | 호출처 도구와 문서(9단계) | RQ-064~069, ADR-0014                              |
 | NFS 통합 테스트 환경    | 아래                                                   |
 
