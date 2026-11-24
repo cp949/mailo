@@ -23,9 +23,16 @@
  *   `removed`를 적지 않고 항목만 지우는 것은 감지하지 못한다. 운영 절차(3단계 문서)가 막아야 한다.
  * - `retiredAt`이 없는 항목이 하나 이상 있어야 한다(호출처가 쓰는 현재 키).
  *
+ * `NODE_ENV`가 `development`·`test`가 아니면 저장소에 공개된 샘플 키(적합성 벡터의 JWE 키)를 거부한다(ADR-0014 결정 3).
+ *
  * 오류 메시지에는 항목 위치와 고정 사유만 담는다. kid·키 값·파일 내용은 담지 않는다(RQ-027).
  */
-import { createPrivateKey } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  type KeyObject,
+} from "node:crypto";
 import { readFileSync } from "node:fs";
 import { ConfigError, EnvReader } from "../config/index.js";
 import {
@@ -34,6 +41,24 @@ import {
   checkPrivateKey,
   type PrivateKeyEntry,
 } from "./key-ring.js";
+
+/**
+ * 저장소에 공개된 JWE 개인키의 공개키(SPKI DER) SHA-256(소문자 hex)이다. `NODE_ENV`가 `development`·`test`가 아니면 이 키를 거부한다.
+ * 대상은 적합성 벡터(`docs/api/conformance/vectors.json`)의 Mailo JWE 키 쌍 둘이다(RQ-065, ADR-0014 결정 3).
+ * 개인키가 아니라 해시만 둔다. `kid` 이름으로는 거부하지 않는다. 운영자가 같은 이름으로 다른 키를 쓸 수 있어야 한다.
+ * 벡터를 `gen-conformance-vectors.mjs --new-keys`로 다시 만들면 이 값도 고친다. 어긋나면 `conformance-vectors.spec.ts`가 실패한다.
+ */
+export const PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256: readonly string[] = [
+  "b78b85767f5f0420c448d9cb976e4c1d95037effa733f017ab494bea5598f7be",
+  "20b4fbe3e5af655353acc4626584f5718084180bec92f50831c653fef907bd57",
+];
+
+function isPublicSampleJweKey(privateKey: KeyObject): boolean {
+  const hash = createHash("sha256")
+    .update(createPublicKey(privateKey).export({ type: "spki", format: "der" }))
+    .digest("hex");
+  return PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256.includes(hash);
+}
 
 const KEY_VAR = /^MAILO_JWE_KEY_[A-Z0-9_]{1,80}$/;
 const INSTANT =
@@ -69,6 +94,8 @@ export function parseEnvelopeKeys(
   options: LoadEnvelopeKeysOptions,
 ): PrivateKeyEntry[] {
   const reader = new EnvReader(options.env);
+  // NODE_ENV가 development·test로 명시되지 않으면 production과 같이 검사한다(fail closed).
+  const strict = reader.strictEnv();
   const entries: PrivateKeyEntry[] = [];
   const kids = new Set<string>();
 
@@ -150,6 +177,11 @@ export function parseEnvelopeKeys(
       reader.issue(`${variable}은 RSA ${RSA_MODULUS_BITS}비트 키여야 한다`);
     else if (problem !== undefined)
       reader.issue(`${variable}은 RSA 개인키여야 한다`);
+    else if (strict && isPublicSampleJweKey(privateKey))
+      // 위치만 적는다. 변수 이름·kid·키 값은 담지 않는다(RQ-027).
+      reader.issue(
+        `${where}: 저장소에 공개된 샘플 JWE 키라 production에서 쓸 수 없다(scripts/gen-dev-keys.mjs로 새로 만든다)`,
+      );
     else if (kidOk) entries.push({ kid: kid as string, privateKey, retiredAt });
   });
 

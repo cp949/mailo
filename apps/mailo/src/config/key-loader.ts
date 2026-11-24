@@ -20,9 +20,14 @@ const BASE64_KEY = /^[A-Za-z0-9+/_-]{43}={0,1}$/;
 
 // 저장소에 공개된 샘플 키(.env.example, docker-compose.volume-example.yml, scripts/container/common.sh). production에서는 거부한다.
 // 값은 base64 문자열이 아니라 원문 32바이트다. base64·hex 어느 표기로 들어와도 같은 바이트로 비교한다.
+// 아래 `conformance-jws-*`는 적합성 벡터(docs/api/conformance/vectors.json)의 호출처 JWS 비밀키다(RQ-065, ADR-0014 결정 3).
+// 값을 바꾸면 apps/mailo/scripts/gen-conformance-vectors.mjs의 JWS_KEYS도 같이 바꾼다. 단위 테스트가 두 쪽이 같은지 확인한다.
 const PUBLIC_SAMPLE_KEYS: readonly Buffer[] = [
   Buffer.from("fake-db-key-for-dev-only-0000000", "utf8"),
   Buffer.from("fake-fingerprint-key-dev-only-00", "utf8"),
+  Buffer.from("conformance-jws-alpha-1-key-0000", "utf8"),
+  Buffer.from("conformance-jws-alpha-2-key-0000", "utf8"),
+  Buffer.from("conformance-jws-beta-1-key-00000", "utf8"),
 ];
 
 /**
