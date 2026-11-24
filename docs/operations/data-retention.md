@@ -4,12 +4,12 @@ Mailo가 다루는 개인정보가 어디에 얼마나 남고 어떻게 지워�
 근거는 RQ-070, ADR-0015 결정 1, 코드(`queue/`, `events/`, `smtp/sender.ts`, `config/load-config.ts`, `file-channel/`), 마이그레이션 `0001`~`0016`, 기존 운영 문서다.
 표기: "확인"은 2026-11-24에 코드나 마이그레이션을 읽어 확인한 것이다. "자동 검증"은 자동 테스트가 확인하는 것이고 테스트 파일 이름을 적는다. "가정"은 확인하지 못한 것이다. 이 문서의 명령과 SQL은 실행하지 않았다.
 
-종결 때 비움(RQ-071, ADR-0015 결정 2)은 `feat/redact-on-terminal` 브랜치가 구현한다. 이 문서는 그 변경이 들어간 동작을 "종결 전이"로 적고, 들어가기 전 코드의 값을 "RQ-071 이전"으로 함께 적는다. 이벤트·시도의 수신자를 유예 뒤 비우는 것(RQ-072, ADR-0015 결정 3)은 구현 전이라 이 문서는 지금 값(보존 기간 끝까지 평문)을 적는다. 그 변경이 들어가면 같은 변경에서 이 문서의 표를 고친다.
+종결 때 비움(RQ-071, ADR-0015 결정 2)은 구현돼 있다. 이 문서는 그 코드(`queue/complete.ts`, `queue/maintenance.ts`, `queue/cancel.ts`)로 대조한 동작을 "종결 전이"로 적는다. 종결 전이가 비우는 것은 결과 기록, lease 회수, 만료 sweep, 취소로 끝나는 행이다. 재시도 대기(`RETRY_WAIT`)로 가는 시도는 아무것도 비우지 않는다. 이 변경 전에 종결한 행(이전 버전이 종결한 행과 배포 전에 이미 종결된 행)은 예외이고 아래 표가 따로 적는다. 이벤트·시도의 수신자를 유예 뒤 비우는 것(RQ-072, ADR-0015 결정 3)은 구현 전이라 이 문서는 지금 값(보존 기간 끝까지 평문)을 적는다. 그 변경이 들어가면 같은 변경에서 이 문서의 표를 고친다.
 
 ## 결론
 
 - Mailo의 DB에 남는 개인정보는 수신자 주소(`recipients`, 이벤트·시도의 수신자), 발신자(`from`·`replyTo`), 제목·본문(암호문)이다. 호출처가 정하는 `Idempotency-Key`와 파일 이름에도 호출처가 넣은 값이 들어갈 수 있다.
-- 종결 전이가 본문·수신자·봉투를 비운다. 이벤트와 시도 기록의 수신자는 작업 행과 함께 보존 기간(기본 30일) 끝까지 평문으로 남는다.
+- 종결 전이가 본문·수신자·봉투를 비운다. 이전 버전이 종결한 행과 배포 전에 이미 종결된 행은 예외다. 본문은 안전망이 비우지만 수신자·봉투는 보존 기간(기본 30일) 끝까지 남는다. 이벤트와 시도 기록의 수신자는 작업 행과 함께 보존 기간 끝까지 평문으로 남는다.
 - 로그와 지표에는 수신자·제목·본문·Key가 없다(RQ-027, canary 테스트).
 - 로그 수집기, DB 백업, SMTP 서버, 호출처 저장소, 파일 채널 폴더는 Mailo 밖이다. Mailo는 그곳의 데이터를 지우지 못한다.
 
@@ -32,9 +32,9 @@ Mailo가 다루는 개인정보가 어디에 얼마나 남고 어떻게 지워�
 
 | 위치 | 개인정보 | 형태 | 남는 기간 | 지우는 방법 | 근거 |
 | ---- | -------- | ---- | --------- | ----------- | ---- |
-| `mail_jobs.body_ciphertext` 외 본문 열 | 제목·text·html | 암호문 | 종결 전이까지. RQ-071 이전 코드는 종결 후 1일(`MAILO_BODY_RETENTION_SECONDS`). 취소는 취소 전이까지 | 종결 전이의 같은 `UPDATE`가 NULL로 바꾼다. 이전 버전이 종결한 행은 `deleteExpiredBodies`가 비운다 | 확인: `queue/complete.ts`, `queue/maintenance.ts`, `queue/cancel.ts`. 자동 검증: `queue/redact-on-terminal.integration-spec.ts` |
-| `mail_jobs.recipients` | to·cc·bcc | 평문 jsonb | 종결 전이까지. RQ-071 이전 코드는 종결 후 30일 | 종결 전이의 같은 `UPDATE`가 `'{}'`로 바꾼다. 이전에는 행 삭제 | 같은 곳 |
-| `mail_jobs.envelope` | `from`, `replyTo` | 평문 jsonb | 종결 전이까지. RQ-071 이전 코드는 종결 후 30일 | 같은 방식 | 같은 곳 |
+| `mail_jobs.body_ciphertext` 외 본문 열 | 제목·text·html | 암호문 | 종결 전이까지(재시도 대기 중에는 남는다). 이전 버전·배포 전 종결 행은 종결 후 1일(`MAILO_BODY_RETENTION_SECONDS`) | 종결 전이의 같은 `UPDATE`가 NULL로 바꾼다(취소 포함). 이전 버전·배포 전 종결 행은 안전망 `deleteExpiredBodies`가 본문 세 열만 비운다 | 확인: `queue/complete.ts`, `queue/maintenance.ts`, `queue/cancel.ts`. 자동 검증: `queue/redact-on-terminal.integration-spec.ts` |
+| `mail_jobs.recipients` | to·cc·bcc | 평문 jsonb | 종결 전이까지(재시도 대기 중에는 남는다). 이전 버전·배포 전 종결 행은 종결 후 30일(`MAILO_RECORD_RETENTION_SECONDS`)까지 남는다 | 종결 전이의 같은 `UPDATE`가 `'{}'`로 바꾼다. 이전 버전·배포 전 종결 행은 안전망이 비우지 않으므로 행 삭제까지 남고, 앞당기려면 `db-maintenance.md` "배포 전 종결 행의 수신자·봉투 비우기"의 SQL을 쓴다 | 같은 곳. 자동 검증: `queue/redact-on-terminal.integration-spec.ts`(경로별 비움, 재시도 대기는 유지), `queue/cancel.integration-spec.ts`(`claim`에 진 취소는 유지), `queue/maintenance.integration-spec.ts`(이전 버전이 종결한 행의 본문 정리) |
+| `mail_jobs.envelope` | `from`, `replyTo` | 평문 jsonb | 위 `recipients`와 같다 | 같은 방식 | 같은 곳. `from`·`replyTo` canary가 로그·시도 기록·이벤트·작업 행·REST 응답에 없다(`worker/worker.integration-spec.ts`, `http/rest-redacted-terminal.integration-spec.ts`) |
 | `mail_jobs.idempotency_key`, `fingerprint` | 호출처가 정한 Key, 요청 전체의 HMAC-SHA256 | 평문, 해시 | 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(30일). 종결하지 않은 작업은 지우지 않는다 | `deleteExpiredRecords`가 행을 지운다 | 확인: `queue/maintenance.ts`, `0001`. 지문 키는 DB와 분리한다(ADR-0005 결정 3) |
 | `mail_events.recipients`, `rejected_recipients`, `idempotency_key` | 수신자, 거부된 수신자, 호출처가 정한 Key(`INTAKE_REJECTED` 이벤트는 파싱한 Key만) | 평문 | 30일. 작업 행과 같이 지워진다 | 작업 삭제의 `ON DELETE CASCADE`. `INTAKE_REJECTED` 이벤트는 거부 기록과 같이 지워진다 | 확인: `0001`, `events/event-store.ts`. 이벤트에 본문·`from`·`replyTo`는 없다(`queue/redact-on-terminal.integration-spec.ts`) |
 | `mail_attempts.rejected_recipients` | 일부 거부된 수신자 주소 | 평문 jsonb | 30일 | 작업 삭제의 CASCADE | 확인: `queue/complete.ts`(`SENT` 시도만 값이 있다) |
@@ -58,7 +58,7 @@ Mailo가 다루는 개인정보가 어디에 얼마나 남고 어떻게 지워�
 
 | 변수 | 기본값 | 뜻 |
 | ---- | ------ | -- |
-| `MAILO_BODY_RETENTION_SECONDS` | 86400 | 종결 전이가 비우지 못한 행(이전 버전이 종결한 행)의 본문 삭제 유예. RQ-071 이전 코드는 모든 종결 행의 유예 |
+| `MAILO_BODY_RETENTION_SECONDS` | 86400 | 종결 전이가 비우지 못한 행(이전 버전이 종결한 행, 배포 전 종결 행)의 본문 삭제 유예. 본문 세 열만 비운다. 수신자·봉투는 이 설정과 무관하다 |
 | `MAILO_RECORD_RETENTION_SECONDS` | 2592000 | 종결 후 작업 행·시도·이벤트·Key 보존. 거부 기록은 생성 후 |
 | `MAILO_MAINTENANCE_INTERVAL_SECONDS` | 60 | 정리 루프 한 바퀴의 간격이다. 한 바퀴에서 만료 sweep, lease 회수, 본문 삭제, 보존 삭제를 순서대로 돈다(`worker/worker.ts`의 `runMaintenanceLoop`, `worker/options.ts`). lease 회수는 점유 때마다도 한다(`db-maintenance.md`) |
 
@@ -117,6 +117,7 @@ Mailo는 수신자나 사람 단위로 데이터를 찾아 지우는 기능을 �
 `mail_jobs` 행을 수동으로 지우거나 수신자 열을 직접 고친다.
 
 - 하지 않는다. Key 중복 방지가 사라진다(`db-maintenance.md`). 보존 삭제가 지우게 둔다.
+- 예외는 `db-maintenance.md` "배포 전 종결 행의 수신자·봉투 비우기"의 배치 SQL이다. 행을 지우지 않고 종결 행의 `recipients`·`envelope`만 비우므로 Key와 이벤트에 영향이 없다.
 - `DELETE FROM mail_jobs`는 `mail_events`를 `ON DELETE CASCADE`로 함께 지운다. 그런데 이 경로는 삭제 표지(`mail_event_purges`)를 올리지 않는다. 앱의 보존 삭제는 같은 트랜잭션에서 표지를 올린다(`queue/maintenance.ts`의 `deleteByIds`가 부르는 `recordPurgedJobEvents`, `0009` 머리 주석). 표지가 없으면 호출처의 피드는 `Mailo-Cursor-Gap`이나 410 없이 이벤트를 조용히 잃는다(RQ-045).
 - `mail_events`나 `mail_intake_rejections`를 직접 지울 때도 같다.
 - 호출처와 해당 Key의 재전달 위험을 먼저 확인한다.
@@ -138,7 +139,8 @@ Mailo는 수신자나 사람 단위로 데이터를 찾아 지우는 기능을 �
 
 ## 확인하지 않은 것
 
-- RQ-071이 병합되기 전 코드와 병합된 뒤 코드의 차이는 코드 읽기와 `queue/redact-on-terminal.integration-spec.ts`로 확인했다. 병합 뒤 이 문서를 다시 대조하지 않았다.
+- 종결 전이가 비우는 동작은 `queue/complete.ts`·`queue/maintenance.ts`·`queue/cancel.ts`를 읽고 위 통합 테스트로 확인했다. 롤링 배포(구·신 인스턴스 혼용)에서 구버전이 종결하는 행의 실제 잔존은 실행하지 않았다.
+- `db-maintenance.md`의 백필 SQL은 임시 schema에서 한 번 실행했다. 운영 크기에서의 소요 시간은 확인하지 않았다.
 - 정리 사이클이 백업 복원본의 오래된 행을 지우는 동작은 코드 읽기 결과이고 실행하지 않았다.
 - 수동 `DELETE`가 표지를 올리지 않아 피드 공백 신호가 없다는 점은 코드·마이그레이션 읽기 결과이고 실행해 확인하지 않았다.
 - PostgreSQL 서버 로그의 `DETAIL`과 쿼리 텍스트 기록은 PostgreSQL 일반 지식이다. 이 저장소의 compose 설정으로 확인하지 않았다.

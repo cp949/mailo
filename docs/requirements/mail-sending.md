@@ -2357,6 +2357,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 **판정 근거:**
 
 - 문서: `docs/operations/data-retention.md`(새 문서, 2026-11-24), `caller-onboarding.md` 7절의 Key·파일 이름 안내, `docs/operations/README.md` 표와 읽는 순서, `deployment.md` "백업과 복구"·`db-maintenance.md` "보존·삭제 규칙과의 관계"의 링크. 코드 변경은 없다.
+- 보존 현황 표는 묶음 B가 들어간 코드(`queue/complete.ts`, `queue/maintenance.ts`, `queue/cancel.ts`)로 다시 대조했다(2026-11-24). 이전 버전이 종결한 행과 배포 전 종결 행의 수신자·봉투는 안전망이 비우지 않아 보존 삭제까지 남고, `db-maintenance.md`의 백필 SQL과 연결했다. 개인정보 삭제 요청은 지원하지 않는다고 적었고 수동 삭제·덤프와 복원·보존 단축의 위험을 `data-retention.md`에 썼다.
 - 코드·마이그레이션으로 확인한 사실: 종결한 행의 `recipients`·`envelope`를 읽는 경로가 없다는 점(`queue/claim.ts`, `queue/complete.ts`, `queue/maintenance.ts`, `queue/cancel.ts`), 이벤트·시도·거부 기록의 열과 보존 삭제 대상(`0001`, `queue/maintenance.ts`), 응답 텍스트 마스킹(`smtp/sender.ts`), 보존 설정의 기본값과 기동 검사(`config/load-config.ts`).
 - 남은 미검증: 위 체크하지 않은 항목(문서 검토), 백업 복원본에서 정리가 오래된 행을 지우는 동작의 실행, 로그 수집기·프록시·APM의 요청 값 기록 여부(저장소 밖), `response_text`에 사용자 이름이 섞이는 빈도.
 
