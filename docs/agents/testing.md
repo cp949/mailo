@@ -1,64 +1,85 @@
-# 테스트와 검증
+# 테스트 작성과 유지
 
-테스트를 쓰는 규칙과 검증 단계를 정한다. 중복 검증 금지(훅)와 보고 형식은 전역 지시를 따른다.
+소스·테스트를 추가하거나 고치는 작업에 적용한다. 검증 단계(L0~L3), 실행 범위, 결과 재사용과 증거 기록은 `docs/agents/verification.md`를 따른다. 이 문서는 `superpowers:test-driven-development`, `tdd` 등 스킬의 테스트 지시보다 우선한다.
 
 ## 테스트 종류
 
-| 종류           | 파일                                         | 실행                                                 | 환경                                |
-| -------------- | -------------------------------------------- | ---------------------------------------------------- | ----------------------------------- |
-| 단위           | `apps/mailo/test/**/*.spec.ts`               | `pnpm test`                                          | 없음                                |
-| PostgreSQL 통합 | `*.integration-spec.ts`, e2e는 `test/e2e/`   | `pnpm test:integration`                              | PostgreSQL 13 이상, `--runInBand`   |
-| NFS            | `test/nfs/*.nfs-spec.ts`                     | `apps/mailo/scripts/nfs/run.sh` 또는 `pnpm test:nfs` | 커널 NFS, 비밀번호 없는 sudo        |
-| 컨테이너·볼륨  | `scripts/container/`, `scripts/volume/`      | 각 스크립트 직접 실행                                | Docker, 자동 테스트 아님            |
-| 시크릿 소스    | `scripts/secrets-localstack/`                | `run.sh` 직접 실행(LocalStack 4.12, 가짜 값)         | Docker, 자동 테스트 아님            |
-| 샘플 e2e       | `samples/spring-boot-relay/verify/run-e2e.sh` | 스크립트 직접 실행                                   | Docker, JDK 21, 자동 테스트 아님    |
+| 종류            | 파일                                          | 실행                                                 | 환경                              |
+| --------------- | --------------------------------------------- | ---------------------------------------------------- | --------------------------------- |
+| 단위            | `apps/mailo/test/**/*.spec.ts`                | `pnpm test`                                          | 없음                              |
+| PostgreSQL 통합 | `*.integration-spec.ts`, e2e는 `test/e2e/`    | `pnpm test:integration`                              | PostgreSQL 13 이상, `--runInBand` |
+| NFS             | `test/nfs/*.nfs-spec.ts`                      | `apps/mailo/scripts/nfs/run.sh` 또는 `pnpm test:nfs` | 커널 NFS, 비밀번호 없는 sudo      |
+| 컨테이너·볼륨   | `scripts/container/`, `scripts/volume/`       | 각 스크립트 직접 실행                                | Docker, 자동 테스트 아님          |
+| 시크릿 소스     | `scripts/secrets-localstack/`                 | `run.sh` 직접 실행(LocalStack 4.12, 가짜 값)         | Docker, 자동 테스트 아님          |
+| 샘플 e2e        | `samples/spring-boot-relay/verify/run-e2e.sh` | 스크립트 직접 실행                                   | Docker, JDK 21, 자동 테스트 아님  |
 
 SMTP는 `test/support/fake-smtp.ts`로 대체한다. 테스트와 검증 스크립트는 실제 Gmail·Workspace SMTP에 접속하지 않는다.
 
-## 검증 단계
+## 작성 판단
 
-검증 방법은 작업 계획 단계에서 가장 싼 단계부터 고른다. 변경 묶음 끝에 1회 실행한다.
+- 테스트를 추가하기 전에 보호할 외부 동작·계약과 예상 결함을 한 줄로 정한다. 정하지 못하면 작성하지 않는다.
+- 기존 테스트가 같은 위험을 검증하면 새 테스트를 만들지 않는다.
+- 우선 검증하는 것: 큐 점유·lease·차단기 상태 전이, 재시도 계산, SMTP 오류 분류, 서명·복호화 순서(ADR-0008 결정 3), API 키 인증, 저장 무결성·중복 발송, 시크릿 비노출(RQ-027), 재현한 버그의 회귀.
+- 단순 위임, 필드 매핑, Nest 기본 동작에는 별도 테스트를 기본으로 작성하지 않는다. 코드 형태가 단순해도 인증·저장·시크릿 노출 위험이 있으면 검증한다.
+- 정상 동작은 대표 경로 하나로 검증한다. 예외·경계 조건은 실제 위험이 있는 경로만 더한다. 모든 분기를 기계적으로 테스트하지 않는다.
+- 테스트 수나 커버리지 수치를 완료 조건으로 삼지 않는다. 테스트를 생략해도 필요한 계약 검증과 기존 관련 테스트 실행은 생략하지 않는다.
 
-| 단계 | 수단                                                                                                          | 언제                                                                  |
-| ---- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| L0   | `pnpm format:check`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm test`                                 | 소스·테스트를 바꾼 모든 변경. 문서만 바꾸면 L0을 생략하고 아래 문서 점검만 한다 |
-| L1   | 변경 영역의 통합 spec만 실행: `pnpm --filter @cp949/mailo test:integration <경로 패턴>`                       | DB를 쓰는 영역(`queue`, `db`, `intake`, `worker`, `file-channel` 등)을 바꿨을 때 |
-| L2   | `pnpm test:integration` 전체                                                                                  | 마무리 때 1회. 변경 묶음마다 돌리지 않는다                            |
-| L3   | `scripts/container/`, `scripts/volume/`, `scripts/secrets-localstack/`, `apps/mailo/scripts/nfs/run.sh`, `samples/spring-boot-relay/verify/run-e2e.sh` | 아래 표의 영역을 실제로 바꿨을 때만                                   |
+## TDD 적용
 
-- L1·L2 전에 `.env.example`을 `.env`로 복사하고 `docker compose up -d postgres`를 실행한다. compose는 `POSTGRES_PASSWORD`가 없으면 중단한다.
-- 서버가 없으면 통합 테스트는 skip하지 않고 실패한다. 이 실패는 코드 결함이 아니라 환경 문제다. PostgreSQL부터 확인한다.
-- 소스가 같으면 재검증하지 않는다. 수정 뒤 재확인은 실패한 spec만 다시 돌린다.
-- 실행하지 않은 단계는 보고에 "실행하지 않음"으로 적는다. NFS 서버가 없어 못 돌린 `test:nfs`처럼 환경 때문에 못 돌린 경우도 같다.
+- 재현 가능한 버그는 회귀 테스트를 먼저 쓰고 RED를 확인한 뒤 수정한다. RED 근거(실패 메시지 한 줄)를 보고에 남긴다. 기존 테스트가 결함을 재현하거나 선행 테스트가 불가능하면 이유를 기록한다.
+- 위험이 크거나 규칙이 복잡한 동작(위 "작성 판단"의 우선 검증 대상)은 TDD를 적용한다. RED 근거 한 줄을 같은 방식으로 남긴다.
+- 그 밖의 기능 추가는 구현을 먼저 하고 "작성 판단"에 해당할 때만 테스트를 더한다. 여러 케이스를 미리 만들지 않는다.
+- RED→GREEN의 실행 범위는 `verification.md`의 "TDD"를 따른다.
 
-L3을 돌리는 변경:
+## 검증 위치
 
-| 바꾼 영역                                              | 돌릴 것                                                                   |
-| ------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `Dockerfile`, `docker-compose*.yml`, 종료 순서, drain  | `verify-sigterm-file.sh`, `verify-sigkill-duplicate.sh`                    |
-| 파일 채널의 권한·원자 rename·마운트 가정               | `scripts/volume/`의 해당 스크립트(`acl`·`group` 모두)                      |
-| NFS 관련 코드(`file-channel/errno.ts` 등), `nfs.md`    | `apps/mailo/scripts/nfs/run.sh`                                            |
-| `samples/spring-boot-relay/`, 서명·봉투 형식(ADR-0008) | `samples/spring-boot-relay/verify/run-e2e.sh`                              |
-| `secrets/`, `adapters/secret-source-aws/`, 변형 이미지, `X_REF` 기동 경로 | `scripts/secrets-localstack/run.sh`(LocalStack 최신 이미지는 Auth Token이 필요해 기본은 4.12 고정 이미지) |
-| `.github/workflows/ci.yml`                             | `docs/operations/ci.md`의 로컬 재현 명령. GitHub 실행 결과가 없으면 없다고 적는다 |
+한 규칙은 한 곳에서 검증한다. 같은 규칙을 단위 spec, 통합 spec, e2e에서 반복하지 않는다.
 
-## 테스트 작성 규칙
+| 검증할 것                                                                          | 위치                                                            |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| 계산, 분기, 분류, 검증 규칙(`retry-policy`, `smtp`, `validation`, `envelope` 파싱) | DB 없이 도는 단위 `*.spec.ts`                                   |
+| 큐 SQL 결과, 잠금 순서, 트랜잭션 경계, 동시 점유, 마이그레이션                     | 실제 PostgreSQL `*.integration-spec.ts`                         |
+| HTTP 경로, API 키 인증, problem+json, 요청·응답 계약                               | `test/support/rest-app.ts`를 쓰는 HTTP 통합 spec                |
+| 등록부터 발송·종결 이벤트까지 이어지는 흐름                                        | `test/e2e/`                                                     |
+| 실제 마운트·NFS·컨테이너 종료                                                      | `test/nfs/`, L3 스크립트. 실행 조건은 `verification.md`의 L3 표 |
 
-- 기능·버그 수정은 회귀 테스트를 먼저 쓰고 RED를 확인한 뒤 구현한다. RED 근거(실패 메시지 한 줄)를 보고에 남긴다.
-- 기존 테스트를 지우거나 assertion을 약화해 통과시키지 않는다. 테스트가 틀렸다고 판단하면 변경안과 이유를 사용자에게 제시한다.
-- `skip`·`only`를 커밋하지 않는다.
+- HTTP 테스트는 엔드포인트마다 대표 정상 응답과 계약상 의미가 있는 거부·오류 응답만 둔다. 입력 검증 분기는 `validation` 단위 spec에서 검증하고 HTTP로 반복하지 않는다.
+- e2e는 모듈 연결을 확인하는 대표 흐름만 둔다. 각 모듈의 분기를 e2e에서 반복하지 않는다.
+- PostgreSQL과 앱 조립(`createApp`)은 검증할 계약이 그것을 필요로 할 때만 쓴다. 순수 규칙을 검증하려고 앱을 띄우지 않는다.
+- 외부에서 관찰 가능한 결과를 검증한다. 호출 횟수나 내부 순서만 확인하는 테스트는 계약상 그 상호작용이 중요한 경우에만 쓴다. 예: 서명 실패 시 복호화를 호출하지 않음, 전송 실패 뒤 원본 파일을 지우지 않음.
+- 성능 회귀는 실행 시간이 아니라 호출 횟수 같은 결정적 작업량으로 검증한다. 시간 상한은 심각한 붕괴 탐지에만 쓴다.
+
+## 작성 규칙
+
 - 테스트 제목(`describe`/`it`)에 RQ·ADR을 참조한다. 예: `describe("재시도 대기 시간(RQ-008, ADR-0003 결정 5)")`. 제목 문체는 전역 지시를 따른다.
+- `skip`·`only`를 커밋하지 않는다.
 - 파일 접미사가 환경을 정한다. DB가 필요하면 `*.integration-spec.ts`로 쓰고, 단위 `*.spec.ts`에 DB 접속을 넣지 않는다.
 - DB 테스트는 `test/support/database.ts`의 `createTestDatabase()`로 파일마다 전용 schema를 받고 `afterAll`에서 `close()`한다. 공용 schema를 쓰지 않는다.
 - 시크릿 비노출(RQ-027)은 본문·비밀번호에 canary 문자열을 넣고 로그·오류·이벤트·거부 기록에서 검색해 검증한다. 예: `test/crypto/fingerprint.spec.ts`.
 - 테스트가 만든 자원(임시 폴더, 서버, 풀, 타이머, 리스너)은 만든 쪽이 `finally`나 `afterAll`에서 정리한다. 정리 하나가 실패해도 나머지 정리를 막지 않는다.
-- fixture·helper가 두 테스트 파일에서 필요해지면 `test/support/`로 올린다. 새 helper를 쓰기 전에 기존 `test/support/`를 확인한다.
 - 무작위에 의존하는 순수 로직은 주입한 값으로 검증한다. 예: `RetryPolicy.random`. 큐 SQL의 시각은 DB `now()`만 쓴다(`AGENTS.md`).
-- 성능 회귀는 실행 시간이 아니라 호출 횟수 같은 결정적 작업량으로 검증한다. 시간 상한은 심각한 붕괴 탐지에만 쓴다.
+- 가짜 협력 객체는 기존 `test/support/`(`fake-smtp.ts`, `queue-fixtures.ts`, `envelope.ts`, `file-channel.ts`, `rest-app.ts`)를 먼저 재사용한다. 새 가짜는 실제 연동을 테스트에서 쓸 수 없을 때만 만든다.
+- fixture·helper가 두 테스트 파일에서 필요해지면 `test/support/`로 올린다. 요구하지 않은 fixture·mock 유틸리티와 테스트 전용 추상화를 미리 만들지 않는다. 테스트를 위해 제품 코드를 불필요하게 복잡하게 만들지 않는다.
 - 테스트 파일을 나누거나 옮길 때는 순수 이동으로 하고, 전후 테스트 제목 집합이 같음을 확인한다.
+
+## 기존 테스트 보호
+
+- 기존 테스트를 지우거나 assertion을 약화해 통과시키지 않는다. 실패 원인과 계약 변경 여부를 먼저 확인한다.
+- 이번 작업 전부터 있던 테스트가 틀렸다고 판단하면 변경안과 이유를 사용자에게 제시한다.
+- 요구 계약이 바뀌어 기존 테스트가 무효가 됐으면 바뀐 계약(RQ·ADR)과 대체 검증을 변경 설명에 적는다.
+
+## 완료 전 정리
+
+workflow(qq, rubber)에서 이 정리를 하는 시점과 기록 위치는 [workflow-shared.md](workflow-shared.md#테스트-정리)가 정한다. 직접 작업은 커밋 전에 같은 기준으로 확인한다.
+
+- 이번 작업에서 새로 쓴 테스트를 검토한다. 중복, 탐색용, 구현 세부사항에만 종속된 테스트는 통합하거나 제거한다.
+- 이번 작업 전부터 있던 테스트는 이번에 고쳤더라도 이 정리로 지우거나 약화하지 않는다. 위 "기존 테스트 보호"를 따른다.
+- 지우거나 합친 테스트마다 보호하던 계약과 대체 검증을 기록한다. 남은 검증을 실행해 결과를 확인한다.
+- 재현한 버그의 유일한 회귀 테스트, 중요한 실패 경로의 유일한 테스트, 외부 계약을 고정하는 테스트는 삭제하지 않는다.
+- 이번 작업과 관계없는 기존 테스트를 일괄 정리하지 않는다. 그 파일을 고치는 시점에 정리한다.
 
 ## 결과 기록
 
-- 검증 수치(통과 수, 파일 수)는 `docs/requirements/mail-sending.md`의 "용어와 진행 상태" 판정 근거에만 적는다. 다른 문서에 개수를 새로 쓰지 않는다. `docs/operations/ci.md`의 기존 실측 기록은 예외다.
+- 검증 수치(통과 수, 파일 수)는 `docs/requirements/mail-sending.md`의 "용어와 진행 상태" 판정 근거에만 적는다. 다른 문서에 개수를 새로 쓰지 않는다. `docs/operations/ci.md`의 기존 실측 기록은 예외다. 작업 폴더의 실행 기록은 Git에 남지 않으므로 이 제한을 받지 않는다.
 - `[x]` 체크는 코드와 자동 검증으로 확인한 항목에만 한다. L3 스크립트 결과는 자동 테스트가 아니므로 `[x]` 근거로 쓸 때 스크립트 이름과 실행일을 함께 적는다.
 - 이슈 완료 댓글의 검증 범위는 `docs/agents/issue-tracker.md`의 종료 절차를 따른다.

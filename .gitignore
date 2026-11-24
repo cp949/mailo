@@ -15,7 +15,12 @@ docker-compose.override.yml
 # 개발용 키 생성기 출력(apps/mailo/scripts/gen-dev-keys.mjs). 개인키가 들어 있다
 .dev-keys/
 _tmp/
-_works/
+# 작업 폴더. 규칙 문서와 템플릿만 추적한다(_works/README.md)
+/_works/*
+!/_works/README.md
+!/_works/templates/
+/_works/templates/*
+!/_works/templates/*.md
 .scratch/
 
 # 호출처 레지스트리 로컬 사본(callers.example.json에서 복사). 이미지에 넣지 않는다

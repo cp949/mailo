@@ -71,12 +71,13 @@
 
 금지(저장소에 남지 않는 곳을 가리킨다):
 
-| 표기                                        | 대신                                    |
-| ------------------------------------------- | --------------------------------------- |
-| `_works/…`, `.scratch/…`, `_tmp/…` 경로     | 지운다. 이슈면 이슈 번호로 가리킨다     |
-| `docs/superpowers/…`, `.superpowers/…` 경로 | 지운다. 스킬 작업 문서는 저장소에 두지 않는다 |
-| 없는 파일·절                                | 지운다. 근거는 문장 안에 쓴다           |
-| "계획서에 따르면" 같은 사라진 문서 인용     | 근거 문장으로 바꾼다                    |
+| 표기                                           | 대신                                          |
+| ---------------------------------------------- | --------------------------------------------- |
+| `_works/<작업>/…`, `.scratch/…`, `_tmp/…` 경로 | 지운다. 이슈면 이슈 번호로 가리킨다           |
+| `DELTA-NN`·`LEG-NN`·finding ID                 | 지운다. 근거는 RQ·ADR·이슈 번호로 쓴다        |
+| `docs/superpowers/…`, `.superpowers/…` 경로    | 지운다. 스킬 작업 문서는 저장소에 두지 않는다 |
+| 없는 파일·절                                   | 지운다. 근거는 문장 안에 쓴다                 |
+| "계획서에 따르면" 같은 사라진 문서 인용        | 근거 문장으로 바꾼다                          |
 
 참조 문서·경로·ID는 존재를 확인한 뒤 쓴다. 문서 제목이나 절 제목을 바꾸면 저장소 전체 참조를 검색해 같이 고친다.
 
@@ -117,12 +118,12 @@
 | 변경           | 확인                                                                                              |
 | -------------- | ------------------------------------------------------------------------------------------------- |
 | 문서만         | 금지 표기 검사. `pnpm format:check`는 `docs/`를 보지 않으므로 이 검사가 유일한 자동 확인이다      |
-| 소스·테스트 주석 | `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`. 단계 기준은 `docs/agents/testing.md` |
+| 소스·테스트 주석 | `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`. 단계 기준은 `docs/agents/verification.md` |
 
 금지 표기 검사는 이번에 고친 파일에만 적용하고 출력이 없어야 한다.
 
 ```bash
-grep -nE "_works/|\.scratch/|docs/superpowers|\.superpowers" <고친 파일>
+grep -nE "_works/|\.scratch/|docs/superpowers|\.superpowers|DELTA-[0-9]|LEG-[0-9]|F-R[0-9]" <고친 파일> | grep -vE "_works/(README\.md|templates/)"
 ```
 
-이 문서는 금지 표기를 설명하므로 검사 대상에서 뺀다. 이 규칙 도입 전에 쓴 금지 표기가 남아 있을 수 있다. 고치지 않는 파일의 잔존은 검사 대상이 아니다.
+추적하는 `_works/README.md`와 `_works/templates/`는 저장소에 남으므로 가리켜도 된다. workflow 절차를 정하는 문서는 작업 폴더와 작업 ID를 설명해야 하므로 검사 대상에서 뺀다. 이 문서, `workflow-shared.md`, `qq-workflow.md`, `rubber-workflow.md`, `verification.md`, `_works/` 아래 파일이 해당한다. 이 규칙 도입 전에 쓴 금지 표기가 남아 있을 수 있다. 고치지 않는 파일의 잔존은 검사 대상이 아니다.
