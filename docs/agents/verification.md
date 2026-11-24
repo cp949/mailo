@@ -84,7 +84,7 @@ scripts/test-db.sh drop                                       # 작업을 끝내
   - 한계: node를 절대경로로 실행하는 환경에서는 놓칠 수 있다. `pgrep -f "jest --config"`는 그 문자열을 인자로 가진 셸·pnpm 래퍼(`sh -c ...`)까지 잡는다.
   - 확인(2026-11-24, `pnpm test <단위 spec 하나>`, node 24.20.0, pnpm이 `node .../jest/bin/jest.js --config ...`를 실행하는 환경): `^node .*jest.*--config`는 node 프로세스만 잡았고 `jest --config`는 pnpm의 `sh -c` 래퍼도 잡았다.
 - 같은 database를 동시에 쓰면 안 되는 이유는 DB 전체에 걸리는 잠금이다. schema 격리로는 막지 못한다.
-  - 마이그레이터 `pg_advisory_lock(7364221001)`. 한쪽이 `-- mailo:no-transaction` 마이그레이션(`CREATE INDEX CONCURRENTLY`)을 돌리면 그 database의 모든 트랜잭션이 끝나기를 기다린다. 잠금을 기다리는 다른 쪽이 거기에 걸려 `deadlock detected`가 난다(`docs/operations/deployment.md` "동시 실행 교착").
+  - 마이그레이터 advisory lock(`pg_try_advisory_lock(7364221001)` 폴링). database 전체의 잠금이라 한쪽이 끝날 때까지 다른 쪽이 기다린다. 기다리는 쪽은 폴링 사이에 스냅샷이 없어 교착하지 않는다(`docs/operations/deployment.md` "동시 실행 교착"). 그러나 한쪽의 `-- mailo:no-transaction` 마이그레이션(`CREATE INDEX CONCURRENTLY`)은 그 database의 모든 트랜잭션이 끝나기를 기다린다. `test/db/migrator.integration-spec.ts`의 잠금 대기 테스트는 `pg_stat_activity` 상태와 이 잠금에 의존하므로 전용 database에서만 실행한다.
   - 호출처 할당 잠금(`7364222`, `hashtext(caller_id)`)과 정리 단계 잠금(`7364223`, 단계 1~4). `pg_try_advisory_xact_lock`이라 다른 jest가 쥐고 있으면 기다리지 않고 건너뛴다. 같은 호출처 ID를 쓰는 다른 jest와 겹치면 그 회차의 점유·sweep이 비어 `waitFor` 시간 초과나 개수 불일치가 날 수 있다.
 - database를 나눠도 PostgreSQL 서버는 하나다. 이벤트 피드는 `pg_snapshot_xmin(pg_current_snapshot()) > txid`인 행만 읽는다(`events/event-store.ts`). xmin은 서버 전체의 진행 중 트랜잭션에서 정해지므로 다른 database의 열린 트랜잭션이 이벤트를 잠시 가린다. 이벤트 피드·피드 지연 지표를 읽는 spec(`events.integration-spec.ts`, `metrics-reads`, `metrics-gauges` 등)이 동시 실행 중 이 이유로 실패할 수 있다.
   - 동시 실행 중 이런 spec이 실패하면 다른 jest가 끝난 뒤 그 spec만 L1로 다시 실행해 간섭인지 확인한다. 같은 소스 재실행이므로 `FORCE_RETEST=1`과 이유를 보고에 적는다.
