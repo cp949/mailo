@@ -686,6 +686,9 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     const stopping = worker.stop().then(() => {
       stopped = true;
     });
+    // stop()이 부른 pause()와 같은 약속이다. 점유 루프가 끝난 뒤(진행 중이던 점유 호출이 끝난 뒤)에 등록해야 한다.
+    // 점유 호출 도중에 등록하면 그 호출이 새 작업을 읽을 수 있다(pause 때 시작한 호출은 끝까지 간다).
+    await worker.pause();
     const late = await mailJob();
     await sleep(300);
     expect(stopped).toBe(false);

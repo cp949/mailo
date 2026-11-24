@@ -504,4 +504,103 @@ describe("PostgreSQL + SMTP 통합: Worker 계정 단위 점유 (RQ-054·055, AD
       expect(recoveries).toBeGreaterThanOrEqual(2);
     });
   });
+
+  describe("pause와 점유 라운드 (ADR-0002 결정 12, RQ-025)", () => {
+    /**
+     * 점유 호출 안에서 처음 읽는 차단기 행에서 멈추는 풀. 트랜잭션이 열린 채 `claim`이 진행 중인 상태를 만든다.
+     * `reads`는 지금까지 차단기 행을 읽은 계정 순서다(점유 호출마다 한 번씩 읽는다).
+     */
+    function gatedFirstBreakerRead() {
+      const reads: string[] = [];
+      let armed = true;
+      let reached!: () => void;
+      let release!: () => void;
+      const reachedPromise = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const releasePromise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const wrap = (client: pg.PoolClient): pg.PoolClient =>
+        new Proxy(client, {
+          get(target, prop, receiver) {
+            if (prop === "query")
+              return (...args: unknown[]) => {
+                const text = typeof args[0] === "string" ? args[0] : "";
+                const params = (args[1] ?? []) as unknown[];
+                const run = () =>
+                  (target.query as (...a: unknown[]) => unknown)(...args);
+                if (
+                  text.includes("FROM mail_circuit_breaker WHERE breaker_key")
+                ) {
+                  reads.push(String(params[0]));
+                  if (armed) {
+                    armed = false;
+                    reached();
+                    return releasePromise.then(run);
+                  }
+                }
+                return run();
+              };
+            const value = Reflect.get(target, prop, receiver) as unknown;
+            return typeof value === "function"
+              ? (value as (...a: unknown[]) => unknown).bind(target)
+              : value;
+          },
+        });
+      const proxy = new Proxy(pool, {
+        get(target, prop, receiver) {
+          if (prop === "connect")
+            return async () => wrap(await target.connect());
+          const value = Reflect.get(target, prop, receiver) as unknown;
+          return typeof value === "function"
+            ? (value as (...a: unknown[]) => unknown).bind(target)
+            : value;
+        },
+      });
+      return {
+        pool: proxy,
+        reads,
+        reached: reachedPromise,
+        release: () => release(),
+      };
+    }
+
+    it("한 라운드의 점유 호출 중에 pause가 오면 남은 계정의 점유 호출을 시작하지 않는다", async () => {
+      await mailJob("default");
+      await mailJob("marketing");
+      const gated = gatedFirstBreakerRead();
+      const worker = startWorker({}, accounts(), gated.pool);
+      await gated.reached;
+      // 첫 점유 호출이 차단기 행을 읽는 중이다. 이 호출의 계정이 라운드의 첫 계정이다.
+      const first = gated.reads[0]!;
+      const other = first === "default" ? "marketing" : "default";
+
+      const pausing = worker.pause();
+      gated.release();
+      await pausing;
+
+      // pause 전에 시작한 호출만 끝나고, 같은 라운드의 다음 계정 호출은 시작하지 않는다.
+      expect(gated.reads).toEqual([first]);
+      await waitFor(async () => (await counts(first)).SENT === 1);
+      expect(await counts(other)).toEqual({ PENDING: 1 });
+    });
+
+    it("pause 때 이미 진행 중이던 점유 호출이 점유한 작업은 끝까지 보낸다", async () => {
+      await mailJob("default");
+      const gated = gatedFirstBreakerRead();
+      // 계정이 하나라 멈춘 호출이 default의 호출이다.
+      const onlyDefault = new Map([["default", accounts().get("default")!]]);
+      const worker = startWorker({}, onlyDefault, gated.pool);
+      await gated.reached;
+
+      const pausing = worker.pause();
+      gated.release();
+      await pausing;
+
+      // 점유한 작업을 버리면 lease 만료까지 지연되므로 처리한다(worker.ts의 점유 뒤 처리 규칙).
+      await waitFor(async () => (await counts("default")).SENT === 1);
+      expect(fakeDefault.messages).toHaveLength(1);
+    });
+  });
 });
