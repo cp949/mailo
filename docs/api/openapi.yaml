@@ -5,7 +5,7 @@ info:
   summary: Mailo 1단계 REST API 계약 (초안)
   description: |
     Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 독립 서비스다.
-    이 문서는 1단계 REST 계약이다. 근거는 ADR-0001~0008과 요구사항 RQ-001~032이다.
+    이 문서는 1단계 REST 계약이다. 근거는 `docs/adr/`의 ADR과 `docs/requirements/mail-sending.md`의 요구사항이다.
     ADR에 없던 결정은 `docs/api/README.md`의 "계약에서 새로 정한 것" 절에 모았다.
     JWS 서명·JWE 암호화 구현을 서버 없이 확인하는 골든 벡터는 `docs/api/conformance/`다(`docs/api/README.md`의 "프로토콜 적합성 벡터" 절).
 
@@ -825,7 +825,7 @@ paths:
         인증 오류 외에는 항상 200이다. DB 수집이 실패해도 200이고, 실패한 그룹의 전역 지표가 응답에서 빠지며 `mailo_metrics_collect_ok{group}`이 0이다.
         `/health/ready`의 DB 장애 503과 목적이 다르다. DB가 죽은 동안에도 인스턴스 counter와 `collect_ok=0` 신호가 수집돼야 하기 때문이다.
 
-        지표는 두 종류다. 이름 규칙과 전체 목록은 `docs/operations/deployment.md` "지표(`/metrics`)"다.
+        지표는 두 종류다. 이름 규칙과 전체 목록은 `docs/operations/deployment.md` "지표"다.
         - 전역 gauge(`mailo_queue_`, `mailo_breaker_`, `mailo_send_paused`, `mailo_caller_`, `mailo_account_`, `mailo_ops_audit_` 접두): DB에서 정해져 어느 인스턴스가 내도 같다. `max by (...)`로 합친다. `sum`은 인스턴스 수만큼 곱해진다.
         - 인스턴스 값(`mailo_*_total` counter, `mailo_worker_`·`mailo_file_poller_`·`mailo_metrics_` gauge, `process_*`): 이 프로세스가 한 일이다. `sum by (...) (rate(...))`로 합친다. 재시작하면 counter가 0에서 다시 시작한다.
 

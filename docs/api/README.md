@@ -1,7 +1,7 @@
 # Mailo REST API 계약
 
 1단계 REST 계약은 [openapi.yaml](./openapi.yaml)(OpenAPI 3.1)이다.
-근거는 ADR-0001~0008과 [요구사항](../requirements/mail-sending.md)이다.
+근거는 [`docs/adr/`](../adr/)의 ADR과 [요구사항](../requirements/mail-sending.md)이다.
 1단계 REST 구현(`apps/mailo/src/intake`, `health`, `http`)이 이 계약을 따른다. 파일 채널 폴러(`apps/mailo/src/file-channel`)는 이 계약을 바꾸지 않고 `INTAKE_REJECTED` 이벤트를 만든다. 계약과 어긋난 곳은 "계약과 구현의 불일치" 절에 있다.
 암호화 모드(JWE `content`)는 2단계 봉투 모듈(`apps/mailo/src/envelope`)이 처리한다(ADR-0008).
 

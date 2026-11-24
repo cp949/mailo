@@ -196,7 +196,7 @@ docker compose logs --no-log-prefix mailo | jq -c 'select(.event=="secrets_resol
 1. `X_REF`가 가리키던 값을 `_FILE`(권장) 또는 환경 변수로 준비한다. 값은 저장소에서 꺼내 시크릿 마운트에 넣는다.
 2. 설정을 바꾼다. 같은 변수에 `X_REF`와 `X`·`X_FILE`을 함께 두면 `conflict`로 기동하지 않으므로 `X_REF`를 지우고 `X_FILE`을 준다.
 3. 이미지를 기본 이미지로 바꾸고(또는 `-aws`를 유지하고 `MAILO_SECRET_ADAPTERS`만 비운다) 롤링 재시작한다.
-4. 기능이 없는 이전 버전으로 되돌릴 때는 먼저 1~2를 끝낸다. 이전 버전은 `_REF`를 읽지 않고 무시한다. 필수 비밀은 "필요하다" 오류로 기동하지 않아 안전하지만 선택 비밀 `MAILO_OPS_TOKEN`은 값이 없으면 읽기 토큰 없이 기동한다(`deployment.md` "롤백 경고").
+4. 기능이 없는 이전 버전으로 되돌릴 때는 먼저 1~2를 끝낸다. 이전 버전은 `_REF`를 읽지 않고 무시한다. 필수 비밀은 "필요하다" 오류로 기동하지 않아 안전하지만 선택 비밀 `MAILO_OPS_TOKEN`은 값이 없으면 읽기 토큰 없이 기동한다(`deployment.md` "외부 시크릿 소스(`X_REF`)"의 롤백 경고).
 5. 발행된 `-aws` 태그는 GHCR에 남는다. 지우는 일은 롤백에 필요하지 않다.
 
 ## LocalStack 수동 시나리오
