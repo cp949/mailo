@@ -30,7 +30,7 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 - 요청 수집(REST·파일)은 `envelope`의 `openRequest`를 거친다. 순서는 JWS 구조 파싱 → 서명 검증 → 스키마 검증 → 복호화 → 복호화한 제목·본문 검증 → 지문 계산이고 바꾸지 않는다(ADR-0008 결정 3). 서명 실패 시 복호화하지 않는다. 암호 형식은 직접 만들지 않고 `jose`(버전 고정)를 쓴다.
 - 호출처 JWS 비밀키와 Mailo JWE 개인키는 설정 JSON에 값을 두지 않는다. JSON은 변수 이름(`secretVar`·`privateKeyVar`)만 갖고 값은 `<변수>_FILE`(우선)이나 `<변수>`로 받는다. 모듈은 `APP_ENV`로 같은 환경을 읽는다.
 - 적합성 벡터(`docs/api/conformance/vectors.json`)의 키는 공개 가짜 키다. JWS 비밀키 셋은 `config/key-loader.ts`의 `PUBLIC_SAMPLE_KEYS`, JWE 개인키 둘은 `envelope/key-file.ts`의 `PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`(공개키 SPKI의 SHA-256, `kid` 이름은 보지 않는다)로 `NODE_ENV`가 development·test가 아니면 거부한다. 벡터는 `apps/mailo/scripts/gen-conformance-vectors.mjs`로만 만들고 서버 코드를 import하지 않으며 기대값을 서버 출력에서 복사하지 않는다. 키를 새로 만들면(`--new-keys`) 상수도 같은 변경에서 고친다. `test/envelope/conformance-vectors.spec.ts`가 서버 판정을 고정하고 케이스 `id`와 기대 판정의 변경은 호출처 계약 변경이다(ADR-0014 결정 2). 벡터에 지문·실제 키·실제 주소를 넣지 않는다.
-- 운영 의존성은 Mailo와 PostgreSQL뿐이다. 브로커·외부 메일 서버·새 상시 서비스를 추가하지 않는다(RQ-029). 예외는 개발용 opt-in compose profile(`mailpit`)뿐이고 기본 `docker compose up`에 넣지 않는다. 새 npm 의존성은 필요 이유를 변경 설명에 적는다.
+- 운영 의존성은 Mailo와 PostgreSQL뿐이다. 브로커·외부 메일 서버·새 상시 서비스를 추가하지 않는다(RQ-029). 예외는 둘뿐이다. 개발용 opt-in compose profile(`mailpit`)은 기본 `docker compose up`에 넣지 않는다. 외부 시크릿 소스 어댑터(ADR-0016)는 변형 이미지(`-aws`)와 `MAILO_SECRET_ADAPTERS`·`X_REF`를 함께 지정한 배포에서만 의존성이고, 기본 이미지·기본 compose·기본 설정에 넣지 않는다. 새 npm 의존성은 필요 이유를 변경 설명에 적는다.
 
 ## 명령어
 
