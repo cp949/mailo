@@ -33,7 +33,7 @@ export interface WorkerBreakerOptions {
 }
 
 export interface WorkerRetentionOptions {
-  /** 종결 후 본문 삭제 유예 초(ADR-0008 결정 7, 기본 1일). */
+  /** 이전 버전이 종결한 행의 본문 삭제 유예 초(ADR-0008 결정 7, 기본 1일). 종결 UPDATE는 본문을 바로 비운다(RQ-071). */
   bodyGraceSeconds: number;
   /** 종결 후 작업 행·시도·이벤트 보존 초, 거부 기록은 생성 후 초(ADR-0005 결정 7, 기본 30일). */
   recordRetentionSeconds: number;

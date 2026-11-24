@@ -140,3 +140,20 @@ export async function pastDue(pool: pg.Pool, jobId: string): Promise<void> {
     [jobId],
   );
 }
+
+/**
+ * 종결 UPDATE가 본문·수신자·봉투를 비우기 전 버전이 종결한 행을 흉내 낸다(RQ-071, ADR-0015 결정 2).
+ * 종결 상태와 `finished_at`만 쓰고 본문·수신자·봉투는 그대로 둔다. `deleteExpiredBodies`가 안전망으로 여전히 동작하는지 시험할 때 쓴다.
+ */
+export async function terminateLikeLegacyVersion(
+  pool: pg.Pool,
+  jobId: string,
+  status: "SENT" | "FAILED" | "EXPIRED" = "SENT",
+): Promise<void> {
+  await pool.query(
+    `UPDATE mail_jobs SET status = $2, finished_at = now(),
+            lease_token = NULL, lease_until = NULL, leased_at = NULL
+      WHERE id = $1`,
+    [jobId, status],
+  );
+}

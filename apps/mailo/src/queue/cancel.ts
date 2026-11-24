@@ -57,7 +57,7 @@ function prepare(target: CancelTarget | OperatorCancelTarget): PreparedTarget {
  * 대기 중인 작업을 취소한다(RQ-040, ADR-0011 결정 4). `PENDING`·`RETRY_WAIT`만 `CANCELED`로 바꾼다.
  *
  * - 전이, 본문 삭제, `JOB_CANCELED` 이벤트를 한 트랜잭션에서 쓴다. 이벤트 쓰기가 실패하면 전이도 롤백한다(ADR-0006 결정 2).
- * - 본문 컬럼 세 개를 함께 비운다(`mail_jobs_body_state`). 행, Key, 지문은 남긴다(ADR-0005 결정 7).
+ * - 본문 컬럼 세 개를 함께 비운다(`mail_jobs_body_state`). 수신자·봉투도 비운다(RQ-071). 행, Key, 지문은 남긴다(ADR-0005 결정 7).
  * - `claim`과의 경합은 작업 행 잠금이 직렬화한다. 이 경로는 작업 행만 잠그고 `mail_circuit_breaker`를 건드리지 않아
  *   잠금 순서(작업 행 → 차단기 행)를 어기지 않는다.
  *   - `claim`이 행을 잡고 있으면 UPDATE는 기다린 뒤 `SENDING`을 보고 갱신하지 않으며 `not_cancelable`이 된다.
@@ -101,11 +101,21 @@ async function cancelWithin(
     attempts: number;
     recipients: JsonValue;
   }>(
-    `UPDATE mail_jobs SET
+    // 수신자·봉투도 같은 문장에서 비운다(RQ-071, ADR-0015 결정 2). RETURNING은 갱신 뒤 값을 주므로 이벤트용 수신자는
+    // 잠근 CTE(`target`)에서 비우기 전 값을 읽는다. 잠금을 기다린 뒤 상태가 바뀌었을 수 있어 UPDATE에도 상태 조건을 둔다.
+    `WITH target AS (
+       SELECT id, recipients FROM mail_jobs
+        WHERE ${where(2)} AND status IN ('PENDING', 'RETRY_WAIT')
+        FOR UPDATE
+     )
+     UPDATE mail_jobs SET
        status = 'CANCELED', failure_reason = $1, finished_at = now(),
-       body_ciphertext = NULL, body_nonce = NULL, body_key_version = NULL, body_deleted_at = now()
-     WHERE ${where(2)} AND status IN ('PENDING', 'RETRY_WAIT')
-     RETURNING id, caller_id, account_id, idempotency_key, attempts, recipients`,
+       body_ciphertext = NULL, body_nonce = NULL, body_key_version = NULL, body_deleted_at = now(),
+       recipients = '{}'::jsonb, envelope = '{}'::jsonb
+     FROM target
+     WHERE mail_jobs.id = target.id AND mail_jobs.status IN ('PENDING', 'RETRY_WAIT')
+     RETURNING mail_jobs.id, mail_jobs.caller_id, mail_jobs.account_id, mail_jobs.idempotency_key,
+               mail_jobs.attempts, target.recipients AS recipients`,
     [failureReason, ...values],
   );
   const row = updated.rows[0];

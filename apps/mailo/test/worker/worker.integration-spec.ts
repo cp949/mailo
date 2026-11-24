@@ -919,10 +919,15 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     expect(logs.join("\n")).not.toContain(recipient);
     expect((await attempts(rejected))[0]!.response_text).toContain("[address]");
 
-    // 암호화 컬럼에도 평문이 없다.
-    const raw = await pool.query(
+    // 종결한 작업은 본문 컬럼이 비어 있다(RQ-071). 종결 전 작업(재시도 대기)의 암호화 컬럼에도 평문이 없다.
+    const done = await pool.query(
       "SELECT body_ciphertext FROM mail_jobs WHERE id = $1",
       [ok],
+    );
+    expect(done.rows[0].body_ciphertext).toBeNull();
+    const raw = await pool.query(
+      "SELECT body_ciphertext FROM mail_jobs WHERE id = $1",
+      [authFail],
     );
     expect(
       (raw.rows[0].body_ciphertext as Buffer).includes(

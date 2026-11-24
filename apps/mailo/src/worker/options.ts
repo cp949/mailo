@@ -6,7 +6,7 @@ import {
 import type { BreakerConfig, RetryPolicy } from "../queue/index.js";
 
 export interface RetentionOptions {
-  /** 종결 후 본문 컬럼을 비우기까지의 유예(초). 기본 1일(ADR-0008 결정 7). */
+  /** 종결 UPDATE가 비우지 못한 행(이전 버전이 종결한 행)의 본문을 비우기까지의 유예(초). 기본 1일(ADR-0008 결정 7, RQ-071 안전망). */
   bodyGraceSeconds: number;
   /** 종결 후 작업 행·시도 기록·이벤트를 지우기까지의 보존(초). 기본 30일(ADR-0005 결정 7). */
   recordSeconds: number;

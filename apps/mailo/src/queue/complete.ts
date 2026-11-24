@@ -245,6 +245,9 @@ async function applyOutcome(
   }
 
   const terminal = target !== "RETRY_WAIT";
+  // 종결이면 같은 문장에서 본문·수신자·봉투를 비운다(RQ-071, ADR-0015 결정 2).
+  // 종결 이벤트의 수신자는 위에서 잠그며 읽은 `job.recipients`(비우기 전 값)를 쓴다.
+  // 본문 세 열은 함께 NULL이어야 한다(`mail_jobs_body_state`). 재시도(`RETRY_WAIT`)면 아무것도 비우지 않는다.
   const updated = await client.query(
     `UPDATE mail_jobs SET
        status = $3::text,
@@ -254,7 +257,13 @@ async function applyOutcome(
        next_attempt_at = COALESCE($7::timestamptz, next_attempt_at),
        lease_token = NULL, lease_until = NULL, leased_at = NULL,
        failure_reason = $8,
-       finished_at = CASE WHEN $9::boolean THEN now() ELSE NULL END
+       finished_at = CASE WHEN $9::boolean THEN now() ELSE NULL END,
+       body_ciphertext = CASE WHEN $9::boolean THEN NULL ELSE body_ciphertext END,
+       body_nonce = CASE WHEN $9::boolean THEN NULL ELSE body_nonce END,
+       body_key_version = CASE WHEN $9::boolean THEN NULL ELSE body_key_version END,
+       body_deleted_at = CASE WHEN $9::boolean THEN now() ELSE body_deleted_at END,
+       recipients = CASE WHEN $9::boolean THEN '{}'::jsonb ELSE recipients END,
+       envelope = CASE WHEN $9::boolean THEN '{}'::jsonb ELSE envelope END
      WHERE id = $1 AND status = 'SENDING' AND lease_token = $2`,
     [
       job.id,

@@ -70,17 +70,22 @@ export async function sweepExpired(
       attempts: number;
       recipients: JsonValue;
     }>(
+      // 종결 UPDATE가 본문·수신자·봉투를 같은 문장에서 비운다(RQ-071, ADR-0015 결정 2).
+      // UPDATE의 RETURNING은 갱신 뒤 값을 주므로 이벤트용 수신자는 잠근 CTE(`due`)에서 비우기 전 값을 읽는다.
       `WITH due AS (
-         SELECT id FROM mail_jobs
+         SELECT id, recipients FROM mail_jobs
           WHERE status IN ('PENDING', 'RETRY_WAIT') AND expires_at <= now()
           ORDER BY expires_at
           LIMIT $1
           FOR UPDATE SKIP LOCKED
        )
        UPDATE mail_jobs SET
-         status = 'EXPIRED', failure_reason = 'EXPIRED', finished_at = now()
+         status = 'EXPIRED', failure_reason = 'EXPIRED', finished_at = now(),
+         body_ciphertext = NULL, body_nonce = NULL, body_key_version = NULL, body_deleted_at = now(),
+         recipients = '{}'::jsonb, envelope = '{}'::jsonb
        FROM due WHERE mail_jobs.id = due.id
-       RETURNING mail_jobs.id, caller_id, account_id, idempotency_key, attempts, recipients`,
+       RETURNING mail_jobs.id, mail_jobs.caller_id, mail_jobs.account_id, mail_jobs.idempotency_key,
+                 mail_jobs.attempts, due.recipients AS recipients`,
       [batchSize],
     );
     for (const row of rows) {
@@ -106,7 +111,8 @@ export async function sweepExpired(
 }
 
 /**
- * 종결 후 유예 기간이 지난 작업의 본문 컬럼을 비운다(ADR-0008 결정 7).
+ * 종결 후 유예 기간이 지났는데 본문이 남은 작업의 본문 컬럼을 비운다(ADR-0008 결정 7).
+ * 종결 UPDATE는 본문을 바로 비우므로(RQ-071, ADR-0015 결정 2) 대상은 이전 버전이 종결한 행뿐이다. 안전망으로 남긴다.
  * 행, Key, 지문은 남긴다(ADR-0005 결정 7).
  * 정리 잠금을 못 잡으면 0을 돌려준다.
  * @param graceSeconds 종결 후 유예(기본 1일은 설정에서 넘긴다)

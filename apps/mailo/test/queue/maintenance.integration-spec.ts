@@ -23,6 +23,7 @@ import {
   jobInput,
   migrate,
   registerDeps,
+  terminateLikeLegacyVersion,
 } from "../support/queue-fixtures.js";
 
 const DAY = 86_400;
@@ -153,7 +154,8 @@ describe("PostgreSQL 통합: 만료 sweep과 보존 삭제(ADR-0002 결정 7, AD
 
     it("본문 삭제·보존 삭제·유지보수 루프의 lease 회수도 각자의 잠금으로 건너뛴다", async () => {
       const id = await createJob(db.pool);
-      await sendOne(id);
+      // 본문이 남은 종결 행(이전 버전이 종결한 행)이어야 본문 삭제의 잠금 효과가 보인다(RQ-071).
+      await terminateLikeLegacyVersion(db.pool, id);
       await ago(id, "finished_at", 40 * DAY);
 
       expect(
@@ -220,11 +222,12 @@ describe("PostgreSQL 통합: 만료 sweep과 보존 삭제(ADR-0002 결정 7, AD
     expect(rows[0].n).toBe(1);
   });
 
-  it("본문 삭제는 종결 후 유예가 지난 작업만 본문 컬럼을 비우고 행과 Key는 남긴다(RQ-023)", async () => {
+  // 종결 UPDATE가 본문을 바로 비우므로(RQ-071) 이 정리는 이전 버전이 종결한 행의 안전망이다. 그런 행을 직접 만든다.
+  it("본문 삭제는 이전 버전이 종결한 행 중 유예가 지난 것만 본문 컬럼을 비우고 행과 Key는 남긴다(RQ-023, RQ-071 안전망)", async () => {
     const old = await createJob(db.pool);
-    await sendOne(old);
+    await terminateLikeLegacyVersion(db.pool, old);
     const recent = await createJob(db.pool);
-    await sendOne(recent);
+    await terminateLikeLegacyVersion(db.pool, recent);
     const active = await createJob(db.pool);
     await ago(old, "finished_at", 2 * DAY);
     await ago(active, "created_at", 5 * DAY);
