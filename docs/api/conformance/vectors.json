@@ -1,0 +1,1624 @@
+{
+  "schemaVersion": 1,
+  "description": "Mailo 프로토콜 적합성 벡터. 호출처가 JWS(HS256)·JWE(RSA-OAEP-256, A256GCM) 구현을 서버 없이 확인한다. 읽는 방법은 README.md에 있다.",
+  "notice": "이 파일의 키(keys)는 모두 이 저장소에서만 쓰는 공개 가짜 키다. 실제 운영 키가 아니다. 운영에 쓰지 않는다. Mailo는 NODE_ENV가 development·test가 아니면 이 키로 기동하지 않는다.",
+  "generator": "apps/mailo/scripts/gen-conformance-vectors.mjs",
+  "profile": {
+    "jws": {
+      "alg": "HS256"
+    },
+    "jwe": {
+      "alg": "RSA-OAEP-256",
+      "enc": "A256GCM",
+      "rsaModulusBits": 3072
+    }
+  },
+  "settings": {
+    "iat": {
+      "maxAgeSeconds": 604800,
+      "skewSeconds": 300
+    }
+  },
+  "keys": {
+    "jwe": [
+      {
+        "kid": "conformance-1",
+        "role": "previous",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\n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\nN4mRjw2ItlJOX1qMOo2oYOg=\n-----END PRIVATE KEY-----\n",
+        "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAyfhnsR2PZd8iE2Vv2Gu1\neQuNPVv84QwOLBme7iIC6dl+5BM0U/q6mR9u0HyzhJ2Axo9Jogi5MB8rk9wWtuRG\n7Q88efXZmarPl7maUwfoM29Q94AI6hwzs97YLErX246aBpsgTaUV+VBjQrKnyv9g\nLX6BwjrgL1g9QMlJTaLNGHgKOEhgvDuB+ahEwGrJJ3XNKcgIY6DRW7SrTfqa+9ri\nOh7aPN4vtG+PT8zZz0LsRdI0aSmInAoLUVHvhGYmHktuxeZ4JKcMy4KFsYLl61+Y\nfq8qDa3/DVpxUrAxWJoZh60pSlfUo7/9/QouwsF3NuA9mh1zjwRemzhp77t4T6wl\nLpOZb/bf4WPxwBF12oyduc0BULO2e5Q7buRYSyNmq3BwGakxkj/+1EgiRVHW95LS\nFdbweBl36zUKwz4N8kCS/zcEnN0lXZL1syufnK/ySNWOWZk2br9IeuQ76dGvKLQZ\nw8AvixykKHjnZjjTtFG6SYNv6LIj3S8m9rHLHkwyMPC1AgMBAAE=\n-----END PUBLIC KEY-----\n"
+      },
+      {
+        "kid": "conformance-2",
+        "role": "current",
+        "privateKeyPem": "-----BEGIN PRIVATE KEY-----\n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\n3djucNLj7rj6uGc7uLaJa7c=\n-----END PRIVATE KEY-----\n",
+        "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAhCkDvG801k0VMHzav5Jy\n21TmO58aWz0TZ4epM/xebOIr2g+6YSWSJkadC4mNEcR0w7iqrn8Ih2w39VdPDkaQ\ntZkOE+Yir+Iz3ntNyDOOv4UcZwse2ulmRlN+H2Zx4TQuRyIHDioPCdmkLUPdEes8\nsd1ufUbI+p2hGQzLXUpPLT3sWedicDGQ+W27iQhHl4VbufLdjZfnhoIwQaF6k2rP\nx6/rPqt8Gn7gj5TPiWAnN4td3NgoHwH+BzaKpMxUeWIIKxr+6yjf+oM1MQmKk9vc\nImWmPwa0Q3SqC6tBOWt2F5sLs0Dvcmnn0axI5fucSsShUD4SlUobc3eHIl0a3yiJ\n37AI2H2e+zeVghNULcDShU0Ozm2NRg6wS4dMHqzGtocFnHgK8YoMISV6+/NM0wT1\nX78ejUZjZFVEUSeqtcxupL9ktb4NmhwlQq+OjE3JCKhZULbT6MCmXaPua2be/ao6\nWC4xhcWOCX37F9gBQB1bK5kMVbmiZmRo8KGyFkMe3ysNAgMBAAE=\n-----END PUBLIC KEY-----\n"
+      }
+    ],
+    "jws": [
+      {
+        "callerId": "alpha",
+        "kid": "alpha-1",
+        "secretBase64": "Y29uZm9ybWFuY2UtandzLWFscGhhLTEta2V5LTAwMDA="
+      },
+      {
+        "callerId": "alpha",
+        "kid": "alpha-2",
+        "secretBase64": "Y29uZm9ybWFuY2UtandzLWFscGhhLTIta2V5LTAwMDA="
+      },
+      {
+        "callerId": "beta",
+        "kid": "beta-1",
+        "secretBase64": "Y29uZm9ybWFuY2UtandzLWJldGEtMS1rZXktMDAwMDA="
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "file-jws-accepted-plain",
+      "title": "서명한 평문 파일을 수락한다(cc, bcc, replyTo, html 포함)",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSIsInNlY29uZEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIiwiY2MiOlsiY29weUBleGFtcGxlLmNvbSJdLCJiY2MiOlsiaGlkZGVuQGV4YW1wbGUuY29tIl0sInJlcGx5VG8iOiJyZXBseUBleGFtcGxlLmNvbSIsImh0bWwiOiI8cD7so7zrrLjsnbQg7KCR7IiY65CY7JeI7Iq164uI64ukLjwvcD4ifQ\",\"signature\":\"M5__GzNI7fpwSjW4q-ByDby5U2ypjfs_vSlx9sF-STE\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSIsInNlY29uZEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIiwiY2MiOlsiY29weUBleGFtcGxlLmNvbSJdLCJiY2MiOlsiaGlkZGVuQGV4YW1wbGUuY29tIl0sInJlcGx5VG8iOiJyZXBseUBleGFtcGxlLmNvbSIsImh0bWwiOiI8cD7so7zrrLjsnbQg7KCR7IiY65CY7JeI7Iq164uI64ukLjwvcD4ifQ",
+        "signature": "M5__GzNI7fpwSjW4q-ByDby5U2ypjfs_vSlx9sF-STE",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": "reply@example.com",
+          "to": [
+            "recipient@example.com",
+            "second@example.com"
+          ],
+          "cc": [
+            "copy@example.com"
+          ],
+          "bcc": [
+            "hidden@example.com"
+          ],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": "<p>주문이 접수되었습니다.</p>"
+        },
+        "signed": true,
+        "encrypted": false
+      }
+    },
+    {
+      "id": "file-jws-accepted-rotated-kid",
+      "title": "교체 중인 호출처의 두 번째 kid(alpha-2)로 서명한 파일도 수락한다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTIiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"i3acv4UiSCqj2rQcGgmfoD_Xa2fTVqFVUI9b8DHB6QA\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTIiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "i3acv4UiSCqj2rQcGgmfoD_Xa2fTVqFVUI9b8DHB6QA",
+        "hmacKid": "alpha-2"
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": null
+        },
+        "signed": true,
+        "encrypted": false
+      }
+    },
+    {
+      "id": "file-jws-accepted-iat-max-age",
+      "title": "iat가 허용 기간(604800초)과 정확히 같으면 수락한다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NDkxNjgwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"OunMg0X_36PKNQgb42cLw2wzwcyXPIKDk7qFRBStdMo\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NDkxNjgwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "OunMg0X_36PKNQgb42cLw2wzwcyXPIKDk7qFRBStdMo",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": null
+        },
+        "signed": true,
+        "encrypted": false
+      }
+    },
+    {
+      "id": "file-jws-accepted-iat-skew",
+      "title": "iat가 허용 오차(300초)만큼 미래이면 수락한다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTkwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"bfde5_1y07upmn5QD2xgLOfZ4m3wnCKgucNqRukn3WM\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTkwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "bfde5_1y07upmn5QD2xgLOfZ4m3wnCKgucNqRukn3WM",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": null
+        },
+        "signed": true,
+        "encrypted": false
+      }
+    },
+    {
+      "id": "file-jws-malformed-not-json",
+      "title": "파일이 JSON이 아니면 MALFORMED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "this is not json"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "MALFORMED",
+        "internalReason": "MALFORMED"
+      }
+    },
+    {
+      "id": "file-jws-signature-required",
+      "title": "서명이 필요한 호출처가 서명 없는 평문 파일을 보내면 SIGNATURE_REQUIRED다(파일 호출처는 SIGNATURE_INVALID로 본다)",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"version\":1,\"idempotencyKey\":\"outbox-0001\",\"from\":\"sender@example.com\",\"to\":[\"recipient@example.com\"],\"subject\":\"[적합성 벡터] 주문 접수 안내\",\"text\":\"주문이 접수되었습니다.\"}"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "SIGNATURE_INVALID",
+        "internalReason": "SIGNATURE_REQUIRED"
+      }
+    },
+    {
+      "id": "file-jws-top-level-extra-field",
+      "title": "JWS 최상위에 protected·payload·signature 밖의 필드가 있으면 MALFORMED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"1pe5BPvgT-c74dIeWShttrzw-nawRJaZqWpqvwuLttQ\",\"header\":{\"kid\":\"alpha-1\"}}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "1pe5BPvgT-c74dIeWShttrzw-nawRJaZqWpqvwuLttQ",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "MALFORMED",
+        "internalReason": "MALFORMED"
+      }
+    },
+    {
+      "id": "file-jws-protected-extra-field",
+      "title": "protected header에 alg·kid·caller·iat 밖의 필드가 있으면 서명이 맞아도 MALFORMED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMCwidHlwIjoiSldUIn0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"0cJFZYKIiH8sVPvBF_AwzyY_s70MDg2Ya21dwveDmWs\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMCwidHlwIjoiSldUIn0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "0cJFZYKIiH8sVPvBF_AwzyY_s70MDg2Ya21dwveDmWs",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "MALFORMED",
+        "internalReason": "MALFORMED"
+      }
+    },
+    {
+      "id": "file-jws-iat-string",
+      "title": "iat가 숫자가 아닌 문자열이면 MALFORMED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6IjE3OTU1MjE2MDAifQ\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"BuQgYbXFNDBVih6NkEj8rhgs5UzEYjISuKmPoQjgezs\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6IjE3OTU1MjE2MDAifQ.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "BuQgYbXFNDBVih6NkEj8rhgs5UzEYjISuKmPoQjgezs",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "MALFORMED",
+        "internalReason": "MALFORMED"
+      }
+    },
+    {
+      "id": "file-jws-iat-missing",
+      "title": "iat가 없으면 MALFORMED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSJ9\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"Pq3zVMrZ3AzwX11ZK8P2_e7Se9cMSJe507B_xtV_5VA\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSJ9.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "Pq3zVMrZ3AzwX11ZK8P2_e7Se9cMSJe507B_xtV_5VA",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "MALFORMED",
+        "internalReason": "MALFORMED"
+      }
+    },
+    {
+      "id": "file-jws-payload-not-json",
+      "title": "서명은 맞지만 payload가 JSON이 아니면 MALFORMED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"dGhpcyBpcyBub3QganNvbg\",\"signature\":\"DndF5HJ-fxfv4k3Z7lTr6PFDnR_wwTrKEWE319E9sAk\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.dGhpcyBpcyBub3QganNvbg",
+        "signature": "DndF5HJ-fxfv4k3Z7lTr6PFDnR_wwTrKEWE319E9sAk",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "MALFORMED",
+        "internalReason": "MALFORMED"
+      }
+    },
+    {
+      "id": "file-jws-signature-not-base64url",
+      "title": "signature가 base64url이 아니면 MALFORMED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"!!!\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "!!!",
+        "hmacKid": null
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "MALFORMED",
+        "internalReason": "MALFORMED"
+      }
+    },
+    {
+      "id": "file-jws-alg-none",
+      "title": "alg가 none이면 SIGNATURE_INVALID다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJub25lIiwia2lkIjoiYWxwaGEtMSIsImNhbGxlciI6ImFscGhhIiwiaWF0IjoxNzk1NTIxNjAwfQ\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJub25lIiwia2lkIjoiYWxwaGEtMSIsImNhbGxlciI6ImFscGhhIiwiaWF0IjoxNzk1NTIxNjAwfQ.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "",
+        "hmacKid": null
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "SIGNATURE_INVALID",
+        "internalReason": "SIGNATURE_INVALID"
+      }
+    },
+    {
+      "id": "file-jws-alg-hs512",
+      "title": "alg가 HS256이 아니면(HS512) 서명이 맞아도 SIGNATURE_INVALID다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzUxMiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"AikSa8wHNXprxXK8YbtbLaLTT6UH-lPKDuqbJuiZYgp0bczrux2QBhdzTknWpsgzJo4dNM4xIB83Dlff_DF28Q\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzUxMiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "AikSa8wHNXprxXK8YbtbLaLTT6UH-lPKDuqbJuiZYgp0bczrux2QBhdzTknWpsgzJo4dNM4xIB83Dlff_DF28Q",
+        "hmacKid": null
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "SIGNATURE_INVALID",
+        "internalReason": "SIGNATURE_INVALID"
+      }
+    },
+    {
+      "id": "file-jws-kid-unknown",
+      "title": "호출처에 없는 kid이면 SIGNATURE_INVALID다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTkiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"0noU1Ap_-eLhpcuVU_jVn5DQJoY9QNsHrO8mJaj6DHU\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTkiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "0noU1Ap_-eLhpcuVU_jVn5DQJoY9QNsHrO8mJaj6DHU",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "SIGNATURE_INVALID",
+        "internalReason": "SIGNATURE_INVALID"
+      }
+    },
+    {
+      "id": "file-jws-kid-other-caller",
+      "title": "다른 호출처(beta)의 kid와 키로 서명하면 SIGNATURE_INVALID다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImJldGEtMSIsImNhbGxlciI6ImFscGhhIiwiaWF0IjoxNzk1NTIxNjAwfQ\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"4ACIWJq5Nb5bpAnkY9JOYGxf7qVoDcdIeZR5Pppgfc4\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImJldGEtMSIsImNhbGxlciI6ImFscGhhIiwiaWF0IjoxNzk1NTIxNjAwfQ.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "4ACIWJq5Nb5bpAnkY9JOYGxf7qVoDcdIeZR5Pppgfc4",
+        "hmacKid": "beta-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "SIGNATURE_INVALID",
+        "internalReason": "SIGNATURE_INVALID"
+      }
+    },
+    {
+      "id": "file-jws-wrong-key",
+      "title": "kid는 alpha-1이지만 다른 키(beta-1)로 서명하면 SIGNATURE_INVALID다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"lcZqPKNK4kZmAQ3l_nMb0Cgp7XpLAUDHOxBiCOYMUZg\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "lcZqPKNK4kZmAQ3l_nMb0Cgp7XpLAUDHOxBiCOYMUZg",
+        "hmacKid": "beta-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "SIGNATURE_INVALID",
+        "internalReason": "SIGNATURE_INVALID"
+      }
+    },
+    {
+      "id": "file-jws-payload-tampered",
+      "title": "서명한 뒤 payload를 바꾸면 SIGNATURE_INVALID다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0Ijoi67CU64CQIOygnOuqqSIsInRleHQiOiLso7zrrLjsnbQg7KCR7IiY65CY7JeI7Iq164uI64ukLiJ9\",\"signature\":\"1pe5BPvgT-c74dIeWShttrzw-nawRJaZqWpqvwuLttQ\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0Ijoi67CU64CQIOygnOuqqSIsInRleHQiOiLso7zrrLjsnbQg7KCR7IiY65CY7JeI7Iq164uI64ukLiJ9",
+        "signature": "1pe5BPvgT-c74dIeWShttrzw-nawRJaZqWpqvwuLttQ",
+        "hmacKid": null
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "SIGNATURE_INVALID",
+        "internalReason": "SIGNATURE_INVALID"
+      }
+    },
+    {
+      "id": "file-jws-caller-mismatch",
+      "title": "서명이 맞아도 protected header의 caller가 폴더의 호출처와 다르면 CALLER_MISMATCH다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJiZXRhIiwiaWF0IjoxNzk1NTIxNjAwfQ\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"dk0V_4cEtug36CCMjVw_zEIspEXIce-4OgwMA-SOltY\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJiZXRhIiwiaWF0IjoxNzk1NTIxNjAwfQ.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "dk0V_4cEtug36CCMjVw_zEIspEXIce-4OgwMA-SOltY",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "CALLER_MISMATCH",
+        "internalReason": "CALLER_MISMATCH"
+      }
+    },
+    {
+      "id": "file-jws-iat-expired",
+      "title": "iat가 허용 기간보다 1초 오래되면 IAT_OUT_OF_RANGE다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NDkxNjc5OX0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"HMXYmsaTnqJJ9X9LlqM3XHQztkavl9wGErI_u5pB1JA\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NDkxNjc5OX0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "HMXYmsaTnqJJ9X9LlqM3XHQztkavl9wGErI_u5pB1JA",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "IAT_OUT_OF_RANGE",
+        "internalReason": "IAT_OUT_OF_RANGE"
+      }
+    },
+    {
+      "id": "file-jws-iat-future",
+      "title": "iat가 허용 오차보다 1초 미래이면 IAT_OUT_OF_RANGE다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTkwMX0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"6p0nJZCVWzOeE0Jz05N_wjmZac66VDhJQPM56ZGOijQ\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTkwMX0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "6p0nJZCVWzOeE0Jz05N_wjmZac66VDhJQPM56ZGOijQ",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "IAT_OUT_OF_RANGE",
+        "internalReason": "IAT_OUT_OF_RANGE"
+      }
+    },
+    {
+      "id": "file-jws-version-missing",
+      "title": "version이 없으면 VALIDATION_FAILED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"amwYjZA_fFR67-kbXeKSDcsi46NpG-YA14JUsOeNMqU\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "amwYjZA_fFR67-kbXeKSDcsi46NpG-YA14JUsOeNMqU",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "VALIDATION_FAILED",
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-version-unsupported",
+      "title": "version이 1이 아니면 VALIDATION_FAILED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoyLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"ATdANlkXh0c1-se9JLz0NtcnW6FQ_PlUF4_ZsgRvSCU\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoyLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "ATdANlkXh0c1-se9JLz0NtcnW6FQ_PlUF4_ZsgRvSCU",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "VALIDATION_FAILED",
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-idempotency-key-missing",
+      "title": "idempotencyKey가 없으면 IDEMPOTENCY_KEY_MISSING이다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJmcm9tIjoic2VuZGVyQGV4YW1wbGUuY29tIiwidG8iOlsicmVjaXBpZW50QGV4YW1wbGUuY29tIl0sInN1YmplY3QiOiJb7KCB7ZWp7ISxIOuyoe2EsF0g7KO866y4IOygkeyImCDslYjrgrQiLCJ0ZXh0Ijoi7KO866y47J20IOygkeyImOuQmOyXiOyKteuLiOuLpC4ifQ\",\"signature\":\"nxavcYK2qJZE7bL_Woc3GIRs2oUtZxt5iLJ4xiXidbk\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJmcm9tIjoic2VuZGVyQGV4YW1wbGUuY29tIiwidG8iOlsicmVjaXBpZW50QGV4YW1wbGUuY29tIl0sInN1YmplY3QiOiJb7KCB7ZWp7ISxIOuyoe2EsF0g7KO866y4IOygkeyImCDslYjrgrQiLCJ0ZXh0Ijoi7KO866y47J20IOygkeyImOuQmOyXiOyKteuLiOuLpC4ifQ",
+        "signature": "nxavcYK2qJZE7bL_Woc3GIRs2oUtZxt5iLJ4xiXidbk",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "IDEMPOTENCY_KEY_MISSING",
+        "internalReason": "IDEMPOTENCY_KEY_MISSING"
+      }
+    },
+    {
+      "id": "file-jws-idempotency-key-invalid",
+      "title": "idempotencyKey에 허용하지 않는 문자(공백)가 있으면 IDEMPOTENCY_KEY_INVALID다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveCAwMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0\",\"signature\":\"pZMnO-nF58Iaudkoku4fgvJNGd2StWXWQA0H5VrWO4M\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveCAwMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIn0",
+        "signature": "pZMnO-nF58Iaudkoku4fgvJNGd2StWXWQA0H5VrWO4M",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "IDEMPOTENCY_KEY_INVALID",
+        "internalReason": "IDEMPOTENCY_KEY_INVALID"
+      }
+    },
+    {
+      "id": "file-jws-attachments",
+      "title": "attachments 필드가 있으면 ATTACHMENTS_NOT_SUPPORTED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIiwiYXR0YWNobWVudHMiOltdfQ\",\"signature\":\"34Z8bPGlZPzWNikxJ-FJK59BDU-af4EnVvxp8lI1w28\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIiwiYXR0YWNobWVudHMiOltdfQ",
+        "signature": "34Z8bPGlZPzWNikxJ-FJK59BDU-af4EnVvxp8lI1w28",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "ATTACHMENTS_NOT_SUPPORTED",
+        "internalReason": "ATTACHMENTS_NOT_SUPPORTED"
+      }
+    },
+    {
+      "id": "file-jws-unknown-field",
+      "title": "정의되지 않은 필드가 있으면 VALIDATION_FAILED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIiwiZXh0cmEiOiJ4In0\",\"signature\":\"KXTV3CPh6GNz19P0aMZ5gCbYPHhR6SqHgd4Wo_zLNmo\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0IiwidGV4dCI6IuyjvOusuOydtCDsoJHsiJjrkJjsl4jsirXri4jri6QuIiwiZXh0cmEiOiJ4In0",
+        "signature": "KXTV3CPh6GNz19P0aMZ5gCbYPHhR6SqHgd4Wo_zLNmo",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "VALIDATION_FAILED",
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-recipient-missing",
+      "title": "to가 빈 배열이면 VALIDATION_FAILED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbXSwic3ViamVjdCI6IlvsoIHtlanshLEg67Kh7YSwXSDso7zrrLgg7KCR7IiYIOyViOuCtCIsInRleHQiOiLso7zrrLjsnbQg7KCR7IiY65CY7JeI7Iq164uI64ukLiJ9\",\"signature\":\"0HcUVaDvI4idGb1mmBJ2PtBfLeerZx4NO-fWy4uU79Q\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbXSwic3ViamVjdCI6IlvsoIHtlanshLEg67Kh7YSwXSDso7zrrLgg7KCR7IiYIOyViOuCtCIsInRleHQiOiLso7zrrLjsnbQg7KCR7IiY65CY7JeI7Iq164uI64ukLiJ9",
+        "signature": "0HcUVaDvI4idGb1mmBJ2PtBfLeerZx4NO-fWy4uU79Q",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "VALIDATION_FAILED",
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-body-missing",
+      "title": "평문 모드에서 text와 html이 모두 없으면 VALIDATION_FAILED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0In0\",\"signature\":\"BVjnEKFhMwcfmAcgi9r3isIi-npn08FFxIEwzGscVvs\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJzdWJqZWN0IjoiW-ygge2VqeyEsSDrsqHthLBdIOyjvOusuCDsoJHsiJgg7JWI64K0In0",
+        "signature": "BVjnEKFhMwcfmAcgi9r3isIi-npn08FFxIEwzGscVvs",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "VALIDATION_FAILED",
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "file-none-accepted-plain",
+      "title": "서명을 쓰지 않는 호출처는 파일 전체가 요청 JSON이고 수락한다",
+      "channel": "file",
+      "callerId": "gamma",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"version\":1,\"idempotencyKey\":\"outbox-0001\",\"from\":\"sender@example.com\",\"to\":[\"recipient@example.com\"],\"subject\":\"[적합성 벡터] 주문 접수 안내\",\"text\":\"주문이 접수되었습니다.\"}"
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": null
+        },
+        "signed": false,
+        "encrypted": false
+      }
+    },
+    {
+      "id": "file-jws-jwe-accepted-current-kid",
+      "title": "서명한 파일: 현재 kid(conformance-2)로 암호화한 JWE를 복호화해 수락한다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5ZelJXekdTSEEtWWFHdTV5d0hwN0JRUFJkTlF4a2ZvTTVIajZMNUNKZ0t1aWNYVmQyUFRnVGh1YUItV1hwNDd5aUlNVWduWkhLZGdkOWNXandOQk9GRTlzb0VzaFFoMlRqWmM3MW1Ed2V2THFJVWt6bkxoX0dRZExXbGNqLV9UTEk2VjVtWWZ6OFpxM3pkWnZFeWRPNjVLWlZVYmJFV3UtVzdJaERJQnFZeVJ5bFljUEdUaVkzNjlsRlRNb1M0TkQ1dE5vZGlaVUxRNUZheXZzZ05UNFJsVlNCRkVfVkt4c21RTVVEQUxuay13SVhQcmZyZm1OdHlvX1FWLTMxNG5oNmhPcWxZZDdzX21TcTg0b3M0YWVDQmVzVTBwOXY5UXJpaHQwOVRwelR4MEc4UncyMUV5QXZndzZWZlJ2aU9KUWlhLVFvSFBZQjY3SG05LVpicGhBYV9OUWFUbElTQ0RsSnF5VjY4dUdUdVpzaENpYzBrUmd2MHgwRjI5cG9BdmJmM3JWcGJBUFAwU1NmNjhHcWRjTXBrcEZwVldzN3NzaTQ0UDVIZm44RjBYbGduazdHeG9LRHFuUjYzd2pvZUtXZS11dmpDLUJOMjNmcnFxUUM1Vk44LU9PM0ZNWlAtZHpRZUpkWUhiTXNrRVVpVjAtNS1WVlhzWXJrLWhCazN4Ty50b09nN2VpU2Vmd0RSd1pzLlh4bllwT1BVS2dxX3lvamxSYjZxNkNTQV9sTXY4dlo5NHBaWGlIbGo5Z1ZhTE5qTkJ1djVTdTRodktFbjl3aVZwY2trbGU5RkQ3cnBEeUtFOW9INXpMSjVFNENvZHNZbFRKckNkcFd0Z2R6Zi00UmV2WTNiR3NyUTczbHNNQkpPTFE5YkxEM2VGaTBHU0gwMUw1SVZhR0t3dElMMjYxbWVWaWZkYUNxZGZPa1htdDQ5djY3bDB1cU54QmZhS2ZUaS5oRmlGQ28tTV9WSlpWR2pjSHhDZFJRIn0\",\"signature\":\"ZILlz3Ps6Zlfw9Wxd5aFxZNNpIFsPhXGpI1Q0EHo8_0\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5ZelJXekdTSEEtWWFHdTV5d0hwN0JRUFJkTlF4a2ZvTTVIajZMNUNKZ0t1aWNYVmQyUFRnVGh1YUItV1hwNDd5aUlNVWduWkhLZGdkOWNXandOQk9GRTlzb0VzaFFoMlRqWmM3MW1Ed2V2THFJVWt6bkxoX0dRZExXbGNqLV9UTEk2VjVtWWZ6OFpxM3pkWnZFeWRPNjVLWlZVYmJFV3UtVzdJaERJQnFZeVJ5bFljUEdUaVkzNjlsRlRNb1M0TkQ1dE5vZGlaVUxRNUZheXZzZ05UNFJsVlNCRkVfVkt4c21RTVVEQUxuay13SVhQcmZyZm1OdHlvX1FWLTMxNG5oNmhPcWxZZDdzX21TcTg0b3M0YWVDQmVzVTBwOXY5UXJpaHQwOVRwelR4MEc4UncyMUV5QXZndzZWZlJ2aU9KUWlhLVFvSFBZQjY3SG05LVpicGhBYV9OUWFUbElTQ0RsSnF5VjY4dUdUdVpzaENpYzBrUmd2MHgwRjI5cG9BdmJmM3JWcGJBUFAwU1NmNjhHcWRjTXBrcEZwVldzN3NzaTQ0UDVIZm44RjBYbGduazdHeG9LRHFuUjYzd2pvZUtXZS11dmpDLUJOMjNmcnFxUUM1Vk44LU9PM0ZNWlAtZHpRZUpkWUhiTXNrRVVpVjAtNS1WVlhzWXJrLWhCazN4Ty50b09nN2VpU2Vmd0RSd1pzLlh4bllwT1BVS2dxX3lvamxSYjZxNkNTQV9sTXY4dlo5NHBaWGlIbGo5Z1ZhTE5qTkJ1djVTdTRodktFbjl3aVZwY2trbGU5RkQ3cnBEeUtFOW9INXpMSjVFNENvZHNZbFRKckNkcFd0Z2R6Zi00UmV2WTNiR3NyUTczbHNNQkpPTFE5YkxEM2VGaTBHU0gwMUw1SVZhR0t3dElMMjYxbWVWaWZkYUNxZGZPa1htdDQ5djY3bDB1cU54QmZhS2ZUaS5oRmlGQ28tTV9WSlpWR2pjSHhDZFJRIn0",
+        "signature": "ZILlz3Ps6Zlfw9Wxd5aFxZNNpIFsPhXGpI1Q0EHo8_0",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": "<p>주문이 접수되었습니다.</p>"
+        },
+        "signed": true,
+        "encrypted": true
+      }
+    },
+    {
+      "id": "rest-jwe-accepted-current-kid",
+      "title": "REST: 현재 kid(conformance-2)로 암호화한 JWE를 복호화해 수락한다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImFscGhhIn0.Y5oWhmK9pZVL7reLG2Wq29DXOqVbIAkUOtApr4iU_8hBr5pvg13nzl0fGhnowpxSpJCDlabbv7n_YOvKTJHc4s8FibUPTQkWY14ghynw_GHffQ2XP_EuEW7kiMrHkLvq27EbLfR-rYKNL7Q9LoFkQZ0JMgHN1Asq74K5IzpKOxC6E1gutEtHIhQE44u5UYD1Mesll9xjBkeoy-dNS7k1mdO-SPy8o0ynh0kxxleE8eqPOF2TpddYIAkTVnVp4EC0HScgf1SFZT4yn6x8GbE4zBpjN_meAO8Z6f9252neCS4AhalSn53sYp9g1BG-C0C-dD2HcIiJDIYi8RZ8ajpN5iId3mxoSsDwv8Og1Mm4ZL6mFOJyn_IIdJfANUnh10qwr_6i-95cw7oPNsS3HFFvRQzoCuoZMGSkvYZLuB69f459lDk8mRlRSXQxDvgOKt9YoCbH_F4w6N8CnMwphlHprMNc3Klm-lNoxTfT2Zv0IVUBR2yChXtsTimgU3eEPK71.qaT3kM0-p0Nxtv-y.NMflqVMIg-pPuhndpVnYOEricUSlUegkn3_SeEBkKphzPH7DUMKI9f-FZgOc5a5rzNEQgTVsD-7i-LJsmDBp-zIQZEBiNVjm88zpU-FXxFl_T1Re_RsMVHc5CFpo83rcJDh0tKyXQ3tkaR9wMNr_1t55Swqe4ZPDGaqs-hKk_MaYgZbDdf_fCs929XYO5uem.fJ7HFE0EIw6Y0OC6AV_qXQ"
+        }
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": "<p>주문이 접수되었습니다.</p>"
+        },
+        "signed": false,
+        "encrypted": true
+      }
+    },
+    {
+      "id": "file-jws-jwe-accepted-previous-kid",
+      "title": "서명한 파일: 키 교체 중 이전 kid(conformance-1)로 암호화한 JWE도 복호화해 수락한다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1TSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5aMVpfckh3dmlGaE5HMkpmMjZWWHh5RGY5UC1mTFE4RzNnWS1mNjd0MUFHRGVoMmU5WlU1TGJ3MDZhNmpMSXRfYTZkTVNxVGRYbGVmbDhyZ2RIUGk3RTlrMDVPcWdLRVRFOWlzOENxdVJ4bmV1WVhRZTRXb3RHZVlUbDJ1Z3hyRlk4WkpMc2JCUUlkVHQ4djlIUk00ZE9sdm1EazRoM2d1MEdSdW5CODNSZ2ctb2V6dm0yOUtQek8xOXcxdzlsNkxFcmtPbWVzbEZOTFBVTjgzblVBcFNoQ3M4ODNuckE2UEh4SUNsRF9Md25KM0xFQ1k0eVZnU0VHUGJnMVBsdEViS3NlMl9hZFJxOG41ZlBEWl9EdVY3SmtuRDd2VUpKZFU3S09ia3VEbmxVYURDS3ZfdGkzZ1FUbDFKN1pzblZZQzFFbUJUM1pkU0lQMHVoMEFsNkVfYnVKdVpVeUZfM1M3b1BVYndwRGdkYUt0Qm1ZU3JkTVBUS3dPT09Rdi1jcjdtbmphU3p0b2VocURpa3lZbC15LUNac1Y5bGdEdjIta2IwSWZjUXAtM1gxc25CUF84cTNZSnVacmlCdEZzbzVQOENNaGVLQ2tydjZ4bl9iY0tFVDdSN0pBdldQMjkxREdsZURkM19NMmQySkZPS24tTkNzV3YtV0xkcXB4b21iUS5HbWE4c2pFM1RoT2FCVjZ0LmZocVc0Vk5NTkdacWhydzZoS0JzUTZiT0dCMktsdzdsUHFCcDlwSVhmMldwVFJQWDN4X0RjQ3Ixdk5aR3hlaXVvVy1KeU0yX0IxNW4zSlBDaVJ1eE94VkRkdUhlZWwtSWh6cU5CMFRlU2x4ZHotNUpZaThKLXhhcFk1SVEwdFkucEVseWdITUlyc0Ztc0x1dHpjZGt5USJ9\",\"signature\":\"KjzIktXPzINsThYKwjjmxsBKcfcvH15o5yWV8oaCw-4\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1TSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5aMVpfckh3dmlGaE5HMkpmMjZWWHh5RGY5UC1mTFE4RzNnWS1mNjd0MUFHRGVoMmU5WlU1TGJ3MDZhNmpMSXRfYTZkTVNxVGRYbGVmbDhyZ2RIUGk3RTlrMDVPcWdLRVRFOWlzOENxdVJ4bmV1WVhRZTRXb3RHZVlUbDJ1Z3hyRlk4WkpMc2JCUUlkVHQ4djlIUk00ZE9sdm1EazRoM2d1MEdSdW5CODNSZ2ctb2V6dm0yOUtQek8xOXcxdzlsNkxFcmtPbWVzbEZOTFBVTjgzblVBcFNoQ3M4ODNuckE2UEh4SUNsRF9Md25KM0xFQ1k0eVZnU0VHUGJnMVBsdEViS3NlMl9hZFJxOG41ZlBEWl9EdVY3SmtuRDd2VUpKZFU3S09ia3VEbmxVYURDS3ZfdGkzZ1FUbDFKN1pzblZZQzFFbUJUM1pkU0lQMHVoMEFsNkVfYnVKdVpVeUZfM1M3b1BVYndwRGdkYUt0Qm1ZU3JkTVBUS3dPT09Rdi1jcjdtbmphU3p0b2VocURpa3lZbC15LUNac1Y5bGdEdjIta2IwSWZjUXAtM1gxc25CUF84cTNZSnVacmlCdEZzbzVQOENNaGVLQ2tydjZ4bl9iY0tFVDdSN0pBdldQMjkxREdsZURkM19NMmQySkZPS24tTkNzV3YtV0xkcXB4b21iUS5HbWE4c2pFM1RoT2FCVjZ0LmZocVc0Vk5NTkdacWhydzZoS0JzUTZiT0dCMktsdzdsUHFCcDlwSVhmMldwVFJQWDN4X0RjQ3Ixdk5aR3hlaXVvVy1KeU0yX0IxNW4zSlBDaVJ1eE94VkRkdUhlZWwtSWh6cU5CMFRlU2x4ZHotNUpZaThKLXhhcFk1SVEwdFkucEVseWdITUlyc0Ztc0x1dHpjZGt5USJ9",
+        "signature": "KjzIktXPzINsThYKwjjmxsBKcfcvH15o5yWV8oaCw-4",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": null
+        },
+        "signed": true,
+        "encrypted": true
+      }
+    },
+    {
+      "id": "rest-jwe-accepted-previous-kid",
+      "title": "REST: 키 교체 중 이전 kid(conformance-1)로 암호화한 JWE도 복호화해 수락한다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMSIsImNhbGxlciI6ImFscGhhIn0.WePuJTc6i3a5odS102jYASSOqoR9jcFFSdyJb9bCz2UZPX9sNxOGRWj0ZpLQiVW3rcMZD7HLa6JM-TJPuUkgefQ1v0GtsugCbKPCV86tuhv--dTptC1mgUEPRw5mqPTaYJ5LNams64SH6CmTo0l005Rz9GCKGRSychFrOJMOs984FkxbRZRQ4TjH_vm2HVcsbbAQOuoRbLncyjN0Iq30TkARu0rmFyKd975_QHs-xrA1AtEuQNCB2GXuXFHGe09NdC8-yH6AAGG3iqI8jbu2MzQLX65oTFDrc1-G4q2mu0wbntLuMn4_GUYuTV4s7XY7PEjDJhzzt30dsvGt-XUj0QPKJD1Cbd-hlJWaJQ34YTT6BwgjC32s6J7yMGz6UzwaUuDNBexPy3DAqjOpXvPgqsGMaZi-YUcSq3lo9Wday7qZ3c2fimvjZEDKcog7kG8uXcbTPoH7a-10XiCXJDcWgNeHwrFYvFh27AdV0q8-zxIackD5iJWCkjHX0B-y1ulq.q0RaqC8QJG48QlKs.ycggJW2EL1_m8dZR_ZggJOAkq8ti9LHzLPeU4FPAMKvLHkebNpOaW8C_fRINWtoZUrqFukVMOylbl-QO86DqE6iKK35xBbwSAOPa72ZFqR3aRCskvrLGbqSYPeus70k.kX4oA8ZfTRWupSyKYpx9dw"
+        }
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": null
+        },
+        "signed": false,
+        "encrypted": true
+      }
+    },
+    {
+      "id": "file-jws-jwe-kid-unknown",
+      "title": "서명한 파일: 알 수 없는 kid의 JWE는 KID_UNKNOWN이다(파일 호출처는 DECRYPTION_FAILED로 본다)",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE9TSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5KVktCZlVoaWJfRm1rdTV1WVF2Tkgtb1B6MlpVNlptTE13T2RXMEx0WGJyakpic0F6TnVWdW1MNXZsNDNvcWZRaGRlTk5QM0stNkVOQ3kyR2xvZVBBUFhtUUJsWXdKX2hzbi12bkxOWGNfYzhaTzYxVkNEdERSTnA3V0hyTE05WEQ5c0RVZ2hMRExBMjVtMTU3MzFwMjBBc0pxNG05UXpaZzA3WFUwSENIRGdpVk5LQnVDLXNLUnBfNnNma1RQbmg0TVM1ZG9uczJqV0ktLTJCc2ZZd2tHakI3aVNLVHp2RGtOdmNOWjZENVFPdS1yYjVhYmJUVkR5R21yYVUyMTZyRkxJUW5yNVhBQ3JfdFp5S3c3Q0pBQ0N2T1hrS2xxWDczd19JQWg5ck1MVnU4ckRMUnhnb0ZCVUtvcXczUnFST1RyOEZYS0JTWGhMN0p1TXFCYjBVaVgtXzc2VWRiekQ1WnVFTmx4SHVIaUw1MkI5SWFFdTd5bWpRV2lMODA0cU14UG5MRUtvRWUzR0UzZkxmanVMblJIQWJESUM2U25RRnljUHFIQTBwcDNoQUhDQ2tWUDIwZEJnbzdRNzIyZ2hQQ0ZGeWM1bDBLWm9relAwUWpvX1MyeXh3bHl2Z1FDTzc1SnFIQ2xVdEZvaGhZZHlkaTluWm1xZHhxeFZZdUNnZC5DSlZFV0xvTDU2RUFEaHQ5LkVUWkNIZ3hTMkRCOFFQclZJN1FFRmlNek9QMlJhYUI0ZFBRdUxCdWdDdEtndlFNa2NSajRjamw4bDNXbFZMdS1CUmpCcHJXSEljS0h0SWlXQTE2bVg4M3FzTHQ3WnNwa0Q4U3FrUlEzcVJqWHJJaldUZkhtdmEzeDU1YzFjZGMuTWNHMktmMWJya1puVDR1SUV0VFliQSJ9\",\"signature\":\"oIfxOjp45yU-fzzdvRd04YRPriQM6yY4-1kxZpJtCtA\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE9TSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5KVktCZlVoaWJfRm1rdTV1WVF2Tkgtb1B6MlpVNlptTE13T2RXMEx0WGJyakpic0F6TnVWdW1MNXZsNDNvcWZRaGRlTk5QM0stNkVOQ3kyR2xvZVBBUFhtUUJsWXdKX2hzbi12bkxOWGNfYzhaTzYxVkNEdERSTnA3V0hyTE05WEQ5c0RVZ2hMRExBMjVtMTU3MzFwMjBBc0pxNG05UXpaZzA3WFUwSENIRGdpVk5LQnVDLXNLUnBfNnNma1RQbmg0TVM1ZG9uczJqV0ktLTJCc2ZZd2tHakI3aVNLVHp2RGtOdmNOWjZENVFPdS1yYjVhYmJUVkR5R21yYVUyMTZyRkxJUW5yNVhBQ3JfdFp5S3c3Q0pBQ0N2T1hrS2xxWDczd19JQWg5ck1MVnU4ckRMUnhnb0ZCVUtvcXczUnFST1RyOEZYS0JTWGhMN0p1TXFCYjBVaVgtXzc2VWRiekQ1WnVFTmx4SHVIaUw1MkI5SWFFdTd5bWpRV2lMODA0cU14UG5MRUtvRWUzR0UzZkxmanVMblJIQWJESUM2U25RRnljUHFIQTBwcDNoQUhDQ2tWUDIwZEJnbzdRNzIyZ2hQQ0ZGeWM1bDBLWm9relAwUWpvX1MyeXh3bHl2Z1FDTzc1SnFIQ2xVdEZvaGhZZHlkaTluWm1xZHhxeFZZdUNnZC5DSlZFV0xvTDU2RUFEaHQ5LkVUWkNIZ3hTMkRCOFFQclZJN1FFRmlNek9QMlJhYUI0ZFBRdUxCdWdDdEtndlFNa2NSajRjamw4bDNXbFZMdS1CUmpCcHJXSEljS0h0SWlXQTE2bVg4M3FzTHQ3WnNwa0Q4U3FrUlEzcVJqWHJJaldUZkhtdmEzeDU1YzFjZGMuTWNHMktmMWJya1puVDR1SUV0VFliQSJ9",
+        "signature": "oIfxOjp45yU-fzzdvRd04YRPriQM6yY4-1kxZpJtCtA",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "DECRYPTION_FAILED",
+        "internalReason": "KID_UNKNOWN"
+      }
+    },
+    {
+      "id": "rest-jwe-kid-unknown",
+      "title": "REST: 알 수 없는 kid의 JWE는 KID_UNKNOWN이다(파일 호출처는 DECRYPTION_FAILED로 본다)",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtOSIsImNhbGxlciI6ImFscGhhIn0.SWJI3S9dGQ66RZR70rUTqodt1HxQIgn7Fr_0DyhR1X-WKXqvyMqpKnZV1mNRx0VY1uipkZTm0P5IlvqZY9j9jee4f-hLeUdiTlKjM3tqTv8PJSkSEbk0Ch_XqnInF3kixKXix2Akwpx9V53_u1p1R9b9qP1iTjnbxSC11LTA5F_5LmDATCxIu1xqJIxCAPFAwlgRczSgniTl0icr4pkMQmfCKT6HiNRnNZAzse2phm2qAVft8rdVkCR3lwZ2QpaHPzldOOpU7KAfzF0FcqswwELZFTutS0Y3QyOih2pdRbqi4bRb_S7GBUB2KHYAa2IppkfD3CtQ9kCMw-fmmU0EpQrXuBgA8HH9t3AcRS37SlJqiFIkTo7iB9aVwy0Lhn0WWd4rAX8Hl9lwgMXaknXuyAGyuayGvOgUYo5detKJBfsHXUeLmI3XkB-9GeKtPjx-8QLCavWXotrgF4AFWvGsMLJR06kG-QO1SS77LoVgQZQbw0GeDsUOqNFZQXftqDt7.T2_a6RuKODoo4za0.nlndkoGy3HE3N4JBHaXmTxN64RjYl946JQJBW38WTKzSM_dDNTFIdZOjOAEjmdX-cEmJRIBHIeFJmzsGURdfma3oO9aTzMvnJ6GAYH0Zejc2g6VA7ZY-4_3QmvyUua8.LKY77T1WkzfaxnwGBywzJw"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "KID_UNKNOWN"
+          }
+        ],
+        "internalReason": "KID_UNKNOWN"
+      }
+    },
+    {
+      "id": "file-jws-jwe-caller-mismatch",
+      "title": "서명한 파일: JWE protected header의 caller가 요청 호출처와 다르면 CALLER_MISMATCH다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUpsZEdFaWZRLmFzQVFHYW5JLUtWM3phNmc4NmtDUk9JbnBBX0tSSkR1NkdoQV9KZ295aW5MN1Mta1dLb19YUVhuOVdnaDVhNzB1aG1oZVNUVUc4dlFFN082czZyUEtfTmNyYktUT2gzSXRGM185eWlrdjJmQ2dXZzhVanBvc1RTdTJPLVJYWm1UUHc0cS1HSTRVRWJ6VVZ3b3N6NDI5bkYyS1N3WGlkamFfb1V5elh3MWJTM0V6ZTBGMlF1T0JDcjRhbXZjb0xaQXFnMC1BTm14eFhiNGJscmJ0bnpOOEhlN0gyUVJWSkxHWndTVm5IdmRNeGZ1eHduN19VN0EzTE5PVlNXZHhlQ1BqRmVxSm02bm1mcEVWNU9HWlZDMkhPOVBGTGhIUjlXQk5fak5RVlh5cWQ2blZ2QmNsTjA0NFFDS2U0U2lBOWVWX25UNmR5emJ4YkI1ZkRIa2pLMVNnT2hkWGczV3NDY2dkaVh2TTdfaElQbktQbXV6dlAtSDdHc3ZaRmc3YUprdnd0cW1UOUpNM2Z2Yk03RUlGZTZFb1dwWi1aVUJyb3JUUW1KTE1kN05sb2lTdmI1OGg5aE0xWjluTTRpMDl4UHZBbEZ5SzVQc2FRaVJkWTNTMWhfcjlXZVQ0bzQzS3NRWU52YXNkd0VwY2txRm5pcmRrS290TWtUcGRKbWxGb2pSLkdySlFmcVdBSHMtcmR3TkwueGZITWV5cUFTeWRxVjVXYVdVZUtkZF91OF9QOFB3aktBRVJ6MW9zM21FZ0psTm1uSG5sX3FCcHJnc0ZkQXFPZGVPQmFQUWxSdlNRQXJNOGEzRU5iUkdMLVJ6MFI3SlFPSWJMaVpEMHpfLV9vNWdiaEZ4RnlDNDkySm1CZjViVS41dTFXc2o4QVQxd0FJc2hLOVFhTTd3In0\",\"signature\":\"CZY_3af-vtpJBtjPSSojwEoY4KBUgfD5lhb3rp39gr4\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUpsZEdFaWZRLmFzQVFHYW5JLUtWM3phNmc4NmtDUk9JbnBBX0tSSkR1NkdoQV9KZ295aW5MN1Mta1dLb19YUVhuOVdnaDVhNzB1aG1oZVNUVUc4dlFFN082czZyUEtfTmNyYktUT2gzSXRGM185eWlrdjJmQ2dXZzhVanBvc1RTdTJPLVJYWm1UUHc0cS1HSTRVRWJ6VVZ3b3N6NDI5bkYyS1N3WGlkamFfb1V5elh3MWJTM0V6ZTBGMlF1T0JDcjRhbXZjb0xaQXFnMC1BTm14eFhiNGJscmJ0bnpOOEhlN0gyUVJWSkxHWndTVm5IdmRNeGZ1eHduN19VN0EzTE5PVlNXZHhlQ1BqRmVxSm02bm1mcEVWNU9HWlZDMkhPOVBGTGhIUjlXQk5fak5RVlh5cWQ2blZ2QmNsTjA0NFFDS2U0U2lBOWVWX25UNmR5emJ4YkI1ZkRIa2pLMVNnT2hkWGczV3NDY2dkaVh2TTdfaElQbktQbXV6dlAtSDdHc3ZaRmc3YUprdnd0cW1UOUpNM2Z2Yk03RUlGZTZFb1dwWi1aVUJyb3JUUW1KTE1kN05sb2lTdmI1OGg5aE0xWjluTTRpMDl4UHZBbEZ5SzVQc2FRaVJkWTNTMWhfcjlXZVQ0bzQzS3NRWU52YXNkd0VwY2txRm5pcmRrS290TWtUcGRKbWxGb2pSLkdySlFmcVdBSHMtcmR3TkwueGZITWV5cUFTeWRxVjVXYVdVZUtkZF91OF9QOFB3aktBRVJ6MW9zM21FZ0psTm1uSG5sX3FCcHJnc0ZkQXFPZGVPQmFQUWxSdlNRQXJNOGEzRU5iUkdMLVJ6MFI3SlFPSWJMaVpEMHpfLV9vNWdiaEZ4RnlDNDkySm1CZjViVS41dTFXc2o4QVQxd0FJc2hLOVFhTTd3In0",
+        "signature": "CZY_3af-vtpJBtjPSSojwEoY4KBUgfD5lhb3rp39gr4",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "CALLER_MISMATCH",
+        "internalReason": "CALLER_MISMATCH"
+      }
+    },
+    {
+      "id": "rest-jwe-caller-mismatch",
+      "title": "REST: JWE protected header의 caller가 요청 호출처와 다르면 CALLER_MISMATCH다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImJldGEifQ.MYbMDEAF3q59gVtWDvaonSKHTnC6KutPJk8RRaVog2f36Syg0kPW1GKIluUejnY7XJOR0LXFRLE4NLCMXx82VIf0b5Gb47BkksLVI2Kec-yOhyiUr1gJVE31qWVr3YuLhgoMd0sEXw5AfCgKVB5ZXI9ASILpF0PWHowP76Xsxg8GghilvGNCpPhdwgkI_HCZ961m3GeKQHMklLDZQ4frRIVB0a0yMWZviiDG5pW6caDN8TEvnbyoU5Ay2p-yC0ZzVtwQIUKff04qTIc9DiqkXHTE5W_DaASDjAuuX6_b8iJUPwI5zixNxCJ9K4Bk7SZ1TDFGnwxOaKp2oJLQzCdyKWn9WuioMYn8S2hVXveKijYAbaeoPodjYfSet5mQLr262wOeSTajchURuFruq6Gf4DYaENa3HvCF2BfE1w-yXKzDcIYD5lp_Jdf3PowjB0CsF8DGXLcyZlMdXJSkizk1rGyH9AWUQZ5Y99_3JaVaqf8jDyvywCFKOTgf8Sr_p1M-.Le8U56Gr5kTEUCN7.q_z7Xg5Ub98nqqxxMFFlybPgCriW9iLWMtbGIaivCgl3bCFJTjAtMHtAUd3_Klh_emcSpiA5IPDiZ8Ps_wMY_6M67KGp5MA381qNdoJPWmtkXuuGPJXlEiDmmZtScAA.dhqSs6yS7XFjDn9GoqFgdw"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "CALLER_MISMATCH"
+          }
+        ],
+        "internalReason": "CALLER_MISMATCH"
+      }
+    },
+    {
+      "id": "file-jws-jwe-alg-mismatch",
+      "title": "서명한 파일: 키 암호화 alg가 RSA-OAEP-256이 아니면 복호화하지 않는다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQ0lzSW1WdVl5STZJa0V5TlRaSFEwMGlMQ0pyYVdRaU9pSmpiMjVtYjNKdFlXNWpaUzB5SWl3aVkyRnNiR1Z5SWpvaVlXeHdhR0VpZlEuSmZHQ29IcEJWeVMzdHZQc0ViNlNTVTBWaHJoTTZJWDNBYXJIWDJPMGVMa2JqV0xZY0NBY19vV2lseUM0RndUU0pPLWVQT2gzX2JMYlFULVF2VUF0MnNwRWh2S0dpdTlIaktiY3NIclI1VjdpeFMyZkgwajI5S1k2MjdkaHhJaWk5ZWFUSXRNR0VNOVZNRkFBNW8zR2YtbXlPM1ZLWDlGQ20xVV9Fdm9TS1hNd3RrdDRwN3ppem9tZVJuS0VDSGFBbFpnUkFyTUs2amJIdVdtb3NOaGEyeDZPQ1ZrQy1DaGliU25tZVA0ZDlQNEhjQUFWR1Uza29UcUg2Tml3VjNWUEJrZXJ5UVB0Q0UwUFBJQ0xTejl5NWs3N0hLUDhWaTcwak9BaTg2aFdVRFd1cFZoSVJiaHlveDk0VDR2aklpaThwaFVnR2pFd2QwTmZSb1o1NGM0Z3pLMTd0Sm12dEVoWFlMMVhYSVAzNFdyNXU1eG8zVWFYN3VnU1kwTk10LTA3SWZ3eGhxbFFnazh3LVJKWGxrRHJvekVtaHUzQlZEX09PbTBZMTd0a1d2b2tOOU5VaWlBTjB2dzZGMUs4LW5MU2ptOXFjNlViazBiNk9yaHNGVGNfMGFBQlB5SmJwT0pBaVprVHVvZ0RwTHJlSFdQTlpObTE5UEh1eXhVZ2NsZy0uUUp1TFRWZUJLVnFTSklkLS5OYzZpUUNhUkJzV0dBSGNTTXVJT3pZcHh5VGVUMUZxUG5HOFVJZnZSZVhub1A2ejBoX2QtSWdCemNwSTM2Q3hoa2dYWXBJMlVGSElISVhNdzZKWElWOVA1QnExamR4QnpLQkwyWG91QUR4YTlRcDNELVpwRHdJVmVtMnZ3RjMwLjhfcTVoWEZIOVlkOWpHT0NtUzZWbHcifQ\",\"signature\":\"6SbGY0amiB-bzc0zH6FzwbOA9TDqs3PLRbxgek83950\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQ0lzSW1WdVl5STZJa0V5TlRaSFEwMGlMQ0pyYVdRaU9pSmpiMjVtYjNKdFlXNWpaUzB5SWl3aVkyRnNiR1Z5SWpvaVlXeHdhR0VpZlEuSmZHQ29IcEJWeVMzdHZQc0ViNlNTVTBWaHJoTTZJWDNBYXJIWDJPMGVMa2JqV0xZY0NBY19vV2lseUM0RndUU0pPLWVQT2gzX2JMYlFULVF2VUF0MnNwRWh2S0dpdTlIaktiY3NIclI1VjdpeFMyZkgwajI5S1k2MjdkaHhJaWk5ZWFUSXRNR0VNOVZNRkFBNW8zR2YtbXlPM1ZLWDlGQ20xVV9Fdm9TS1hNd3RrdDRwN3ppem9tZVJuS0VDSGFBbFpnUkFyTUs2amJIdVdtb3NOaGEyeDZPQ1ZrQy1DaGliU25tZVA0ZDlQNEhjQUFWR1Uza29UcUg2Tml3VjNWUEJrZXJ5UVB0Q0UwUFBJQ0xTejl5NWs3N0hLUDhWaTcwak9BaTg2aFdVRFd1cFZoSVJiaHlveDk0VDR2aklpaThwaFVnR2pFd2QwTmZSb1o1NGM0Z3pLMTd0Sm12dEVoWFlMMVhYSVAzNFdyNXU1eG8zVWFYN3VnU1kwTk10LTA3SWZ3eGhxbFFnazh3LVJKWGxrRHJvekVtaHUzQlZEX09PbTBZMTd0a1d2b2tOOU5VaWlBTjB2dzZGMUs4LW5MU2ptOXFjNlViazBiNk9yaHNGVGNfMGFBQlB5SmJwT0pBaVprVHVvZ0RwTHJlSFdQTlpObTE5UEh1eXhVZ2NsZy0uUUp1TFRWZUJLVnFTSklkLS5OYzZpUUNhUkJzV0dBSGNTTXVJT3pZcHh5VGVUMUZxUG5HOFVJZnZSZVhub1A2ejBoX2QtSWdCemNwSTM2Q3hoa2dYWXBJMlVGSElISVhNdzZKWElWOVA1QnExamR4QnpLQkwyWG91QUR4YTlRcDNELVpwRHdJVmVtMnZ3RjMwLjhfcTVoWEZIOVlkOWpHT0NtUzZWbHcifQ",
+        "signature": "6SbGY0amiB-bzc0zH6FzwbOA9TDqs3PLRbxgek83950",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "DECRYPTION_FAILED",
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "rest-jwe-alg-mismatch",
+      "title": "REST: 키 암호화 alg가 RSA-OAEP-256이 아니면 복호화하지 않는다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUCIsImVuYyI6IkEyNTZHQ00iLCJraWQiOiJjb25mb3JtYW5jZS0yIiwiY2FsbGVyIjoiYWxwaGEifQ.dF9ioOEqAlx206WXUQZZ5x5sKJx6NhoztKHaNmSdJPKZ1i58EORTH5jg8ambUx0a3PyAhBLZWx44zhxjsz6JvRBZPObvjWHQMStU0WsEf0fQ7DpVpRXS94C2w3qV9Q1kW42JP_yZ86v43HGLp0EX8Mpz82hkpXt6WIq1elrB-abyKpeCDRm2uiph5tEOfec7J826WfrFqsNLud0zRIrAKHTycjyKEJFzzjn_OxeunAciUod-WPi2bD7BvYYlLKSQPzsRVWU0wdq5jd_NDYxoJe4dlMVexr-nifwTk8WnWLQerwg0X8OWL4AIwyetr1VpKDKIXtCwwSunChuaqkn5MfIX9xfW7KrBRk1LOku2bB3qZVpprEL6QjyOtOaRVWqSaCrBIAvi1Gxr-XnUjKUEV2EiwhPH9TOI8_U4GOrnA3ejLXcTjw96mj0BjWVFLA846Re024qqwypC6sgaR5qd67gC2vWjkVEOEIScrhX9jaOGYZUoAUgJbvNexOYrDBPv.NlvkmrALKlQeXGZp.bmKphscCHNYUJ_7NIsHaGSJRPBKhzYas8TcA-_iOcMJmpjYxWrNo2cjibdn6lMgr0OwrjchbkrI8feCWAvpITohxN0KnZN29S4oHkP99GueNrQIvmufqUbbKp_Ifetg.hix4ke24WLBxFwsR3ZEstw"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "DECRYPTION_FAILED"
+          }
+        ],
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-jwe-enc-mismatch",
+      "title": "서명한 파일: 콘텐츠 암호화 enc가 A256GCM이 아니면 복호화하지 않는다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1USTRSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5JdFpwdUwzekRacnhpSW90aDNoQk16aVZHVEFJOTVsNE13amZIV003TVNRd0o5T1JlTjJvVzBLaDJBaVZ6MGxfNU1oeEQtd3MxQ3BEcVBGclVDbElxN1ZGNEs1WlNLb0RDRlBNS2lfTkhFcW83NFVWdTVmNXBhdmRvekVvc01WclhoSjljekRKM3NHc01KdzZXU0JPWFJzQmNpNDdCb2RpVnJxR21sQWRickcwb2syenVWbEgwTWJnYklQNFJ2clpfaHAzN1JGN0pjQzBPTnYxY1U3Uk1PUzFfbmJjRmhXWXZnUnlNWkJlWUtTUko4TXNMV2Zoc0x0Z01Ic3VTS0RrZktoQWZDdmJDNzRtN0ZGLWt2TW9wbjRmT3l1cE40WkpSaDBHTTVEblZIS1hqZEs4MmZadGE2XzVWY3U2Y0FWQnhDV25rc2pjYVd1ckJGdElZS21vR2VKd2RlSlhGR0lKbi1ZUWMtVEY3aDU0RVlRVW4xSEdIMHlDaDY5cTl6WU93NWt4WnVpdV8xUTZZZnNJTE5mVkhfdFJPRDMxckVCWlJiRjRpakgtNXFxR2pibmhoZldMZUhGaWF3ek12WWtnSTVyTE8zRURDQk9WQXVWcklQdERXQXlIVXZKdTd3ajM5NFBxVFB6TFFrRVFHdEJYVlQxTzVsNVNlZXVIZ0lwdC50TF9LXzlVVm5RaXp6WHA2Lm1OM3cyZVUtNEdGanQ0OElWWl9QYWVtVnpWbGJYVkhydHRSajhMNC1wamZQcFlLb09SMGxFVzNuZE9HcnpvSDYwb0xkX21YTnVZQ0hscklRdlB0dHB2NGJzWWZsdExaeHc1X2pJZE1lR3A1czBtUDFFb2tsZktVZ1A4eDk0dkUuYUxjalpOSW9ieDY1NGFWd0ZpQ2trQSJ9\",\"signature\":\"BBT6AXHW-HTc3XTkHudkJMwpQu0L4K6DdIdArWHccns\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1USTRSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5JdFpwdUwzekRacnhpSW90aDNoQk16aVZHVEFJOTVsNE13amZIV003TVNRd0o5T1JlTjJvVzBLaDJBaVZ6MGxfNU1oeEQtd3MxQ3BEcVBGclVDbElxN1ZGNEs1WlNLb0RDRlBNS2lfTkhFcW83NFVWdTVmNXBhdmRvekVvc01WclhoSjljekRKM3NHc01KdzZXU0JPWFJzQmNpNDdCb2RpVnJxR21sQWRickcwb2syenVWbEgwTWJnYklQNFJ2clpfaHAzN1JGN0pjQzBPTnYxY1U3Uk1PUzFfbmJjRmhXWXZnUnlNWkJlWUtTUko4TXNMV2Zoc0x0Z01Ic3VTS0RrZktoQWZDdmJDNzRtN0ZGLWt2TW9wbjRmT3l1cE40WkpSaDBHTTVEblZIS1hqZEs4MmZadGE2XzVWY3U2Y0FWQnhDV25rc2pjYVd1ckJGdElZS21vR2VKd2RlSlhGR0lKbi1ZUWMtVEY3aDU0RVlRVW4xSEdIMHlDaDY5cTl6WU93NWt4WnVpdV8xUTZZZnNJTE5mVkhfdFJPRDMxckVCWlJiRjRpakgtNXFxR2pibmhoZldMZUhGaWF3ek12WWtnSTVyTE8zRURDQk9WQXVWcklQdERXQXlIVXZKdTd3ajM5NFBxVFB6TFFrRVFHdEJYVlQxTzVsNVNlZXVIZ0lwdC50TF9LXzlVVm5RaXp6WHA2Lm1OM3cyZVUtNEdGanQ0OElWWl9QYWVtVnpWbGJYVkhydHRSajhMNC1wamZQcFlLb09SMGxFVzNuZE9HcnpvSDYwb0xkX21YTnVZQ0hscklRdlB0dHB2NGJzWWZsdExaeHc1X2pJZE1lR3A1czBtUDFFb2tsZktVZ1A4eDk0dkUuYUxjalpOSW9ieDY1NGFWd0ZpQ2trQSJ9",
+        "signature": "BBT6AXHW-HTc3XTkHudkJMwpQu0L4K6DdIdArWHccns",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "DECRYPTION_FAILED",
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "rest-jwe-enc-mismatch",
+      "title": "REST: 콘텐츠 암호화 enc가 A256GCM이 아니면 복호화하지 않는다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMTI4R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImFscGhhIn0.ecV5aqnQORYMyyaq7VbminFJA5YwRLK3WB-t3EFVfDD-eDf0qg4BEgIWndYZq8VJd0L8kxFuERVMdLNAH2GoFBEtt71xo-h3EF_NM3G_64LOa9APDfpfDYziZwqwFwxhwyeZ7pALO1R0dPZ-_uHGW2ghNV8WkqTIbbOunpo-14LlAvcjw9l7KFnLpXnKzOpt0cIQom4BfcDXl0mObEExhvvPG1ynUCrOe0BzzCBHNqtL35ZlRfyJZQ-z6UzZIImlyAjD6-htxTXBDNKTNfbUEVxTUBtiqGACLz-ItMYtsY8pG-jiN0DmAPQfhxvVrsyokHwSRAczhO0cXdvZ59IifxEB7D-rUTxqBSqIvM1v1oclt-XqieL_gSyZ5lOOWYtd69HZixtEiaLLwjkKWg4K0YAh4eB6lXrrSIsPgziFQOSa45bWftu94S-dVrTg-2BrYV6wUDP8OaauYbT2lovHbhYlghli-w2-kNOQC5PeNwgNwBd7qKU3v-Iuwc5SImzr.TGdOfxd_S1e3zSHS.h2u0m_4HFmuAzcQovsaMQriNNiNOOz8S_ZrPWsRR4loAD3ajMZ_gxiybbUeWjpgn3j9KngcrL3XKqnbiDicR4dUN54d9s_4usiVdLvJCcVQneeHMHiCrzUIBOv05qmw.usKo8y5OUjm5tkOaL2FHkA"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "DECRYPTION_FAILED"
+          }
+        ],
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-jwe-wrong-key",
+      "title": "서명한 파일: kid가 가리키는 키와 다른 공개키로 암호화하면 복호화에 실패한다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1TSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5hWGpzZHhjZ3JsS0R1UGJ3OVpQR3ctY0dtSjR4ZGI0WjViWWZaLVk2dnZiMk9YZWpZbm1VbWZWLTI4SjBZY2tiUWZrWTk5blRwUS1fYmtHeHlBRzRiRnBKTGNUV3Zjb0pROVpfaVpfY0lNQk5sT0l1NDhKNEZ0UlJ6UHN3UmppMnprRENkVVBmRTYxanNtclNCVTBfaGd6YjF3MmNxbWZxaUV0dHY2eEJyOXZFZkFkV0ZrQkszQkRWZUl1S0JrZk10SkN1eEdTdlFtYW11T0NvRjAwWDBkTXJfb1dGTXJidnU0WHEtalB6Z0xveWtQNUFiMlpvbjZYSWJwaHpvTzZ2a1BzZmNPQjhSYXpFS2Jybm5DZzRwWURYZDNTcUEweG1GOTBEelRpZkt2bWZIcnlleFhsRW0tNXBXdjhhR09sQnFkbmpORFp2a1FfenJJWTFobnZ4eUNLcGpWNlJIT29FU09BQm1GTUJnMHQtcWhRbTJFZXFTWG1NQTkwZXZwdjBoLWpiaGlQbV9idWkzdkdacEZQU2RBazRsWlVSQ2FHMEo4dHlfaWRPT3lVMng4OE8tRlgzSUpnUmEwNmpsdktkR0IwUm84V0kwQXRoTkQ3d0s3LVVNbGRBWjlnVTR4QUl4VC1VQ2VaamhVTFZKYnowM2ttYURuaXFxQ0p2QlFnUi43UEM5UWx2Y2xXTkJKc1JSLmJFVFV6UDdWcnpBclhkSkctWHNFTXZmcXA0SnZ1VVRRT2RBa2w5b2xkQ2VVS0t0aE80LUIyRGFvSGMxY3E1WjJLWXNEcHo3aEZxVnRvc0o0OGEzSS14RWtmcHlTVG52OUdubHFUS1gyUy1pZGt1QnJCc2RncDdiQ0czNEdHNjguZjFOR0dpWFlTdkRpcTVHTU9LQTByUSJ9\",\"signature\":\"oKlp8nYxqeEB9pLZ_M2boyLTzSSPJw0wA0ZREkrKlls\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1TSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5hWGpzZHhjZ3JsS0R1UGJ3OVpQR3ctY0dtSjR4ZGI0WjViWWZaLVk2dnZiMk9YZWpZbm1VbWZWLTI4SjBZY2tiUWZrWTk5blRwUS1fYmtHeHlBRzRiRnBKTGNUV3Zjb0pROVpfaVpfY0lNQk5sT0l1NDhKNEZ0UlJ6UHN3UmppMnprRENkVVBmRTYxanNtclNCVTBfaGd6YjF3MmNxbWZxaUV0dHY2eEJyOXZFZkFkV0ZrQkszQkRWZUl1S0JrZk10SkN1eEdTdlFtYW11T0NvRjAwWDBkTXJfb1dGTXJidnU0WHEtalB6Z0xveWtQNUFiMlpvbjZYSWJwaHpvTzZ2a1BzZmNPQjhSYXpFS2Jybm5DZzRwWURYZDNTcUEweG1GOTBEelRpZkt2bWZIcnlleFhsRW0tNXBXdjhhR09sQnFkbmpORFp2a1FfenJJWTFobnZ4eUNLcGpWNlJIT29FU09BQm1GTUJnMHQtcWhRbTJFZXFTWG1NQTkwZXZwdjBoLWpiaGlQbV9idWkzdkdacEZQU2RBazRsWlVSQ2FHMEo4dHlfaWRPT3lVMng4OE8tRlgzSUpnUmEwNmpsdktkR0IwUm84V0kwQXRoTkQ3d0s3LVVNbGRBWjlnVTR4QUl4VC1VQ2VaamhVTFZKYnowM2ttYURuaXFxQ0p2QlFnUi43UEM5UWx2Y2xXTkJKc1JSLmJFVFV6UDdWcnpBclhkSkctWHNFTXZmcXA0SnZ1VVRRT2RBa2w5b2xkQ2VVS0t0aE80LUIyRGFvSGMxY3E1WjJLWXNEcHo3aEZxVnRvc0o0OGEzSS14RWtmcHlTVG52OUdubHFUS1gyUy1pZGt1QnJCc2RncDdiQ0czNEdHNjguZjFOR0dpWFlTdkRpcTVHTU9LQTByUSJ9",
+        "signature": "oKlp8nYxqeEB9pLZ_M2boyLTzSSPJw0wA0ZREkrKlls",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "DECRYPTION_FAILED",
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "rest-jwe-wrong-key",
+      "title": "REST: kid가 가리키는 키와 다른 공개키로 암호화하면 복호화에 실패한다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMSIsImNhbGxlciI6ImFscGhhIn0.Ll6k6rBJqeU0s8dl-YNuptQqX5ZOmdwmvDyRd_4LP-8eSKDDCelusCu6IBi0ckjwXhoPx0iicwkAS5oOyP9FCdlN-bgvmNYEU79xlJ1HASueDcmrYxv5Y-t3kIPWgg5-xQbUfXQWVYIMvUFRxZft8gtnbxvtQ0xpPZOkphzD398ZfXbzMdX1iEfoCJSskK_Bu4kroXmm6rUPm8C3DCxyyx1SRAnUOP5urZXOgv-Q_UdQGE2Dv9dSB23zqvfAH1Tgd5sKejexZJZhsiKKajugL4o0FRru745n43P8NXPPIHfxBG53vHgxnwkkp--TNanlUci6XhAE4nzX2o7fMmRgz-cCv3xeUwQMf032UaaNF9uOLhQCI9IrqhcAnFe6RqKrMT6BWylV2ELqZxXDV_7CkRqPGvIe2Qi7-pQng4D8oRQoc3wYmfMGeG51B28FqUOXs6Y8Pn501T0KixwVTXlr2xSwfNZdQ9sMyHQ8rIY6y3yDFKOLCyjNsWhTRsDR9VQm.dQ2xcB_Fj8TBoMw4.gOeLYtFajlZNFc8z7P9ZJV90WZ00UNDf9zifOS8BfHzlR-Bb1-GuQrrm_C-Ldv8vA49JfD2BCxpLf_iTJkhD98etCdhkfZRu9X-Tg8Q8L_DZvXaQpo-0EwGUjG1RV98.KT2XnE_raX1KqZAA_JXCig"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "DECRYPTION_FAILED"
+          }
+        ],
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-jwe-ciphertext-tampered",
+      "title": "서명한 파일: 암호문(네 번째 부분)을 바꾸면 복호화에 실패한다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5IOHlWdXltbGlYc1BTdkVEWlJJLVRKRXQ1QVJRRFBPREpYODJxSHF4cHRrT3BEbkg3UzQ5TWpvV2daNFRVZlBEV1VFaFh2eGVmZHJuOVotbExEeXkxclhtQ3c4bmpSZ2IzV1c5UUtHYTNtVU1RSmFPa0RTb1RHam9tUlpaTWhJOVg4c3NtM0pXT2VrcDJrejY2NEt1YmtPN0dWWng4UWI1U1Z4UDRKdGlDbVRVQlFnNExVXzZsQk5rM2s5bmp4bEFQZVVuX3NZRzBGckJSaTV3R2V5Sm5DRXhleHc5MW11U29aUFVOckMxWFB0Nlg3ZlA2eUJkUEZXWFZKY3BiVUN5Q1VObE9ab0xEeTR1M3JSYi00UDl1TGp5LXk5bWZOX000S2k4Y2tlMXUtR1ZMQWxzMGkzY1FWTFRYVHN2d0lqWlA2dllmM0ppWW5tTTNJVV9QOXNhODQtY19Ed3NzRUdVS0VyLXBiSTBjRVJfbXoyZ1dMVUxzcmJSc2dXZjdjWUhRb0FHbHVqX1lUajZCeW0tQWhXQ1lndkdMbnhWUzVQbjZvWmNPcVdrTUFRV3VqZzd0YVg1Rld2djZ0T2VCU1V4YmFDWEZ2Z3dabFVuMktxajhKSjdlZmc2T3FLUmstMEhyc3JxaTluU2g3aTRHMC1CWnZjaTN1bWpXZWFENFhxNy5ycWFmd1d2ODNHelQxQzE4LkFMdVpjMEVHZGRvblZnZzFVTUhDV01hQWg4bmEyQWZTUmdIV2NmdWRRQmVySjBMcmh2aUlRMEhsb2NVTW1tQmF5NW0yRmpoSUNPY0o1NnZ3RWJYQW83TmF1Y3l3WXNlWGg0cE9UdjVjQXJWVUFzSEpRd3FodGw1XzY4QnZvclEuZjd0X2VJX1gxX0tzNzJfWVhIdlRvZyJ9\",\"signature\":\"ze3X0TlOOW0zGOKfcn4l_cZH8tkdfHkQB1UmnaaMKbk\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5IOHlWdXltbGlYc1BTdkVEWlJJLVRKRXQ1QVJRRFBPREpYODJxSHF4cHRrT3BEbkg3UzQ5TWpvV2daNFRVZlBEV1VFaFh2eGVmZHJuOVotbExEeXkxclhtQ3c4bmpSZ2IzV1c5UUtHYTNtVU1RSmFPa0RTb1RHam9tUlpaTWhJOVg4c3NtM0pXT2VrcDJrejY2NEt1YmtPN0dWWng4UWI1U1Z4UDRKdGlDbVRVQlFnNExVXzZsQk5rM2s5bmp4bEFQZVVuX3NZRzBGckJSaTV3R2V5Sm5DRXhleHc5MW11U29aUFVOckMxWFB0Nlg3ZlA2eUJkUEZXWFZKY3BiVUN5Q1VObE9ab0xEeTR1M3JSYi00UDl1TGp5LXk5bWZOX000S2k4Y2tlMXUtR1ZMQWxzMGkzY1FWTFRYVHN2d0lqWlA2dllmM0ppWW5tTTNJVV9QOXNhODQtY19Ed3NzRUdVS0VyLXBiSTBjRVJfbXoyZ1dMVUxzcmJSc2dXZjdjWUhRb0FHbHVqX1lUajZCeW0tQWhXQ1lndkdMbnhWUzVQbjZvWmNPcVdrTUFRV3VqZzd0YVg1Rld2djZ0T2VCU1V4YmFDWEZ2Z3dabFVuMktxajhKSjdlZmc2T3FLUmstMEhyc3JxaTluU2g3aTRHMC1CWnZjaTN1bWpXZWFENFhxNy5ycWFmd1d2ODNHelQxQzE4LkFMdVpjMEVHZGRvblZnZzFVTUhDV01hQWg4bmEyQWZTUmdIV2NmdWRRQmVySjBMcmh2aUlRMEhsb2NVTW1tQmF5NW0yRmpoSUNPY0o1NnZ3RWJYQW83TmF1Y3l3WXNlWGg0cE9UdjVjQXJWVUFzSEpRd3FodGw1XzY4QnZvclEuZjd0X2VJX1gxX0tzNzJfWVhIdlRvZyJ9",
+        "signature": "ze3X0TlOOW0zGOKfcn4l_cZH8tkdfHkQB1UmnaaMKbk",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "DECRYPTION_FAILED",
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "rest-jwe-ciphertext-tampered",
+      "title": "REST: 암호문(네 번째 부분)을 바꾸면 복호화에 실패한다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImFscGhhIn0.Jg5-b2x9KNBoa-axGmLnRONcffrksayVzzNML9BqSLKs-oatDIauQ-GjhTia1yN4j8U414SFcN1nba_jvSvJIvWOf7GWaz3t8pZqI98Nca5pznoSHS995kcYygRO5zZoI_wa1XmHXdp_hmyjrKNLYoHYI4xCGOPpnhf0qzJhtu6Mjjjz-FDXajODkKIlDx60tEzlWz1GPnJnxkC5sFTP9gYdGxXhLzyDQrJDlN2tATwZUnGxQMbumOx8eL1qIFm6LzwL36OOP78gdBGZNOLgxdnO4DNYeOBMUwo3pvN9bQQqhQITadipAxj8tQYvcBzUP9vVoMJ51aunMKceTjoP-RDEWZNknnKISclaGHeP18dCaR7dRX2azyulmUGcj9vksRE_mzYpjKCQrJDNoZdF3PP0bwTUl2SUqGtQgZ4yQd7ZB4uhSq87b4AI7jVHn4RKXv0G5loFLJKRp0XnD_CjKA8hHJuB2CxWKZ2kW71fDM9M72FtN4X30PA3ZuMce2pV.N1GVcH0o_cFbYTCp.AwoO2Skyq8BEXH6x_xPIZxalMW7p9R2fcqBW3JcP1_6iizLWMRxLL_Ul_vYTE5VbXYlzlnrUDdy3ayjO03EpY2paOUdX617xNQkcUeQRAC5-QJ2yseo3ib3MuB_yi9E.HWTEXUum4cVSu7KgLgthGQ"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "DECRYPTION_FAILED"
+          }
+        ],
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-jwe-header-tampered",
+      "title": "서명한 파일: protected header를 바꾸면 인증 태그가 맞지 않아 복호화에 실패한다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUpsZEdFaWZRLkVUTkRPc1ZsNmMzVTdxN0RGRVkwTENCeTdpXzBJN25XT3l0bmxwc2lFMmlOakxGazVJd1NQYXV1T25ycnA5cmpWWVRJVFBRMVljZHB1WjgzcDhaOVdFWWVHd2ZoZ25RM21IRnBLOGo3a1AwTmZCZ1gwaU10NXJ1UzNHdnRXZ2hTUExNcWFsZTFCVVFSR1ZsOFFhSndXUDNzcW1HWDIzOXJWSjBBcmg4S0hBZVR2NjNYUDRBNFNlRHdXbDJjd1c5OWx6dDBEbnp0anhxcDUwanI4MU92bzR2eUU4S3ItV0kwWDlMaV9jalhsakUtbTNlX1VsT0pDRXN6R3V0VkxoeXB1U01DMGZIMVY5UDRIbWZYUlY3ZFNlRVZEVlNLQnQzNFVzUktremZsUllid2d2cDdKdkhacDhIc1NLejZQM0hzWkFxVXZEeC1rWFlqMDdlUXc3al9CZnJFXy16MmwzQjBWSmd3YmZOcFR4b19zb2ZrVndDS04zdmRWQUFCajVuUmxkcnJBdGplbk1PZFBYYkJ6eHNoQmw3d2FUMzloeWdQa0NCZXlsNU1DOFkzTldUMUVGOG9ISUJHNEdZMy1sY2hLT2RNUVlYQ0hhekNPNHg5UTJpTnlpWjMwU01DVUxxcWVkYUVMT09LdTRPUEprMUxWbjFuT2czdVRTUXEzd0g0LnhpYmk3T0R5b1lJVDZUM1ouY3lRY3F4d3ZsOGFZREVCVHNpRTl4ZkpFUTlVbHplQl9qVC10Xy1fZ29LeVdmZzRLb1VvWjlRanIwVnUyeGlseHlPMzJkTHdEQ0huU21WckZSTXBPM3pMQ0MyQk54blZ2Q3VWZGNMSjJ2LTRjUnUzTmI0Zjg0NEdnNnJYWEFFTS5mTzhDazFIUVE2YlA0RlVFeTBPRFFRIn0\",\"signature\":\"-Zie3HzFWvo67shAN4c4Oy-HJMCuQp6xXfNN_zxa3QE\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUpsZEdFaWZRLkVUTkRPc1ZsNmMzVTdxN0RGRVkwTENCeTdpXzBJN25XT3l0bmxwc2lFMmlOakxGazVJd1NQYXV1T25ycnA5cmpWWVRJVFBRMVljZHB1WjgzcDhaOVdFWWVHd2ZoZ25RM21IRnBLOGo3a1AwTmZCZ1gwaU10NXJ1UzNHdnRXZ2hTUExNcWFsZTFCVVFSR1ZsOFFhSndXUDNzcW1HWDIzOXJWSjBBcmg4S0hBZVR2NjNYUDRBNFNlRHdXbDJjd1c5OWx6dDBEbnp0anhxcDUwanI4MU92bzR2eUU4S3ItV0kwWDlMaV9jalhsakUtbTNlX1VsT0pDRXN6R3V0VkxoeXB1U01DMGZIMVY5UDRIbWZYUlY3ZFNlRVZEVlNLQnQzNFVzUktremZsUllid2d2cDdKdkhacDhIc1NLejZQM0hzWkFxVXZEeC1rWFlqMDdlUXc3al9CZnJFXy16MmwzQjBWSmd3YmZOcFR4b19zb2ZrVndDS04zdmRWQUFCajVuUmxkcnJBdGplbk1PZFBYYkJ6eHNoQmw3d2FUMzloeWdQa0NCZXlsNU1DOFkzTldUMUVGOG9ISUJHNEdZMy1sY2hLT2RNUVlYQ0hhekNPNHg5UTJpTnlpWjMwU01DVUxxcWVkYUVMT09LdTRPUEprMUxWbjFuT2czdVRTUXEzd0g0LnhpYmk3T0R5b1lJVDZUM1ouY3lRY3F4d3ZsOGFZREVCVHNpRTl4ZkpFUTlVbHplQl9qVC10Xy1fZ29LeVdmZzRLb1VvWjlRanIwVnUyeGlseHlPMzJkTHdEQ0huU21WckZSTXBPM3pMQ0MyQk54blZ2Q3VWZGNMSjJ2LTRjUnUzTmI0Zjg0NEdnNnJYWEFFTS5mTzhDazFIUVE2YlA0RlVFeTBPRFFRIn0",
+        "signature": "-Zie3HzFWvo67shAN4c4Oy-HJMCuQp6xXfNN_zxa3QE",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "DECRYPTION_FAILED",
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "rest-jwe-header-tampered",
+      "title": "REST: protected header를 바꾸면 인증 태그가 맞지 않아 복호화에 실패한다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImJldGEifQ.I-70e_m-naB6WypuED5SijsChlrT5W9MocYnFdLDm7iFkdIfII2ZdRvy7wGtlzOx0vi1s7XBRfhPI4AGx_3fF39r7lAUxmSUAAEoUgLzgydBLfqHq8HIyTl-hIwTygGXOksRon5Venpor9-ARA8GK-F9vXMqRY2j4pFrwm-vJeyDMS6MoCvj188a-71AgQ9Om1oPL-XDWJVs_SVBTBcyQu6HK45ptd9COTch9vlfuRbxEoYeLZSptZ8GJo1u0iERDpMGiWkGRsFjXoJs-PWDFxnYXV4HJ_j6lyiBFDiPyUJGG--BrWki6Rqh5-gCBg96zTh1gou4oiPotSXbdRc4PhXTZECNnzCjZWBNqFm-kbSJ5HdASAOgwQgiPRMUTBAiyfR85ceb3Sn_fO656nh-7LqpFpj-l0yYUbJEzaZor7Qq1GT2EqPmpycVFZ8PF6HsEnizxEveWnIu3OuXeR_USPenx590a2xTf8lhDroaO_z8VO_npTlj6GuCBIRYU2W-.bTmC-UQA207dmTxe.nGU8V7qPDSYBYs0V_Hqm7X2GstpAYwrgn4afJBrp9cxhCzCNFvEFFoCHog7dZGaKM-uIS72rHjPygo4M5j8jI-qhd6tXmPSkpz2234iIGTWPWVOhwWZ3aNVEDR5NIp8.OnU_SIbZQwZPOpsZJ3WyZg"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "DECRYPTION_FAILED"
+          }
+        ],
+        "internalReason": "DECRYPTION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-jwe-content-not-json",
+      "title": "서명한 파일: 복호화한 평문이 JSON이 아니면 VALIDATION_FAILED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5EaXpQMGdmTnFWLVhBUU5ncmdEdjZoSWF3cGhWMzZ4cUNaNmh4QndSWGlhQVNMLUxlaWZZbWItQm5VX2djeFNFSEQzWFVzNXVFRzJnNDZyZ3A2SDNBb0pxeHBVYUNfZHhXVGV4dTFnMlRUTXc5T3VlVjIxSHVCZXNkclBwMFZmTWFfME96bXZCRFh2U1cyOGdVME9FMzlBMWlacWdqQi13bkpMRWJ5S29nc3BuSjdNZEo5bERvLUUwSUlNcFhaaXhQUlV0YzhCeVlkRm1FVlp5RExiR2Z0bE40c2FQQ0tXZVJQUUZ2MDI5X3FjRXE5OFRUN0t3Sm1VTkJWYVZfZTRxLTBWckthSmJJN0RIaWtpLTNpZW5Zdm1Uc0lYSm5tVmZIZUhVbmczbWp6UDFBNTlaNHc4T2FMamJ2SHdFM1BjajBtTlZ0ZXdqSzNYcF9JU21ha242TS1nRjNDd2VnazBOdGJUcXNERFViWTA2Sk5kS3AyZTdsd2ZrTmFsR3AwWnB4aHUzS2RaRDN0Y3pFaXNQTy1NVUVkaUw4ZHRKLXBEaXJwNWNGZmRwNDVzZnBiN3VPWE1RUDVyVVIta0xoS2Z6dHczczlfZFZJakxSOHFsUTdMSEdWZE9KWDg4VkJONkQ4cmwxZE5CU0Q5SEx6bzY4OG5PaEFzWDBuTVpCZVVucC5WRVgwNVh4X1FCbFZhbnI2LlJrdWVjdC1ybjNmcTl2czgtbmxtcUEuT1JXVEdqZUNEOFk2Wl9ERURoOTlMZyJ9\",\"signature\":\"qjPUaFS0E_f-AmlMxSMtGlJbBj8E4cQD0Gf7V7q6pWQ\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5EaXpQMGdmTnFWLVhBUU5ncmdEdjZoSWF3cGhWMzZ4cUNaNmh4QndSWGlhQVNMLUxlaWZZbWItQm5VX2djeFNFSEQzWFVzNXVFRzJnNDZyZ3A2SDNBb0pxeHBVYUNfZHhXVGV4dTFnMlRUTXc5T3VlVjIxSHVCZXNkclBwMFZmTWFfME96bXZCRFh2U1cyOGdVME9FMzlBMWlacWdqQi13bkpMRWJ5S29nc3BuSjdNZEo5bERvLUUwSUlNcFhaaXhQUlV0YzhCeVlkRm1FVlp5RExiR2Z0bE40c2FQQ0tXZVJQUUZ2MDI5X3FjRXE5OFRUN0t3Sm1VTkJWYVZfZTRxLTBWckthSmJJN0RIaWtpLTNpZW5Zdm1Uc0lYSm5tVmZIZUhVbmczbWp6UDFBNTlaNHc4T2FMamJ2SHdFM1BjajBtTlZ0ZXdqSzNYcF9JU21ha242TS1nRjNDd2VnazBOdGJUcXNERFViWTA2Sk5kS3AyZTdsd2ZrTmFsR3AwWnB4aHUzS2RaRDN0Y3pFaXNQTy1NVUVkaUw4ZHRKLXBEaXJwNWNGZmRwNDVzZnBiN3VPWE1RUDVyVVIta0xoS2Z6dHczczlfZFZJakxSOHFsUTdMSEdWZE9KWDg4VkJONkQ4cmwxZE5CU0Q5SEx6bzY4OG5PaEFzWDBuTVpCZVVucC5WRVgwNVh4X1FCbFZhbnI2LlJrdWVjdC1ybjNmcTl2czgtbmxtcUEuT1JXVEdqZUNEOFk2Wl9ERURoOTlMZyJ9",
+        "signature": "qjPUaFS0E_f-AmlMxSMtGlJbBj8E4cQD0Gf7V7q6pWQ",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "VALIDATION_FAILED",
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "rest-jwe-content-not-json",
+      "title": "REST: 복호화한 평문이 JSON이 아니면 VALIDATION_FAILED다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImFscGhhIn0.O1RBp6CFXd1nyoYK2nuOeLBAxzl-LX19ROD7558qqCF3G20ovuJlU-r2QqIdaKee-zacWdF26Vz5Z0XlRXbQHKY-CN_v-9q-nX5zsdTPMjD0wP66pzrtgAXjQ9QqkWLkSnMydzDLZFzSlrwtQyYhy0yGkYeDmRE0mjlxSnmmOrbTGCIosvliAFwOT0-ZnEx0fcwtVhWx73zrfozlRxKzwYAVE5aR3EaGl5NQuNuWsya-2z3biJk35jzedvlU4opEIlQ9z6yksgSRNFYKJaawn4ZNJvNeMMxs-bWgOyx7aA6Uz649aylrtnirCRrY3dMjEAp5VVetm1anvKUEuvgpXqajxdz7ow58Ap5esYbGUFrCMKwAIozWs3soXINxUYkR8WFZMj_S6okiCBdlRfQkm90GORW2M0W-aOVhE1rtRQqy3DK_WOup5tLv7tjDM4INRC2W63Noj3-QoTS2LQwCp0dkHrgU2l2-jNF2e__lOEHWV9YW_a1-ytUeysDGyu3S.tTB8SPy-InrnGH5_.Fw5vnWuYX4oxNRkCho9IpQ.s_m7D9AYChwH5Mfo4cOfbQ"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "INVALID_FORMAT"
+          }
+        ],
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-jwe-content-unknown-field",
+      "title": "서명한 파일: 복호화한 평문에 subject·text·html 밖의 필드가 있으면 VALIDATION_FAILED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5XT0xxWVdaM3ZxZ2hjOHkwdWFwcVZ4SjZEWF83Ymt2cmM0NnUxYWgtdlVkUnZTNGpOWWpzQnNyRXRfaUY5RVJCZ2h0TFUzRG1TdVpzdEFKSEladWZFR00weUdTdThVZUdENUM3MV9icUZXelJoSE90VFQ3MXJkeE1zUDNESzB2VFJqb0s3SHVWWlk2ajlZX3doUlNJMFRhV2dobExodGoxY2F0UUN3dDRBMk5RRThaNmtBSExmMzJ4djNGbW83aGhMS0RPSUlKWVlEUmJOTmhaeGdoNHZLVDRHS1dLWWlmeVNGRzdIU3drMXVBYzcyYmFGUTAzVExDcEtsX25pbXJObUJSMmVDTGVweDdNMDktUWQ5c0t5SlZrYVFWSDBKZWRhby04U2lrcGEyZ1BPX1o4UlpsTGJzb2tRVmxkOC1wSkxNc2xkUE9CSmRCbU9LSGFyaE1Qel85ZnM5MkZPS3ExSm1PSjJ1eE81QzRyYnJmblJZcWJMU3cweXBBa2dCTnJGQkRBY0dEQlFiN2hfWklvdV9Tb0x6a0JncnZKTFQyR3BzTlJEX3VGTlMzZVJvaHBGd25XY1NYV1d4R21FUGxuaTlvVVIzVUhhd0lYN2lobklEeDZEeXE3UDl6SEhsVFNma2RFM01JMzJnYWQyWHhDNTh0NlJrM0M0Z1Q1RU5FSi5JS1NiMU90NDZOQlRDbzhyLlEtZ2VYaVNLQ3VQYV9Jek5LNWk1dFdhby1Nem1CaURpM3JUcFh3Zm9vRkZ2dUNZc1VrbWpfS1R0dzNxUnRGaUtnX1haOXpLV3FyYkFHanFvWmVzcnN2SzVzZFdreWZockc4bjZ4ZWFBUnF0Wkh6N3NFc1dHcmhtR0Y5ckVvd0xxTzUzREU2dmhwNnRORG91QldXcGZSNmMuRWNHTTluVERfT2QtcHk0ejUtdDhMQSJ9\",\"signature\":\"NezZ1BcwNyTpqaqcZZlm0dFIZBC6Qyhw2LsZQp_EtJI\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5XT0xxWVdaM3ZxZ2hjOHkwdWFwcVZ4SjZEWF83Ymt2cmM0NnUxYWgtdlVkUnZTNGpOWWpzQnNyRXRfaUY5RVJCZ2h0TFUzRG1TdVpzdEFKSEladWZFR00weUdTdThVZUdENUM3MV9icUZXelJoSE90VFQ3MXJkeE1zUDNESzB2VFJqb0s3SHVWWlk2ajlZX3doUlNJMFRhV2dobExodGoxY2F0UUN3dDRBMk5RRThaNmtBSExmMzJ4djNGbW83aGhMS0RPSUlKWVlEUmJOTmhaeGdoNHZLVDRHS1dLWWlmeVNGRzdIU3drMXVBYzcyYmFGUTAzVExDcEtsX25pbXJObUJSMmVDTGVweDdNMDktUWQ5c0t5SlZrYVFWSDBKZWRhby04U2lrcGEyZ1BPX1o4UlpsTGJzb2tRVmxkOC1wSkxNc2xkUE9CSmRCbU9LSGFyaE1Qel85ZnM5MkZPS3ExSm1PSjJ1eE81QzRyYnJmblJZcWJMU3cweXBBa2dCTnJGQkRBY0dEQlFiN2hfWklvdV9Tb0x6a0JncnZKTFQyR3BzTlJEX3VGTlMzZVJvaHBGd25XY1NYV1d4R21FUGxuaTlvVVIzVUhhd0lYN2lobklEeDZEeXE3UDl6SEhsVFNma2RFM01JMzJnYWQyWHhDNTh0NlJrM0M0Z1Q1RU5FSi5JS1NiMU90NDZOQlRDbzhyLlEtZ2VYaVNLQ3VQYV9Jek5LNWk1dFdhby1Nem1CaURpM3JUcFh3Zm9vRkZ2dUNZc1VrbWpfS1R0dzNxUnRGaUtnX1haOXpLV3FyYkFHanFvWmVzcnN2SzVzZFdreWZockc4bjZ4ZWFBUnF0Wkh6N3NFc1dHcmhtR0Y5ckVvd0xxTzUzREU2dmhwNnRORG91QldXcGZSNmMuRWNHTTluVERfT2QtcHk0ejUtdDhMQSJ9",
+        "signature": "NezZ1BcwNyTpqaqcZZlm0dFIZBC6Qyhw2LsZQp_EtJI",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "VALIDATION_FAILED",
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "rest-jwe-content-unknown-field",
+      "title": "REST: 복호화한 평문에 subject·text·html 밖의 필드가 있으면 VALIDATION_FAILED다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImFscGhhIn0.OzvGxyS-gY4nEaW79_fpWoUtWSnc6j84sJwkQK5Syu2y34R2ch8OmRPsKCL-AwUN-iuLrnUJaTT8011koNhAy4y-y2pxeNIQA5GnOKAPoLLeRx9po_zZObnZmA2WVp_z3qO5yFQotqs61pZdCeXfON6T3MG1LKKqeP8Qk78FyE6Gdrf34szgGvty1hvsQfommwRahphMUlEj5kRiNuOWeiccUExSPz1oPwqNVG-SuBOfh4nwtf7rW-Ma5He2v8IGwgwAp3Hn5KRmn8wkqdT-FzDKwz72CGbddOmrURj9LEpGn5u2iFIGPyu6FKhdFuHtGdDhF_HskG5GfXgyob3_CgP3lDauUFsIacDybVlb4D186XqLU4akpjIF6cb_FbfQRPA0je-KR-gIf9u2WzuGcZGuD2QdtZsDk0HAi6RaLWIMxv4B49yHPq0_oxsmVTFoJHTustgkUS2ZqoNfk_b0gbmIWi4Y8n_CP7LwgFiZIXjiwFkNca14WygS9x8SRiOE.YzSMK9KhSVDFzdSM.ZU4XEIN1uz2Dj_l7z71kD6Aq6WAfdzcItbMLNgTNYRmAG7Go8wmOZNIA_g0--6MPBo9VCUVvpvTrkL6MqAVQqZ_-xf39TPntdn8Cetmj60Ac9wFkXHZj5QqohsSmavRfGoVJ-ktyc9IcgLbIckXoJDI.AfTXUaqLbW7_GPHgy7juyA"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "UNKNOWN_FIELD"
+          }
+        ],
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-jwe-content-subject-line-break",
+      "title": "서명한 파일: 복호화한 제목에 줄바꿈이 있으면 VALIDATION_FAILED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5QalJTMXB5VEJoQi13MzQyaXZRYmJWdE5rVnN0VG1ZV2NCNDNOcGtyVnFwSU1LXzR6c0w5X1VaY0s0VVN1OEJrTWtjcGJyZ3laVnNsdmNUMHFHX05wQmQtSUp1MHM5eGloNWxQY1FUNFBrNy1xYmxHUUNuN3lXZU1uNFB4M2VXVlV1QWl4YldmOWMzY3NMMy1iazdic2R1UG0xa3FfRWRKYWJISExYZXlXTk1vQ1h1ZTh4dGp3NVZ0Q3BlQnhCSVV1Q0dzZW10ODJTTndCRm93TVJZcnl2RzVJOEdlZGxqd1lGNENLTVBRRTFqYmJsb2IyM2RtcE5teGpuTk5CblhfWXptWHotNWVWOHVvaWhBRmdJN1hvckg4NU42bTg3UzIzV0hid3NMN3lTX21leDRHek1tNHdISGRJaE1FM1hJUWNkRlRaTWhQVFpwZlZFNTVWbG9hRjJGYXdZcHRiUHB0MC1yVklaalBiNUZCSVY4M3hnbWxkT3BMMUZlc19iLTRPeFNIdHF5OHJCM0hxNUVWNjdldXJDRTdYNlY1d2R0WGI3a3BUWF9xR1U0clppcUxJUnpPcHJRc1Q0X0lFSFJXaUloS3U3VXhZQzg5ZWwyY2JXcElNLVFSek9qNDVGbm12YzlsQ1FaUzdKTWQybmhCcVdHXzhTdUdrc3Q0Ujlfby5ZMGJpbHc1Q2hoeXRpdjgxLm9vU3N5RGlxcnpRQmVXdHZlcTIyNkJ0aTJJcTM1cnM5ZENLWmlKUEM3bEpidjZ5dlZVMFVWNXJ1SXNvS2dOVkZVWkczX2ZBUkR5R3BxSVpzdmtsM1MwZEwtVU9LNVFCSDRULTcuYVg2eDNUb1N5bUVQWU1DVlgydV9nUSJ9\",\"signature\":\"-DOxbipiDMvXgjvZMXWvtQnGUUVO48s4q1nW9Ooqsuc\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5QalJTMXB5VEJoQi13MzQyaXZRYmJWdE5rVnN0VG1ZV2NCNDNOcGtyVnFwSU1LXzR6c0w5X1VaY0s0VVN1OEJrTWtjcGJyZ3laVnNsdmNUMHFHX05wQmQtSUp1MHM5eGloNWxQY1FUNFBrNy1xYmxHUUNuN3lXZU1uNFB4M2VXVlV1QWl4YldmOWMzY3NMMy1iazdic2R1UG0xa3FfRWRKYWJISExYZXlXTk1vQ1h1ZTh4dGp3NVZ0Q3BlQnhCSVV1Q0dzZW10ODJTTndCRm93TVJZcnl2RzVJOEdlZGxqd1lGNENLTVBRRTFqYmJsb2IyM2RtcE5teGpuTk5CblhfWXptWHotNWVWOHVvaWhBRmdJN1hvckg4NU42bTg3UzIzV0hid3NMN3lTX21leDRHek1tNHdISGRJaE1FM1hJUWNkRlRaTWhQVFpwZlZFNTVWbG9hRjJGYXdZcHRiUHB0MC1yVklaalBiNUZCSVY4M3hnbWxkT3BMMUZlc19iLTRPeFNIdHF5OHJCM0hxNUVWNjdldXJDRTdYNlY1d2R0WGI3a3BUWF9xR1U0clppcUxJUnpPcHJRc1Q0X0lFSFJXaUloS3U3VXhZQzg5ZWwyY2JXcElNLVFSek9qNDVGbm12YzlsQ1FaUzdKTWQybmhCcVdHXzhTdUdrc3Q0Ujlfby5ZMGJpbHc1Q2hoeXRpdjgxLm9vU3N5RGlxcnpRQmVXdHZlcTIyNkJ0aTJJcTM1cnM5ZENLWmlKUEM3bEpidjZ5dlZVMFVWNXJ1SXNvS2dOVkZVWkczX2ZBUkR5R3BxSVpzdmtsM1MwZEwtVU9LNVFCSDRULTcuYVg2eDNUb1N5bUVQWU1DVlgydV9nUSJ9",
+        "signature": "-DOxbipiDMvXgjvZMXWvtQnGUUVO48s4q1nW9Ooqsuc",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "VALIDATION_FAILED",
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "rest-jwe-content-subject-line-break",
+      "title": "REST: 복호화한 제목에 줄바꿈이 있으면 VALIDATION_FAILED다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImFscGhhIn0.VkplYM4UB8-lOOteYSlgqX0s2EbzqPy2PY9kOHf0kv36f7ufHId0I4-Car7z1TrRluaNuh3YhUXe72pg8xhHGaAFge67AqlqQvZkNEljlRV0C35bIjDe9gi6u8-I9ZYWTEB6KAwW6GacvW9yf7W2QGeKk3ona2uqsxTP3t1UeyYsy2U69D_9-TcRBBGYkFddDqq7SkPG3Nk0TGj0hccLt2ae8QtVagrIMQCsiH14Y7xQqyb1rSkajRqXKBGPmTTXldjtg_VatLXkbYC7FgaMMSeKoTKBB4_TFJ3zG3RJTU7kpYYonJu52h_FxhNnEcO9og0GQfoXu1U43UCi86l_qRJtp9KD06VtaYArBCqfhTH8J1DFSuzPXY4nwoCoUhMtGiyTcABQ8Qr7Yyn0PRVTDD7Xe4FTS_ld4bANmMGXS9o07ipCN_aSGvxprbqVb3BJ4jlbp2rFdYAaydvpNAuYGcPuEGwVefVVxre47HbYZRYWsapXArpsqIWwFwChKGr8.3cXUmSuvFRPVZCio.QrpITh4XdwjS03xG_HhrIozK4FqLqqfIcTZzSO51nNtZo9IrL7A8Npby6eFq6o3sq3OgAyRKGENAu2blT7fa_DMc99EGt5fJj4_H.d6sG-oQtv7aAe34SB4McdA"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "CONTROL_CHARACTER"
+          }
+        ],
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "file-jws-jwe-content-attachments",
+      "title": "서명한 파일: 복호화한 평문에 attachments가 있으면 ATTACHMENTS_NOT_SUPPORTED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5SZk40NmQ3WEE4WklycEtCdXk0QXdvMVpfVFFueThhMGF1dFpTOHNwQUM5NXZvbGVXUlJndG13NnFDeXVwZlUxazcwZDkxVmxkNF9jMkFZY3BuRWJncmxRT0JHMWhTZERzZFpUNkR2MU1mdzdjbnBTYnJlaFE4QVVJZzR6ZGRYVzRpbUdHQ3VNNEg0eE12MkhWa3ZPb0htbEF5bGlybnlzQUh4RVprbER1cVdoems2TkhwUzZqODI0T3NNZmZpT21RZ2E0dmcxNHVsRHhNbUZvMnlqOEVFOEdST19HdmJxaXBEd1VEUTBRbGgtZHNTVGFwZURlb2ZQRFhmNTFzU0l5bXA0OWpwTEk5NFJ6cS1uT21yZlFnNko4VHVLNm5NQV9DMGlKaTJCX2xMWk90WTJVb01yTkZnb3FxdlVRZFd1STVTNjlkazdsQWdMU2ZGdWpFVVM0V2hyYXpUclA1a1pRSzBmZlAya2ZXYi1kbGlzdFNENUtCUU1rSHVsUnV2bk4yMzdkdF9SeUhoN0hPU0hqN01jY25kdk9nM2VDUGx3eU8tOGtJNlJCcU96aWFjR216T29hR0JlLWxBajlOSFJBOGhBU2pMTEo1WG56eXNLWmJmcEJHd240eWlMbVdTMnJsNTJiNUFqOEdHOXR5U0t2SDV4LXRkSzhvU1hxV3R5ci42ZG9UaUFpbTFOVTh5X3F0LlZxZGdYR19JMmlFU2FqbVp3Zk5KREIyLU1xQ2FQRTBwQkZXYUQ5Nmx0SEpfNUJaTmMwOWxleHloNEh2WFFZalJwV3A5RjJpdmRtZzhUUkhWaFJ5MFdNdDI1akhTQkJnQnJqMDlnd3hud3RKV09PbFI0OGxBRWJvc1ZOV3g4X1RGakJER2N6VHdJbUVGVUNIMFpwenZPZy41Z3NEcHVGYi1IM21wU1Znd0luOE9RIn0\",\"signature\":\"71vsMtUbuGzdI3GgGZXr4iqNEYE_m5aH8Q47nyn7XRw\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5SZk40NmQ3WEE4WklycEtCdXk0QXdvMVpfVFFueThhMGF1dFpTOHNwQUM5NXZvbGVXUlJndG13NnFDeXVwZlUxazcwZDkxVmxkNF9jMkFZY3BuRWJncmxRT0JHMWhTZERzZFpUNkR2MU1mdzdjbnBTYnJlaFE4QVVJZzR6ZGRYVzRpbUdHQ3VNNEg0eE12MkhWa3ZPb0htbEF5bGlybnlzQUh4RVprbER1cVdoems2TkhwUzZqODI0T3NNZmZpT21RZ2E0dmcxNHVsRHhNbUZvMnlqOEVFOEdST19HdmJxaXBEd1VEUTBRbGgtZHNTVGFwZURlb2ZQRFhmNTFzU0l5bXA0OWpwTEk5NFJ6cS1uT21yZlFnNko4VHVLNm5NQV9DMGlKaTJCX2xMWk90WTJVb01yTkZnb3FxdlVRZFd1STVTNjlkazdsQWdMU2ZGdWpFVVM0V2hyYXpUclA1a1pRSzBmZlAya2ZXYi1kbGlzdFNENUtCUU1rSHVsUnV2bk4yMzdkdF9SeUhoN0hPU0hqN01jY25kdk9nM2VDUGx3eU8tOGtJNlJCcU96aWFjR216T29hR0JlLWxBajlOSFJBOGhBU2pMTEo1WG56eXNLWmJmcEJHd240eWlMbVdTMnJsNTJiNUFqOEdHOXR5U0t2SDV4LXRkSzhvU1hxV3R5ci42ZG9UaUFpbTFOVTh5X3F0LlZxZGdYR19JMmlFU2FqbVp3Zk5KREIyLU1xQ2FQRTBwQkZXYUQ5Nmx0SEpfNUJaTmMwOWxleHloNEh2WFFZalJwV3A5RjJpdmRtZzhUUkhWaFJ5MFdNdDI1akhTQkJnQnJqMDlnd3hud3RKV09PbFI0OGxBRWJvc1ZOV3g4X1RGakJER2N6VHdJbUVGVUNIMFpwenZPZy41Z3NEcHVGYi1IM21wU1Znd0luOE9RIn0",
+        "signature": "71vsMtUbuGzdI3GgGZXr4iqNEYE_m5aH8Q47nyn7XRw",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "ATTACHMENTS_NOT_SUPPORTED",
+        "internalReason": "ATTACHMENTS_NOT_SUPPORTED"
+      }
+    },
+    {
+      "id": "rest-jwe-content-attachments",
+      "title": "REST: 복호화한 평문에 attachments가 있으면 ATTACHMENTS_NOT_SUPPORTED다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImFscGhhIn0.YdeIF9C4efflZwr0zGY4rPlpFOYfCyH9CydJWIFMrlAtUy2SJk02HXiavcKD4jSAajAcrsPzU6lj1ZqXqvzAkcl3Zk1cSAdmn2q6MQwqr4KVWnnQU-um3GJsM28vLbJc8X0ML_D8Nd_5Ze9MqyYjjzJZWx_9G8M_unAzUTozTAtKXNUmW9Hv6tzhSxPCOAIuNx2Cstql1S559BaY3q2RYla9rTFCFyw6qLQFi3K2auv3PGKCTtJs3x4Cvzm7AQ4nxN591FsTBkzxOUuCCQS03n-IS8sgAOmaiDFSSu_f7x3ehv-3x9F8hh3SO3O6uqwxb8w1c3enuzc75lBdpKEe2axJ4SsPW8e_Yhjh-_Qu0lmWSSdJw3sS_iY47M50mu7srLuee9F1D5ensT6iJvdvHDdyZQzdqRkTLDrJkoJNy9-G-mdiJhU5nRKaE2KCX9Z1QVzy1Om3YUpxn79iO8MSyw6j3dm-DMNuZlMZBmFGUigzgQ0loAOWkSNHuroSqMwU.tFVUz6MYhU4N1T-3.UP3i_gMFseJ3Sm3IWIuF4Xj7pDDRVFPLlIZSRtPgrRB5OGaoNXJ5NiXpUYQcDkiQx0nvWIKm_wb1cf7mEI-Y1O6VEIWGFA63p4ZxHXY1J9DuhO9FY5SvyF-Z8_YmRQBGjPlTyZdpBTPrZUU-am2SrQ.eTYwYjfOR3aGWuXH5JVS7Q"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "ATTACHMENTS_NOT_SUPPORTED"
+          }
+        ],
+        "internalReason": "ATTACHMENTS_NOT_SUPPORTED"
+      }
+    },
+    {
+      "id": "file-jws-jwe-content-body-missing",
+      "title": "서명한 파일: 복호화한 평문에 text와 html이 모두 없으면 VALIDATION_FAILED다",
+      "channel": "file",
+      "callerId": "alpha",
+      "signatureMode": "required",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"protected\":\"eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0\",\"payload\":\"eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5mZC1VSm44TDlwU1g4QTBPc2VOZ2p3WFRsekhFbE91VC1HRG1WYnJFdHNWUVhMV2NtUXFDOGU3MXMyUVJ5c0lUQmhTY1lMQkRxTl9qVFI2Q2xDY2FCQ3M1dWFOcnVrN09HXzl5cWJUdGk0eTRHWnNXZm13LTdnUFU0a0t1VW9fMWZrSEZWMm93M2hHeXVBOXdaMXRXNVhwMjJ4M0piejFOWm5zMzNWZk95Z3FHMTNzbDVzY05yS1NvdlAwZkZyU0dzbklTTW85MHZRbEhZdS10NFFzTUN1alNIVmFMZXo2T0VpXzlWYjZMaXRKVmVKRDJwNjFaenVSOFVvUTJyX3U4LVZMWUZNUE9BVmk0VXdPQUFscXEtcGV3MlU4TGNyeXdlWEZ0UVhSNVZibDdxTGh4QmpwRk1TakhnakdYaHpoUnJvYUVZd0szNVk2cU5IV1h6R2NWN2c5VEUwcUVuTmEtS3hMaGQ2ZC1HSnI1ODlPbzQ1bDA1dHNEbU9nX181SXVBWVU5OFlycnZLcFhUSFBTSjJqM1RESWcweDNmelNZNDA0V1ZTVWdiMUYzeTFSanIzQ0d5MjBRRmY3WUJsZzhhQnZXVmwzMEwxOGJZX3gtYXFzR2RKM1I0MUdTRzlqSXJNTTZ6LTI3RTRrdnRXNzZFNzJPX1RPNmRVWTVqcVhfXy5selk1X1FnUWFRNE8yZUktLnVSb2N1dXNzdFQ0UjV3YTZOQ2FjSzlGNkRfa0o5ZzNtOExic0JvRUxTTm9JeWJwZVNfSDJLY3pGdnd0TmNTNWRkcndhQ2hNLkJoZy1rVDJfQThjUUYzTXpSS0tScXcifQ\",\"signature\":\"ctJD93ZBTOuFqOyO2u5cC7jc2kRJzrIMLPZpRDhXV9M\"}"
+      },
+      "jws": {
+        "signingInput": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImFscGhhLTEiLCJjYWxsZXIiOiJhbHBoYSIsImlhdCI6MTc5NTUyMTYwMH0.eyJ2ZXJzaW9uIjoxLCJpZGVtcG90ZW5jeUtleSI6Im91dGJveC0wMDAxIiwiZnJvbSI6InNlbmRlckBleGFtcGxlLmNvbSIsInRvIjpbInJlY2lwaWVudEBleGFtcGxlLmNvbSJdLCJjb250ZW50IjoiZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWEybGtJam9pWTI5dVptOXliV0Z1WTJVdE1pSXNJbU5oYkd4bGNpSTZJbUZzY0doaEluMC5mZC1VSm44TDlwU1g4QTBPc2VOZ2p3WFRsekhFbE91VC1HRG1WYnJFdHNWUVhMV2NtUXFDOGU3MXMyUVJ5c0lUQmhTY1lMQkRxTl9qVFI2Q2xDY2FCQ3M1dWFOcnVrN09HXzl5cWJUdGk0eTRHWnNXZm13LTdnUFU0a0t1VW9fMWZrSEZWMm93M2hHeXVBOXdaMXRXNVhwMjJ4M0piejFOWm5zMzNWZk95Z3FHMTNzbDVzY05yS1NvdlAwZkZyU0dzbklTTW85MHZRbEhZdS10NFFzTUN1alNIVmFMZXo2T0VpXzlWYjZMaXRKVmVKRDJwNjFaenVSOFVvUTJyX3U4LVZMWUZNUE9BVmk0VXdPQUFscXEtcGV3MlU4TGNyeXdlWEZ0UVhSNVZibDdxTGh4QmpwRk1TakhnakdYaHpoUnJvYUVZd0szNVk2cU5IV1h6R2NWN2c5VEUwcUVuTmEtS3hMaGQ2ZC1HSnI1ODlPbzQ1bDA1dHNEbU9nX181SXVBWVU5OFlycnZLcFhUSFBTSjJqM1RESWcweDNmelNZNDA0V1ZTVWdiMUYzeTFSanIzQ0d5MjBRRmY3WUJsZzhhQnZXVmwzMEwxOGJZX3gtYXFzR2RKM1I0MUdTRzlqSXJNTTZ6LTI3RTRrdnRXNzZFNzJPX1RPNmRVWTVqcVhfXy5selk1X1FnUWFRNE8yZUktLnVSb2N1dXNzdFQ0UjV3YTZOQ2FjSzlGNkRfa0o5ZzNtOExic0JvRUxTTm9JeWJwZVNfSDJLY3pGdnd0TmNTNWRkcndhQ2hNLkJoZy1rVDJfQThjUUYzTXpSS0tScXcifQ",
+        "signature": "ctJD93ZBTOuFqOyO2u5cC7jc2kRJzrIMLPZpRDhXV9M",
+        "hmacKid": "alpha-1"
+      },
+      "expect": {
+        "accepted": false,
+        "reasonCode": "VALIDATION_FAILED",
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "rest-jwe-content-body-missing",
+      "title": "REST: 복호화한 평문에 text와 html이 모두 없으면 VALIDATION_FAILED다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImFscGhhIn0.A4b8O7ZIcRHgVIn8AtRhwr7Y3hOOKkfo9_g83eTmxFDbgQFkyWjxjS13v-DOGqG0kGHcuaXSDY0i4Kf2iwCl0j6rVhIU1zan-R_WQpZ5y3tju1umo_SmBF5TgttNK16UOXV8W5nG1J3zoT2NgR-gyd3o3R_ONnDpSkIr0LsdWW8s-Xz86emnJej-dVk3lPCViGQ50JzMMmJGn4Pgu9VSMXmhEP3VMXZeID-kPQtEYgpvyeRLYWeHsY61xg-_8o2x6pt3nN4ipuFIx2rrOGLmvE_lAkwc7pyjQ30xoeueoITfQvYxA3G4nyPmQ421pL0oouRtOVjXig8kAqvONyopezk9JcHzMPEiCqpJ-uZhvYFE-wVdXbK1ZA6a7u7MmS471iFwvp-RKiCRexiruJWi7PFWqivqTW28l5jXXKb8q_b57ssyuXWawA5IRavXuLonAzAMPX30a90NUWWgVC_XUaQ4tIUjKTbnnInaVsyQjxfZOuwjrT0OwiXFlyPzhenw.uSvEsslgH6eADUhp.FMKGgk934Y0TWN1VK6vj7RBTrH-TUa3wL_m60UcQ3rXoLEXlZk0QKbmvwGBJeLfg1jou_pw.4XU4t76ZaCHuT5gTIysmkg"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "REQUIRED"
+          }
+        ],
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "file-none-jwe-accepted",
+      "title": "서명을 쓰지 않는 호출처의 JWE 파일을 복호화해 수락한다",
+      "channel": "file",
+      "callerId": "gamma",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "fileText": "{\"version\":1,\"idempotencyKey\":\"outbox-0001\",\"from\":\"sender@example.com\",\"to\":[\"recipient@example.com\"],\"content\":\"eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImdhbW1hIn0.B5iN9T3zGdZpM-raBp5gJbmbpchkQX0BjAVkBpMczuBK1vR0uBj14IfDsiOfzymd01JSCeKgHcew4QfX8ZGX0sxkyLmiZtqnSLOvAJRoHgFGbPUSR_OC1t5bUdiZljmbKqL18hVNO9DZA_bcaqXGGvIN_WDQUXjSXZphSqAfADvgBdwCix9i4TFZC_lhwnpzRWTMRDKhz7WrY3prwYBPEjwwDZrrwtu7krTXGFH9pMWVAIQN6aWkhPMBWW8gNdru1L7VtKT7KX8M1xIaEwOar9dh4a7xahcMpQV534lCDd8Zk8cnPaJkBVb45uUcj55KtR3rj6WS-guXXcfontOOuQStkM_KLwwTvj-P27UK3oeY_dEYs4Su0xaySA0PzHeArWOObFx0YIacqvnBAUAbjLnm_dF0Er_Ps5oRIW-LawAXqcuYQqDhJ1MyFKki5mmbkWuwxCg-ET4IBNoKznx8J5svaD2k2reYkiS1IW4jfE1m2MQkEWBv0RcuXvEjvwuT.RnheGAadP7LTS9NW.MXLwgpvuDGUmf-2uD0ZPMXFtKBSEgpeWYBsoTk-qTlDtC0axO7-efVnkHWjcP8__yJG3eJopqansxMGncU-KK7y-v5wsKPurpj2gqI5YpTbv3BKfLW1WXkPooZYbrrs.t2Z_skADBo5V4IXvaD66zg\"}"
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": null
+        },
+        "signed": false,
+        "encrypted": true
+      }
+    },
+    {
+      "id": "rest-plain-accepted",
+      "title": "REST: 평문 본문을 수락한다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다."
+        }
+      },
+      "expect": {
+        "accepted": true,
+        "request": {
+          "from": "sender@example.com",
+          "replyTo": null,
+          "to": [
+            "recipient@example.com"
+          ],
+          "cc": [],
+          "bcc": [],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "html": null
+        },
+        "signed": false,
+        "encrypted": false
+      }
+    },
+    {
+      "id": "rest-plain-attachments",
+      "title": "REST: attachments 필드가 있으면 ATTACHMENTS_NOT_SUPPORTED다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "attachments": []
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/attachments",
+            "code": "ATTACHMENTS_NOT_SUPPORTED"
+          }
+        ],
+        "internalReason": "ATTACHMENTS_NOT_SUPPORTED"
+      }
+    },
+    {
+      "id": "rest-plain-file-only-field",
+      "title": "REST: 파일 채널 전용 필드(idempotencyKey)를 본문에 넣으면 정의되지 않은 필드라 VALIDATION_FAILED다(Key는 Idempotency-Key 헤더로 보낸다)",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "idempotencyKey": "outbox-0001",
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다."
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "",
+            "code": "UNKNOWN_FIELD"
+          }
+        ],
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "rest-content-not-compact",
+      "title": "REST: content가 JWE compact 형식(점으로 구분한 다섯 부분)이 아니면 VALIDATION_FAILED다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "content": "not-a-jwe"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "INVALID_FORMAT"
+          }
+        ],
+        "internalReason": "VALIDATION_FAILED"
+      }
+    },
+    {
+      "id": "rest-content-and-plain-conflict",
+      "title": "REST: content와 평문 필드(subject·text·html)를 함께 보내면 VALIDATION_FAILED다",
+      "channel": "rest",
+      "callerId": "alpha",
+      "signatureMode": "none",
+      "nowEpochSeconds": 1795521600,
+      "input": {
+        "body": {
+          "from": "sender@example.com",
+          "to": [
+            "recipient@example.com"
+          ],
+          "subject": "[적합성 벡터] 주문 접수 안내",
+          "text": "주문이 접수되었습니다.",
+          "content": "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIiwia2lkIjoiY29uZm9ybWFuY2UtMiIsImNhbGxlciI6ImFscGhhIn0.Q3QWrQf37HgJ-BqNWW9EcA_1KX2pAAML9NXy1mTcxTZgfEBUFhsY8xsOQ7suOnfpqEKcR5NYknuxKpVEtW57PqxqMitVOms4CeMGHpC3op2mTHidJeZlAZrNDkXBa3iUwXiL_7hgTwxo1JmCUxiOeBpCG127yZvcBoB-Pr-rVbVofpSaGuxOr10c9YbIE_H_P6JVBRNwyqTuhNuy6bNerg43Qg09Qu9ox1yLhME-nrDWX-DJqDYMdSzjIScdVhGKQRfjcB2tPeBcCBGxnpOJbS2sq8db1KlUOZ3dxpYSd-as_IZeH2JH95xqxO8fmYDuWvU0Xyaa7I9CBKDhko3N73Wnji8ofOWMDMjXQEdU6H1cXWMxLdboP1iGARLbt6JTBSMChKXYQpMWpRRr7ibvXFhHN42J7qgJ6OiEhYX4utrYeR3RPA4-30rklcqrhy0GAYlzAiwYi3db00uLhpe8DO6EsKhhz8G6kQbk1-CwXJ2G3-Gcmag4FwKUERZZatyn.3VaeOqG4uf5PCcqU.mDn4jvayk8qIU0UjIMal1-hamZBPYg3YWQmnsIkep0PyNqiUi_-gg2HEUaT-yGXoyesCnBlX8HO6LoGcG6nQYfraLeRuPpSvFbbSekSgk1uslr-YLgrBOUv4dg2vOBU.HhgOyjalU5_dmh02A3jIoA"
+        }
+      },
+      "expect": {
+        "accepted": false,
+        "errors": [
+          {
+            "pointer": "/content",
+            "code": "CONFLICTING_FIELDS"
+          }
+        ],
+        "internalReason": "VALIDATION_FAILED"
+      }
+    }
+  ]
+}
