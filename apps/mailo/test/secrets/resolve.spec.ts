@@ -503,31 +503,23 @@ describe("resolveSecrets: timeout (RQ-078, ADR-0016 결정 5)", () => {
   });
 
   it("timeout 뒤 어댑터가 늦게 거부해도 미처리 거부가 되지 않는다", async () => {
-    const unhandled: unknown[] = [];
-    const listener = (reason: unknown) => void unhandled.push(reason);
-    process.on("unhandledRejection", listener);
-    try {
-      const src = fakeSource({
-        resolve: (_ref, { signal }) =>
-          new Promise<string>((_resolve, reject) => {
-            setTimeout(() => reject(new FakeAdapterError("unavailable")), 250);
-            void signal;
-          }),
-      });
-      await failureOf(
-        run(
-          adapterEnv({
-            MAILO_SECRET_RESOLVE_TIMEOUT_MS: "100",
-            MAILO_OPS_TOKEN_REF: "fake://a",
-          }),
-          { "fake-adapter": { default: src } },
-        ),
-      );
-      await new Promise((r) => setTimeout(r, 400));
-      expect(unhandled).toEqual([]);
-    } finally {
-      process.off("unhandledRejection", listener);
-    }
+    // jest가 미처리 거부를 테스트 실패로 처리한다(테스트 안의 process 리스너로는 잡히지 않는다). 늦은 거부가 도착할 때까지 기다린다.
+    const src = fakeSource({
+      resolve: () =>
+        new Promise<string>((_resolve, reject) => {
+          setTimeout(() => reject(new FakeAdapterError("unavailable")), 250);
+        }),
+    });
+    await failureOf(
+      run(
+        adapterEnv({
+          MAILO_SECRET_RESOLVE_TIMEOUT_MS: "100",
+          MAILO_OPS_TOKEN_REF: "fake://a",
+        }),
+        { "fake-adapter": { default: src } },
+      ),
+    );
+    await new Promise((r) => setTimeout(r, 400));
   });
 
   it("timeout 안에 끝나면 타이머가 남지 않고 값을 돌려준다", async () => {
@@ -624,6 +616,24 @@ describe("resolveSecrets: 로그 (RQ-078, ADR-0016 결정 5)", () => {
 });
 
 describe("resolveSecrets: 어댑터 로드는 해석보다 먼저다 (RQ-077, ADR-0016 결정 3)", () => {
+  it("어댑터 import가 MAILO_SECRET_RESOLVE_TIMEOUT_MS 안에 끝나지 않으면 SecretAdapterLoadError(import-failed)로 실패한다", async () => {
+    const error = await failureOf(
+      resolveSecrets(
+        {
+          MAILO_SECRET_ADAPTERS: "slow-adapter",
+          MAILO_SECRET_RESOLVE_TIMEOUT_MS: "100",
+          MAILO_OPS_TOKEN_REF: `fake://${CANARY_REF}`,
+        },
+        { names: NAMES, importModule: () => new Promise(() => undefined) },
+      ),
+    );
+    expect(error).toBeInstanceOf(SecretAdapterLoadError);
+    expect(error.message).toBe(
+      "비밀값 어댑터 로드 실패: slow-adapter: import-failed",
+    );
+    expect(error.message).not.toContain(CANARY_REF);
+  });
+
   it("어댑터 로드에 실패하면 SecretAdapterLoadError만 던지고 해석 오류와 함께 보고하지 않는다", async () => {
     const error = await failureOf(
       resolveSecrets(

@@ -186,6 +186,64 @@ describe("어댑터 로더: 로드 실패 종류 (RQ-077)", () => {
   });
 });
 
+describe("어댑터 로더: import 제한 시간 (RQ-077·078, ADR-0016 결정 5)", () => {
+  /** 최상위 await가 끝나지 않는 어댑터 모듈을 흉내 낸다(import() 프라미스가 영원히 대기한다). */
+  const hanging = () => new Promise<unknown>(() => undefined);
+
+  it("import가 제한 시간 안에 끝나지 않으면 import-failed로 실패하고 라벨 외에 아무것도 싣지 않는다", async () => {
+    const started = Date.now();
+    const error = await loadSecretAdapters("slow-adapter", hanging, 100).catch(
+      (e: unknown) => e,
+    );
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(error).toBeInstanceOf(SecretAdapterLoadError);
+    expect((error as SecretAdapterLoadError).failures).toEqual([
+      { label: "slow-adapter", kind: "import-failed" },
+    ]);
+    expect((error as Error).message).toBe(
+      "비밀값 어댑터 로드 실패: slow-adapter: import-failed",
+    );
+  });
+
+  it("제한 시간 뒤에 import가 늦게 거부·성공해도 결과는 이미 확정이다", async () => {
+    const late = () =>
+      new Promise<unknown>((_resolve, reject) =>
+        setTimeout(() => reject(new Error("CANARY-LATE-IMPORT")), 250),
+      );
+    await expect(
+      loadSecretAdapters("late-adapter", late, 100),
+    ).rejects.toMatchObject({
+      failures: [{ label: "late-adapter", kind: "import-failed" }],
+    });
+    await new Promise((r) => setTimeout(r, 400));
+  });
+
+  it("제한 시간 안에 끝나는 import는 영향이 없다", async () => {
+    const source = fakeSource({ scheme: "ok" });
+    const result = await loadSecretAdapters(
+      "fast-adapter",
+      async () => ({ default: source }),
+      100,
+    );
+    expect(result.get("ok")).toBe(source);
+  });
+
+  it("지정자가 여럿이면 각각 제한 시간을 받고 실패를 모은다", async () => {
+    const importer = (specifier: string) =>
+      specifier === "ok-adapter"
+        ? Promise.resolve({ default: fakeSource({ scheme: "ok" }) })
+        : hanging();
+    await expect(
+      loadSecretAdapters("slow-one,ok-adapter,slow-two", importer, 100),
+    ).rejects.toMatchObject({
+      failures: [
+        { label: "slow-one", kind: "import-failed" },
+        { label: "slow-two", kind: "import-failed" },
+      ],
+    });
+  });
+});
+
 describe("어댑터 로더: 기본 importer (RQ-077)", () => {
   it("실제 import()로 없는 패키지를 찾으면 not-found다", async () => {
     await expect(

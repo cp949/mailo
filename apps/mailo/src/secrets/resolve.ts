@@ -95,8 +95,9 @@ async function callAdapter(
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      controller.abort();
+      // 확정을 먼저 한다. 어댑터의 abort 리스너가 던져도 timeout 판정이 항상 이긴다.
       reject(new TimeoutSignal());
+      controller.abort();
     }, timeoutMs);
   });
   const work = Promise.resolve().then(() =>
@@ -162,6 +163,7 @@ export async function resolveSecrets(
   const adapters = await loadSecretAdapters(
     nonEmpty(env, ADAPTERS_VARIABLE),
     options.importModule,
+    timeoutMs,
   );
 
   const failures: SecretFailure[] = [];

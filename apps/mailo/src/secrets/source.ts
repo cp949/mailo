@@ -9,7 +9,11 @@ export interface SecretSource {
    * `X_REF` 값 전체(`<scheme>://...`)를 받아 비밀값을 돌려준다.
    * `signal`이 abort되면 작업과 열어 둔 연결을 멈춘다. 오류는 `code`에 닫힌 코드(`SecretErrorCode`)를 실어 던진다.
    * 오류 메시지는 코어가 읽지 않고 버린다. 값과 참조의 비밀 부분은 어댑터의 로그에도 쓰지 않는다.
-   * 값을 돌려주거나 던진 뒤에는 어댑터가 연 연결·타이머를 닫는다. 마이그레이션 CLI는 해석 뒤 `process.exit` 없이 끝나므로 남은 핸들이 종료를 막는다.
+   * 값을 돌려주거나 던진 뒤에는 어댑터가 연 연결·타이머를 닫는다. 진입점은 마이그레이션 CLI가 성공하면 남은 핸들과 무관하게 종료하지만,
+   * 앱 프로세스(`main.ts`)에는 남은 핸들이 계속 붙어 있다.
+   * `signal`의 abort 리스너에서 예외를 던지지 않는다(Node는 리스너 예외를 비동기 uncaught exception으로 보고하고 코어는 잡지 못한다).
+   * 모듈 로드(최상위) 중에는 끝나지 않는 비동기 작업을 하지 않는다. 코어가 `import()`에 해석 제한 시간을 두지만, 시간이 지나면
+   * 그 어댑터는 `import-failed`로 실패하고 기동을 거부한다.
    */
   resolve(ref: string, options: { signal: AbortSignal }): Promise<string>;
 }
