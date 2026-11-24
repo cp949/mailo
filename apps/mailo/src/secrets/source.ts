@@ -9,6 +9,7 @@ export interface SecretSource {
    * `X_REF` 값 전체(`<scheme>://...`)를 받아 비밀값을 돌려준다.
    * `signal`이 abort되면 작업과 열어 둔 연결을 멈춘다. 오류는 `code`에 닫힌 코드(`SecretErrorCode`)를 실어 던진다.
    * 오류 메시지는 코어가 읽지 않고 버린다. 값과 참조의 비밀 부분은 어댑터의 로그에도 쓰지 않는다.
+   * 값을 돌려주거나 던진 뒤에는 어댑터가 연 연결·타이머를 닫는다. 마이그레이션 CLI는 해석 뒤 `process.exit` 없이 끝나므로 남은 핸들이 종료를 막는다.
    */
   resolve(ref: string, options: { signal: AbortSignal }): Promise<string>;
 }

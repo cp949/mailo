@@ -2528,11 +2528,12 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 - [x] 충돌 조합 셋(`env+ref`, `file+ref`, `env+file+ref`), 빈 값 취급, 형식 오류, `file` 예약, 해석값이 빈 문자열인 경우를 단위 테스트로 확인했다.
 - [x] 알 수 없는 `MAILO_*_REF`와 `_FILE`·`_REF` 끝 이름의 `unknown-name`을 단위 테스트로 확인했다. 범위 `database`는 이 검사를 하지 않는다.
 - [x] `secretVar`·`privateKeyVar`의 `_REF` 끝 이름 거부를 로더 단위 테스트로 확인했다.
-- [x] `X_REF` 없는 기존 구성(`.env.example` 기반, `_FILE` 구성)이 기존대로 읽힌다. (`.env.example`의 활성 줄에 `_REF`가 없고 해석 결과가 입력과 같다. `X`와 `X_FILE`이 함께 있을 때 `_FILE` 우선이 그대로다. 기존 단위·통합 테스트가 같은 소스에서 통과한다. 컨테이너 기동은 확인하지 않았다.)
+- [x] `X_REF` 없는 기존 구성(`.env.example` 기반, `_FILE` 구성)이 기존대로 기동한다. (프로세스 수준: 컴파일한 `main.js`가 평문 환경 변수 구성으로 기동하고 해석 로그를 남기지 않는다. `.env.example`의 활성 줄에 `_REF`가 없고 `X`와 `X_FILE`이 함께 있을 때 `_FILE` 우선이 그대로다. 컨테이너 기동은 확인하지 않았다.)
 
 **판정 근거:**
 
 - `secrets/resolve.spec.ts`: 충돌 조합 셋과 `X`가 빈 문자열인 경우(충돌 아님), 형식 오류, `file` 예약, 해석값 빈 문자열(`empty`), `unknown-name`(`rejectUnknown`, `_FILE`·`_REF` 끝 이름). `secrets/secret-names.spec.ts`: 허용 목록 기준 알 수 없는 `MAILO_*_REF`(오타, `MAILO_CLI_TOKEN_REF`)와 마이그레이션 CLI 범위의 무시, 로더 세 곳의 `_REF` 끝 `secretVar`·`privateKeyVar` 거부(변이 확인: 거부 조건을 지우면 세 테스트가 실패), `.env.example`의 활성 줄·주석 예시.
+- `e2e/secret-startup.integration-spec.ts`: 컴파일한 `main.js`를 평문 환경 변수 구성(`X_REF` 없음)으로 띄워 기동하고 `secrets_resolved`를 남기지 않는다.
 - 구현: `secrets/resolve.ts`, `config/secret-variables.ts`, `callers/registry.ts`, `envelope/key-file.ts`, `config/smtp-accounts.ts`, `secret-names.ts`.
 - 남은 미검증: 컨테이너(`read_only`·`cap_drop`)·compose 기동과 롤링 배포·롤백은 실행하지 않았다(L3 미실행). 실제 저장소 어댑터는 묶음 B 범위다.
 
@@ -2560,6 +2561,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 - `secrets/secret-names.spec.ts`: 고정 이름과 동적 이름(관리 토큰, SMTP 계정, 키 버전 `V1`·`V2`, 호출처 JWS, JWE 개인키, 분리된 DB 변수)을 해석한 복사본으로 `loadConfig`·`parseCallerRegistry`·`parseEnvelopeKeys`가 기존대로 값을 읽는다. 관리 토큰 이름 최대 길이(32자)가 로더와 허용 목록에서 같다. 범위 `database`는 두 변수만 해석한다. `secrets/resolve.spec.ts`: 입력 `env`·`process.env` 불변, 일부 실패 시 값 없음, 병렬 해석, 개행을 자르지 않음.
 - `e2e/secret-sources.integration-spec.ts`(실제 PostgreSQL, 로컬 `smtp-server`): `MAILO_DB_PASSWORD_REF`·`MAILO_DATABASE_URL_REF`로 받은 값으로 실제 DB에 접속하고 틀린 비밀번호는 `28P01`로 실패한다. `createApp`에 복사본을 넘겨 기동한 앱이 REF 개인키로 JWE를 풀고(REST), REF JWS 비밀로 서명한 파일을 수집하고(파일 채널, 다른 비밀의 서명은 거부), REF SMTP 비밀번호로 인증해 발송하고, REF 운영 토큰으로 `/ops/accounts`를 연다.
+- `e2e/secret-startup.integration-spec.ts`(컴파일한 진입점을 자식 프로세스로 실행, 가짜 어댑터를 컴파일 폴더의 `node_modules`에 설치, 전용 schema): `migrate-cli.js`가 `MAILO_DATABASE_URL_REF`로 접속해 마이그레이션을 적용하고, `main.js`가 DB URL·SMTP 비밀번호·DB 본문 키·지문 키·JWE 개인키·운영 토큰을 모두 `X_REF`로 받아 기동해 `/health/ready` 200과 `/ops/accounts` 200을 낸다(변이 확인: `main.ts`가 `loadConfig(env)`를 `loadConfig()`로, `createApp`에서 `env`를 빼면 이 테스트가 실패한다). 출력에 값 canary가 없다.
 - 구현: `secrets/`, `secret-names.ts`, `main.ts`, `db/migrate-cli.ts`.
 - 남은 미검증: 컨테이너(`read_only`·`cap_drop`)·compose 기동과 롤링 배포·롤백은 실행하지 않았다(L3 미실행). 실제 저장소 어댑터는 묶음 B 범위다.
 
@@ -2602,7 +2604,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 - [x] timeout과 `signal`을 무시하는 어댑터, 늦은 거부의 미처리 거부 없음, 닫힌 코드 통과와 그 밖 코드의 `adapter-error`를 단위 테스트로 확인했다.
 - [x] 가짜 어댑터가 반환한 값과 던진 오류 메시지의 canary 문자열이 오류 메시지, `startup_failed` 로그, `secrets_resolved` 로그, `process.env` 전체에 없다.
-- [x] 타임아웃 변수의 범위 밖 값을 `ConfigError`와 같은 방식으로 거부한다.
+- [x] 타임아웃 변수의 범위 밖 값을 변수 이름과 범위만 담은 고정 문구의 설정 오류(`SecretSettingsError`)로 거부한다.
 
 **판정 근거:**
 

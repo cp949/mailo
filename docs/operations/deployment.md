@@ -580,7 +580,7 @@ secrets:
   - `X_REF`의 scheme은 `^[a-z][a-z0-9+.-]*$`이고 `//` 뒤에 한 글자 이상이 있어야 한다. `file`은 예약어라 거부한다(파일은 `X_FILE`로만 지정).
 - `X_REF`를 쓸 수 있는 변수: `MAILO_DATABASE_URL`, `MAILO_DB_PASSWORD`, `MAILO_OPS_TOKEN`, `MAILO_OPS_ADMIN_TOKEN_<이름>`, `MAILO_SMTP_PASSWORD`, `MAILO_SMTP_SECRET_<이름>`, `MAILO_DB_ENCRYPTION_KEY_V<n>`, `MAILO_FINGERPRINT_KEY_V<n>`, `MAILO_JWS_SECRET_<이름>`, `MAILO_JWE_KEY_<이름>`. 참조 변수 이름은 뒤에 `_REF`를 붙인다(예: `MAILO_JWS_SECRET_BILLING_REF`). 설정 JSON은 읽지 않고 환경의 변수 이름을 이름 규칙으로 찾는다. `MAILO_CLI_TOKEN`은 지원하지 않는다(`MAILO_CLI_TOKEN_REF`는 알 수 없는 이름으로 거부된다).
   - 이름이 `MAILO_`로 시작하고 `_REF`로 끝나는데 위 목록에 없으면 `unknown-name`으로 기동을 거부한다(오타가 조용히 무시되어 `.env`의 평문 값으로 기동하는 일을 막는다).
-  - 설정 JSON(`callers.json`, 계정 파일, 개인키 목록 파일)의 `secretVar`·`privateKeyVar`는 `_REF`로 끝날 수 없다.
+  - 설정 JSON(`callers.json`, 계정 파일, 개인키 목록 파일)의 `secretVar`·`privateKeyVar`는 `_REF`로 끝날 수 없다. 이전 버전에서 `_REF`로 끝나는 변수 이름을 쓰던 배포는 이 버전에서 기동을 거부하므로 업그레이드 전에 이름을 바꾼다.
   - 환경에 있는 `_REF`는 설정 JSON이 가리키지 않아도 해석한다. 쓰지 않는 `_REF`를 남기지 않는다. 쓰이지 않는 비밀의 읽기 권한과 저장소 호출이 낭비된다.
 - 해석은 프로세스 시작 때 `loadConfig` 앞에서 한 번이다. 해석값은 `process.env`가 아니라 앱이 쓰는 환경 복사본에 들어간다. 마이그레이션 CLI(`db/migrate-cli.ts`)는 별도 프로세스라 `MAILO_DATABASE_URL`·`MAILO_DB_PASSWORD`의 `_REF`만 따로 해석한다(compose 기본 명령은 CLI와 앱이 각각 저장소를 읽는다). 다른 `_REF`는 CLI가 무시한다.
 - 값은 기동 때 한 번만 읽고 실행 중에는 다시 읽지 않는다. 저장소에서 값을 바꾸면 재시작해야 반영된다. 같은 `_REF`의 값이 바뀐 것을 Mailo는 감지하지 못한다.
@@ -1015,7 +1015,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - `/metrics`(RQ-049~052): 운영 크기(수백만 행)·다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프에서의 쿼리 비용과 풀 점유(예비 연결 4개 가정), 롤링 배포(구버전 404는 코드 읽기 결과)와 롤백, 알림 규칙의 발화 조건과 임계값, 부하에서의 스크레이프 간격. 컨테이너·실제 Prometheus 스크레이프·`promtool`은 한 번씩 실행했다("지표").
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
-- 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패 경로를 확인했다. 실제 저장소 어댑터, 컨테이너(`read_only`·`cap_drop`)에서의 해석, 변형 이미지, compose 예시의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복, `/proc/<pid>/environ`에서 해석값이 보이지 않는지는 확인하지 않았다.
+- 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패·성공 경로(프로세스 수준)를 확인했다. 실제 저장소 어댑터, 컨테이너(`read_only`·`cap_drop`)에서의 해석, 변형 이미지, compose 예시의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복, `/proc/<pid>/environ`에서 해석값이 보이지 않는지는 확인하지 않았다.
 - `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).
 - TLS를 켠 PostgreSQL 서버에 대한 `MAILO_DB_SSLMODE` 접속.
 - TLS 종단 프록시 구성, 다중 인스턴스 배포.
