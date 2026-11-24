@@ -28,6 +28,7 @@ Mailo는 단일 컨텍스트다. 도메인 용어와 진행 상태 정의는 `do
 | `http`                   | problem+json 오류, 요청 ID, 본문 읽기 공통 처리                                                           | RQ-030, ADR-0006               |
 | `logging`                | 한 줄 JSON 로거(`ts`·`instance`·`level`·`event`), Nest 로거 어댑터. 다른 모듈에 의존하지 않는다           | RQ-027                         |
 | `validation`             | 요청 입력 검증(수신자·제목·본문 상한)                                                                     | RQ-030                         |
+| `secrets`                | `X_REF` 비밀값 해석(기동 전 1회, 환경 복사본), 어댑터 계약과 로더. 다른 모듈에 의존하지 않는다            | RQ-075~078, ADR-0016           |
 | `db`                     | `pg` 풀, SQL 마이그레이션 실행기                                                                          | ADR-0002                       |
 
 ## 앱 조립

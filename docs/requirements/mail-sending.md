@@ -41,7 +41,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0013](../adr/0013-multiple-smtp-accounts.md): 다중 SMTP 계정(`MAILO_SMTP_ACCOUNTS_FILE`, `default` 출처 규칙), 호출처의 `accountId`와 작업의 등록 때 계정 고정, 계정 단위 점유·차단기·정지·24시간 할당, 마이그레이션 `0010`~`0016`, 관측과 운영 표면, 발신 주소 허용 집합. 구현 묶음 A(RQ-053~056)와 B(RQ-057~059)를 구현했고 C·D는 구현 전이다.
 - [ADR-0014](../adr/0014-caller-tools-and-docs.md): 호출처 도구와 문서. 프로토콜 적합성 벡터(`docs/api/conformance/vectors.json`, 공개 가짜 키와 production 거부), Java 샘플 연동(선택), 키 분실·유출 대응 절차, DB 유지보수 안내, 레지스트리 변경 반영 절차. 레지스트리 재로드와 파티셔닝은 구현하지 않는다. 구현 묶음 B(RQ-064·065)를 구현했고 A(RQ-067~069) 문서를 작성했다(문서 검토 남음). C(RQ-066)는 구현 전이다.
 - [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md): 개인정보 최소화와 결과 불명 정책. 종결 때 본문·수신자·봉투 즉시 비움, 이벤트·시도 수신자의 유예(기본 7일) 뒤 비움과 `recipientsRedacted`, 요청별 `onUncertainOutcome`(`retry`·`fail`)과 `OUTCOME_UNKNOWN` 종결, 호출처 보존 현황 문서. 승인됐고(2026-11-24) 묶음 A(RQ-070)는 문서를 작성했고(검토 남음) 묶음 B(RQ-071), 묶음 C(RQ-072), 묶음 D(RQ-073·074)를 구현했다.
-- [ADR-0016](../adr/0016-external-secret-sources.md): 외부 시크릿 소스. `X_REF=<scheme>://<참조>` 규약(`X`·`X_FILE`과 동시 지정 거부), 기동 전 `resolveSecrets`와 환경 복사본, 어댑터 계약(`SecretSource`)과 bare 패키지 이름 로더, 닫힌 오류 코드와 해석 timeout, 기동 때 1회 읽기, AWS Secrets Manager 어댑터(`aws-sm`)와 변형 이미지 `-aws`. 승인됐고(2026-11-24) 구현 전이다(RQ-075~081).
+- [ADR-0016](../adr/0016-external-secret-sources.md): 외부 시크릿 소스. `X_REF=<scheme>://<참조>` 규약(`X`·`X_FILE`과 동시 지정 거부), 기동 전 `resolveSecrets`와 환경 복사본, 어댑터 계약(`SecretSource`)과 bare 패키지 이름 로더, 닫힌 오류 코드와 해석 timeout, 기동 때 1회 읽기, AWS Secrets Manager 어댑터(`aws-sm`)와 변형 이미지 `-aws`. 승인됐고(2026-11-24) 묶음 A(코어, RQ-075~078)를 구현했다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
@@ -108,7 +108,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 | 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-082 이후를 해당 묶음에서 추가한다(RQ-070~074는 10단계가, RQ-075~081은 11단계가 쓴다) |
 | 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했고 A 문서(RQ-067~069: 키 사고 대응, DB 유지보수, 레지스트리 변경 반영)를 작성했다(코드 변경 없음, 문서 검토 남음). C Java 샘플 연동(선택, RQ-066)은 구현 전이다 |
 | 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨). 묶음 A 보존 현황 문서(RQ-070, 문서 작성 완료·검토 남음), B 종결 때 비움(RQ-071, 마이그레이션 없음, 구현 완료·미검증 항목 있음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개, 구현 완료·미검증 항목 있음), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 `0019` 하나, 구현 완료·미검증 항목 있음) |
-| 11단계 | 외부 시크릿 소스(ADR-0016, 승인됨). 묶음 A 코어(RQ-075~078, `X_REF` 규약·기동 전 해석·어댑터 계약과 로더·실패 정책), B AWS 어댑터와 변형 이미지(RQ-079·080), C 운영 가이드와 수동 시나리오(RQ-081). 마이그레이션 없음. 구현 전이다 |
+| 11단계 | 외부 시크릿 소스(ADR-0016, 승인됨). 묶음 A 코어(RQ-075~078, `X_REF` 규약·기동 전 해석·어댑터 계약과 로더·실패 정책, 구현 완료·컨테이너 기동 미확인), B AWS 어댑터와 변형 이미지(RQ-079·080, 구현 전), C 운영 가이드와 수동 시나리오(RQ-081, 구현 전). 마이그레이션 없음 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -956,6 +956,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 - `http/rest-intake.integration-spec.ts`: 제목·본문·수신자·Key·필드 이름에 넣은 canary가 응답과 로그에 없고, 설정 직렬화에 SMTP 비밀번호가 없다. `crypto/body-cipher.spec.ts`, `validation/mail-request.spec.ts`, `config/load-config.spec.ts`: 오류 객체에 원문이 없다.
 
 ## 11. 호출처와 입력 검증
+- 외부 시크릿 소스(11단계 묶음 A, ADR-0016 결정 5·6): `secrets/resolve.spec.ts`·`secrets/loader.spec.ts`의 canary(어댑터가 반환한 값, 던진 오류 메시지, 참조 문자열, 잘못된 `X_REF`)가 해석·로드 오류의 메시지·스택·`failures`에 없다. `e2e/secret-sources.integration-spec.ts`는 `X_REF`로 기동한 실제 앱의 로그·표준 출력·`secrets_resolved` 로그에 비밀값과 참조 문자열 canary가 없고 `process.env`가 바뀌지 않음을 확인한다. `e2e/secret-startup.integration-spec.ts`는 컴파일한 `main.js`·`migrate-cli.js`의 실패 출력에 canary가 없음을 확인한다.
 
 ### RQ-028 호출처 레지스트리와 REST 인증
 
@@ -1020,6 +1021,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 - `config/compose-consistency.spec.ts` "개발용 Mailpit profile": `profiles:`는 `mailpit` 서비스에만 있고(postgres·mailo에는 없음), 이미지 태그·digest 고정, 공개 포트는 UI 하나, non-root·`read_only`·`cap_drop`·`no-new-privileges`를 글자로 검사한다.
 - `docker compose config --services`(compose v5.5.1, 2026-11-23): profile 없이 `postgres`·`mailo`, `--profile mailpit`이면 `mailpit`이 더해진다. 수동 확인이다.
+- 11단계 묶음 A: `secrets/boundary.spec.ts`가 `apps/mailo/package.json`에 `@aws-sdk/*`와 시크릿 어댑터 패키지 의존성이 없음을 확인한다(코어). 기본 이미지 안의 부재는 묶음 B가 확인한다(미확인).
 - 2단계에서 npm 의존성 `jose` 6.2.18를 추가했다. JWE·JWS 암호 형식을 직접 만들지 않기 위해서다(ADR-0008 구현 중 확정 8). 운영 의존성(Mailo, PostgreSQL)은 늘지 않았다.
 
 ### RQ-030 요청 입력 검증
@@ -2507,11 +2509,11 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 ## 19. 외부 시크릿 소스
 
-결정은 [ADR-0016](../adr/0016-external-secret-sources.md)이고 구현은 묶음 A(코어) → B(AWS 어댑터와 변형 이미지) → C(운영 가이드와 수동 시나리오) 순서다. RQ-075~078은 묶음 A, RQ-079·080은 묶음 B, RQ-081은 묶음 C의 범위다. 마이그레이션은 없다. 코어 `apps/mailo`에는 새 npm 의존성이 없다. AWS SDK는 묶음 B의 어댑터 패키지에만 들어간다. 모두 구현 전이다.
+결정은 [ADR-0016](../adr/0016-external-secret-sources.md)이고 구현은 묶음 A(코어) → B(AWS 어댑터와 변형 이미지) → C(운영 가이드와 수동 시나리오) 순서다. RQ-075~078은 묶음 A, RQ-079·080은 묶음 B, RQ-081은 묶음 C의 범위다. 마이그레이션은 없다. 코어 `apps/mailo`에는 새 npm 의존성이 없다. AWS SDK는 묶음 B의 어댑터 패키지에만 들어간다. 묶음 A(RQ-075~078)는 구현했고 묶음 B(RQ-079·080), 묶음 C(RQ-081)는 구현 전이다.
 
 ### RQ-075 `X_REF` 규약과 알 수 없는 `*_REF` 거부
 
-- [ ] **진행 상태:** 미착수 (11단계 묶음 A)
+- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 컨테이너 기동 미확인)
 
 **요구사항:**
 
@@ -2523,18 +2525,20 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 **수용 조건:**
 
-- [ ] 충돌 조합 셋(`env+ref`, `file+ref`, `env+file+ref`), 빈 값 취급, 형식 오류, `file` 예약, 해석값이 빈 문자열인 경우를 단위 테스트로 확인했다.
-- [ ] 알 수 없는 `MAILO_*_REF`와 `_FILE`·`_REF` 끝 이름의 `unknown-name`을 단위 테스트로 확인했다. 범위 `database`는 이 검사를 하지 않는다.
-- [ ] `secretVar`·`privateKeyVar`의 `_REF` 끝 이름 거부를 로더 단위 테스트로 확인했다.
-- [ ] `X_REF` 없는 기존 구성(`.env.example` 기반, `_FILE` 구성)이 기존대로 기동한다.
+- [x] 충돌 조합 셋(`env+ref`, `file+ref`, `env+file+ref`), 빈 값 취급, 형식 오류, `file` 예약, 해석값이 빈 문자열인 경우를 단위 테스트로 확인했다.
+- [x] 알 수 없는 `MAILO_*_REF`와 `_FILE`·`_REF` 끝 이름의 `unknown-name`을 단위 테스트로 확인했다. 범위 `database`는 이 검사를 하지 않는다.
+- [x] `secretVar`·`privateKeyVar`의 `_REF` 끝 이름 거부를 로더 단위 테스트로 확인했다.
+- [x] `X_REF` 없는 기존 구성(`.env.example` 기반, `_FILE` 구성)이 기존대로 읽힌다. (`.env.example`의 활성 줄에 `_REF`가 없고 해석 결과가 입력과 같다. `X`와 `X_FILE`이 함께 있을 때 `_FILE` 우선이 그대로다. 기존 단위·통합 테스트가 같은 소스에서 통과한다. 컨테이너 기동은 확인하지 않았다.)
 
 **판정 근거:**
 
-- 아직 없다.
+- `secrets/resolve.spec.ts`: 충돌 조합 셋과 `X`가 빈 문자열인 경우(충돌 아님), 형식 오류, `file` 예약, 해석값 빈 문자열(`empty`), `unknown-name`(`rejectUnknown`, `_FILE`·`_REF` 끝 이름). `secrets/secret-names.spec.ts`: 허용 목록 기준 알 수 없는 `MAILO_*_REF`(오타, `MAILO_CLI_TOKEN_REF`)와 마이그레이션 CLI 범위의 무시, 로더 세 곳의 `_REF` 끝 `secretVar`·`privateKeyVar` 거부(변이 확인: 거부 조건을 지우면 세 테스트가 실패), `.env.example`의 활성 줄·주석 예시.
+- 구현: `secrets/resolve.ts`, `config/secret-variables.ts`, `callers/registry.ts`, `envelope/key-file.ts`, `config/smtp-accounts.ts`, `secret-names.ts`.
+- 남은 미검증: 컨테이너(`read_only`·`cap_drop`)·compose 기동과 롤링 배포·롤백은 실행하지 않았다(L3 미실행). 실제 저장소 어댑터는 묶음 B 범위다.
 
 ### RQ-076 기동 전 해석, 환경 복사본, 동적 이름
 
-- [ ] **진행 상태:** 미착수 (11단계 묶음 A)
+- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 컨테이너 기동 미확인)
 
 **요구사항:**
 
@@ -2546,19 +2550,22 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 **수용 조건:**
 
-- [ ] 허용 목록의 각 이름 규칙과 각 로더의 정규식이 어긋나지 않음을 단위 테스트로 확인했다.
-- [ ] 동적 이름(키 버전 `n`, 관리 토큰 이름, 호출처 JWS·SMTP·JWE 변수)이 해석되고 해석한 복사본으로 `loadConfig`·`parseCallerRegistry`·`parseEnvelopeKeys`가 기존대로 통과한다.
-- [ ] 입력 `env`와 `process.env`가 바뀌지 않고, 일부 실패 시 복사본이 바뀌지 않는다.
-- [ ] 가짜 어댑터가 준 비밀이 실제 PostgreSQL 통합 테스트에서 앱(DB 비밀, JWS·JWE·SMTP 비밀)에 전달되어 동작한다.
-- [ ] 마이그레이션 CLI 경로(`loadDatabaseOnly` + 복사본)가 DB에 접속한다.
+- [x] 허용 목록의 각 이름 규칙과 각 로더의 정규식이 어긋나지 않음을 단위 테스트로 확인했다.
+- [x] 동적 이름(키 버전 `n`, 관리 토큰 이름, 호출처 JWS·SMTP·JWE 변수)이 해석되고 해석한 복사본으로 `loadConfig`·`parseCallerRegistry`·`parseEnvelopeKeys`가 기존대로 통과한다.
+- [x] 입력 `env`와 `process.env`가 바뀌지 않고, 일부 실패 시 복사본이 바뀌지 않는다.
+- [x] 가짜 어댑터가 준 비밀이 실제 PostgreSQL 통합 테스트에서 앱(DB 비밀, JWS·JWE·SMTP 비밀)에 전달되어 동작한다.
+- [x] 마이그레이션 CLI 경로(`loadDatabaseOnly` + 복사본)가 DB에 접속한다.
 
 **판정 근거:**
 
-- 아직 없다.
+- `secrets/secret-names.spec.ts`: 고정 이름과 동적 이름(관리 토큰, SMTP 계정, 키 버전 `V1`·`V2`, 호출처 JWS, JWE 개인키, 분리된 DB 변수)을 해석한 복사본으로 `loadConfig`·`parseCallerRegistry`·`parseEnvelopeKeys`가 기존대로 값을 읽는다. 관리 토큰 이름 최대 길이(32자)가 로더와 허용 목록에서 같다. 범위 `database`는 두 변수만 해석한다. `secrets/resolve.spec.ts`: 입력 `env`·`process.env` 불변, 일부 실패 시 값 없음, 병렬 해석, 개행을 자르지 않음.
+- `e2e/secret-sources.integration-spec.ts`(실제 PostgreSQL, 로컬 `smtp-server`): `MAILO_DB_PASSWORD_REF`·`MAILO_DATABASE_URL_REF`로 받은 값으로 실제 DB에 접속하고 틀린 비밀번호는 `28P01`로 실패한다. `createApp`에 복사본을 넘겨 기동한 앱이 REF 개인키로 JWE를 풀고(REST), REF JWS 비밀로 서명한 파일을 수집하고(파일 채널, 다른 비밀의 서명은 거부), REF SMTP 비밀번호로 인증해 발송하고, REF 운영 토큰으로 `/ops/accounts`를 연다.
+- 구현: `secrets/`, `secret-names.ts`, `main.ts`, `db/migrate-cli.ts`.
+- 남은 미검증: 컨테이너(`read_only`·`cap_drop`)·compose 기동과 롤링 배포·롤백은 실행하지 않았다(L3 미실행). 실제 저장소 어댑터는 묶음 B 범위다.
 
 ### RQ-077 어댑터 계약과 로더
 
-- [ ] **진행 상태:** 미착수 (11단계 묶음 A)
+- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 컨테이너 기동 미확인)
 
 **요구사항:**
 
@@ -2570,17 +2577,19 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 **수용 조건:**
 
-- [ ] 지정자 거부 규칙(경로, URL, `node:`, 하위 경로, 대문자)과 로드 실패 종류를 단위 테스트로 확인했다.
-- [ ] `file` 예약 scheme과 중복 scheme을 거부한다.
-- [ ] `secrets/`가 다른 모듈을 import하지 않는다(import 경계 확인).
+- [x] 지정자 거부 규칙(경로, URL, `node:`, 하위 경로, 대문자)과 로드 실패 종류를 단위 테스트로 확인했다.
+- [x] `file` 예약 scheme과 중복 scheme을 거부한다.
+- [x] `secrets/`가 다른 모듈을 import하지 않는다(import 경계 확인).
 
 **판정 근거:**
 
-- 아직 없다.
+- `secrets/loader.spec.ts`: 거부 지정자(경로, `file:`·`data:`·`https:` URL, `node:`, 하위 경로, 대문자, 공백 등)가 `invalid-specifier`이고 import하지 않으며 사유에 원문이 없다, bare 이름과 스코프 이름 허용, 로드 실패 6종(`not-found`와 어댑터 내부 의존성 오류의 구분 포함), 실패 모으기, 실제 `import()`로 없는 패키지를 찾는 경우. `secrets/boundary.spec.ts`: `secrets/` 파일의 import가 `./`·`node:`뿐이고 다른 모듈은 `secrets/index.js`로만 import한다.
+- 구현: `secrets/loader.ts`, `secrets/source.ts`, `secrets/errors.ts`.
+- 남은 미검증: 실제로 설치된 어댑터 패키지를 `apps/mailo/node_modules`에서 찾는 경로(묶음 B의 변형 이미지가 확인한다).
 
 ### RQ-078 해석 실패 정책과 값 비노출
 
-- [ ] **진행 상태:** 미착수 (11단계 묶음 A)
+- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 컨테이너 기동 미확인)
 
 **요구사항:**
 
@@ -2591,13 +2600,15 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 **수용 조건:**
 
-- [ ] timeout과 `signal`을 무시하는 어댑터, 늦은 거부의 미처리 거부 없음, 닫힌 코드 통과와 그 밖 코드의 `adapter-error`를 단위 테스트로 확인했다.
-- [ ] 가짜 어댑터가 반환한 값과 던진 오류 메시지의 canary 문자열이 오류 메시지, `startup_failed` 로그, `secrets_resolved` 로그, `process.env` 전체에 없다.
-- [ ] 타임아웃 변수의 범위 밖 값을 `ConfigError`와 같은 방식으로 거부한다.
+- [x] timeout과 `signal`을 무시하는 어댑터, 늦은 거부의 미처리 거부 없음, 닫힌 코드 통과와 그 밖 코드의 `adapter-error`를 단위 테스트로 확인했다.
+- [x] 가짜 어댑터가 반환한 값과 던진 오류 메시지의 canary 문자열이 오류 메시지, `startup_failed` 로그, `secrets_resolved` 로그, `process.env` 전체에 없다.
+- [x] 타임아웃 변수의 범위 밖 값을 `ConfigError`와 같은 방식으로 거부한다.
 
 **판정 근거:**
 
-- 아직 없다.
+- `secrets/resolve.spec.ts`: `signal`을 무시하는 어댑터의 timeout 확정과 `abort`, timeout 뒤 늦은 거부의 미처리 거부 없음(`Promise.race`가 거부를 구독하므로 이 테스트는 구조적 성질을 확인한다), 닫힌 코드 5종의 `adapter-error:<코드>` 통과와 그 밖 코드·비객체 던짐의 `adapter-error`, 해석 실패 종류별 메시지, 오류에 canary(값, 어댑터 메시지, 참조) 없음, `secrets_resolved`의 건수·scheme만, 설정 오류(`MAILO_SECRET_RESOLVE_TIMEOUT_MS`)와 어댑터 로드 실패가 해석보다 먼저. `e2e/secret-startup.integration-spec.ts`(컴파일한 `main.js`·`migrate-cli.js` 실행): 종료 코드 1, `startup_failed`의 `error`·`message`, 마이그레이션 CLI의 표준 오류 문구, 출력에 canary 없음, `X_REF`가 없으면 해석 단계가 기존 설정 오류 경로로 간다.
+- 구현: `secrets/resolve.ts`, `secrets/errors.ts`, `main.ts`의 `startup_failed` 클래스 목록, `db/migrate-cli.ts`.
+- 남은 미검증: 컨테이너(`read_only`·`cap_drop`)·compose 기동과 롤링 배포·롤백은 실행하지 않았다(L3 미실행). 실제 저장소 어댑터는 묶음 B 범위다. 어댑터 코드가 코어 밖에서 값을 로그에 쓰는지는 코어가 통제하지 못한다.
 
 ### RQ-079 AWS Secrets Manager 어댑터
 

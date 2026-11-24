@@ -330,6 +330,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_METRICS_CACHE_SECONDS` | 5 | 1~60 | `GET /metrics`의 전역 gauge가 DB 수집 결과를 다시 쓰는 시간 초. 인스턴스당 DB 조회는 이 시간마다 최대 1회다. 기본값은 추정이다. 두 인스턴스의 값은 이 시간만큼 어긋날 수 있으므로 알림 규칙의 `for:`는 이보다 충분히 길게 쓴다("지표") |
 | `MAILO_STOP_GRACE_PERIOD` | 없음(검사 안 함). compose는 `150s`를 넣는다 | `150s`, `2m30s`, `1h`(h·m·s·ms 조합) | 컨테이너 `stop_grace_period`와 같은 값. 있으면 drain 상한 + 10초 이상인지 기동 때 검사한다 |
 | `MAILO_CALLERS_FILE` | 없음(필수) | 파일 경로 | 호출처 레지스트리 JSON. 기동 때 한 번 읽는다(핫 리로드 없음) |
+| `MAILO_SECRET_ADAPTERS` | 없음(어댑터를 불러오지 않는다) | 쉼표 구분 bare 패키지 이름. 경로·URL·`node:` 접두·하위 경로·대문자는 거부 | `X_REF`를 해석할 어댑터 패키지(ADR-0016 결정 3). 어댑터 패키지는 이 저장소가 이미지에 넣은 것만 쓴다. 비밀이 아니다. "외부 시크릿 소스(`X_REF`)" |
+| `MAILO_SECRET_RESOLVE_TIMEOUT_MS` | 10000(추정) | 100~60000 | `X_REF` 해석 1건의 제한 시간. 어기면 어댑터를 불러오기 전에 기동을 거부한다. 비밀이 아니다 |
 
 ### 입력 상한(RQ-030)
 
@@ -566,6 +568,48 @@ secrets:
 - API 키 평문은 Mailo에 두지 않는다. `callers.json`에는 SHA-256 해시만 둔다(`caller-onboarding.md`).
 - 로그·오류·이벤트에는 본문, 제목, 수신자 주소, 인증 정보, 키를 남기지 않는다(RQ-027).
 - 관리 토큰 변수는 `.env`의 `MAILO_*`로 컨테이너에 전달되므로(`env_file`) compose에 이름별 설정을 더하지 않는다. `_FILE`로 받으면 파일 마운트를 따로 연다(위 `secrets:` 예시와 같다).
+
+### 외부 시크릿 소스(`X_REF`)
+
+비밀값을 외부 저장소에서 기동 때 한 번 읽는 방법이다(ADR-0016, RQ-075~078). 기본은 꺼져 있고 `_REF` 변수와 어댑터를 지정하지 않으면 동작이 달라지지 않는다.
+
+- 이 버전이 제공하는 것은 코어(해석, 어댑터 계약, 로더)뿐이다. 저장소 어댑터와 어댑터가 든 변형 이미지(`-aws`)는 아직 없다(묶음 B). 어댑터 없이 `X_REF`를 쓰면 기동을 거부한다(`unknown-scheme`).
+- 지정 방법은 셋 중 하나다: `X=값`, `X_FILE=경로`, `X_REF=<scheme>://<참조>`. 빈 문자열은 지정하지 않은 것이다.
+  - `X_REF`와 `X` 또는 `X_FILE`을 함께 주면 `conflict`로 기동을 거부한다. `.env`에 남은 가짜 평문 값(`.env.example`의 `MAILO_SMTP_PASSWORD`, `MAILO_DB_ENCRYPTION_KEY_V1`, `MAILO_FINGERPRINT_KEY_V1`)은 `X_REF`를 쓸 때 주석 처리하거나 compose `environment:`에서 `X: ""`로 비운다.
+  - `X_FILE`과 `X`의 우선순위(`_FILE` 우선)는 그대로다.
+  - `X_REF`의 scheme은 `^[a-z][a-z0-9+.-]*$`이고 `//` 뒤에 한 글자 이상이 있어야 한다. `file`은 예약어라 거부한다(파일은 `X_FILE`로만 지정).
+- `X_REF`를 쓸 수 있는 변수: `MAILO_DATABASE_URL`, `MAILO_DB_PASSWORD`, `MAILO_OPS_TOKEN`, `MAILO_OPS_ADMIN_TOKEN_<이름>`, `MAILO_SMTP_PASSWORD`, `MAILO_SMTP_SECRET_<이름>`, `MAILO_DB_ENCRYPTION_KEY_V<n>`, `MAILO_FINGERPRINT_KEY_V<n>`, `MAILO_JWS_SECRET_<이름>`, `MAILO_JWE_KEY_<이름>`. 참조 변수 이름은 뒤에 `_REF`를 붙인다(예: `MAILO_JWS_SECRET_BILLING_REF`). 설정 JSON은 읽지 않고 환경의 변수 이름을 이름 규칙으로 찾는다. `MAILO_CLI_TOKEN`은 지원하지 않는다(`MAILO_CLI_TOKEN_REF`는 알 수 없는 이름으로 거부된다).
+  - 이름이 `MAILO_`로 시작하고 `_REF`로 끝나는데 위 목록에 없으면 `unknown-name`으로 기동을 거부한다(오타가 조용히 무시되어 `.env`의 평문 값으로 기동하는 일을 막는다).
+  - 설정 JSON(`callers.json`, 계정 파일, 개인키 목록 파일)의 `secretVar`·`privateKeyVar`는 `_REF`로 끝날 수 없다.
+  - 환경에 있는 `_REF`는 설정 JSON이 가리키지 않아도 해석한다. 쓰지 않는 `_REF`를 남기지 않는다. 쓰이지 않는 비밀의 읽기 권한과 저장소 호출이 낭비된다.
+- 해석은 프로세스 시작 때 `loadConfig` 앞에서 한 번이다. 해석값은 `process.env`가 아니라 앱이 쓰는 환경 복사본에 들어간다. 마이그레이션 CLI(`db/migrate-cli.ts`)는 별도 프로세스라 `MAILO_DATABASE_URL`·`MAILO_DB_PASSWORD`의 `_REF`만 따로 해석한다(compose 기본 명령은 CLI와 앱이 각각 저장소를 읽는다). 다른 `_REF`는 CLI가 무시한다.
+- 값은 기동 때 한 번만 읽고 실행 중에는 다시 읽지 않는다. 저장소에서 값을 바꾸면 재시작해야 반영된다. 같은 `_REF`의 값이 바뀐 것을 Mailo는 감지하지 못한다.
+- 저장소가 응답하지 않으면 새 인스턴스는 기동하지 못하고(`restart: unless-stopped`가 재시작을 반복한다), 이미 실행 중인 인스턴스는 영향이 없다. 해석 1건은 `MAILO_SECRET_RESOLVE_TIMEOUT_MS`(기본 10초) 안에 끝나야 하고, 코어는 재시도하지 않는다. 어댑터가 재시도할 수 있다. 해석은 병렬이라 건수가 늘어도 전체 시간은 가장 느린 1건에 가깝다. 컨테이너의 healthcheck `start_period`(30초)는 마이그레이션 CLI와 앱이 각각 해석하는 시간을 포함해야 한다. 기본 timeout 10초 두 번이 모두 실패 직전까지 가면 20초다.
+- 실패는 종료 코드 1이다. 앱은 `startup_failed` 로그(필드 `error`, `message`), 마이그레이션 CLI는 표준 오류에 한 줄씩 `비밀값 해석 실패: <변수>(<방식>): <종류>`를 낸다. 변수 이름, 지정 방식, 실패 종류만 담고 값·참조 문자열·어댑터 오류 메시지는 담지 않는다. 종류별 조치는 `troubleshooting.md` "기동 시 비밀값 해석 실패"다.
+- 성공하면 `secrets_resolved`(info) 한 줄이 남는다. 필드는 `count`(해석 건수)와 `schemes`(쓴 scheme, 쉼표 구분)뿐이다. 해석 대상이 없으면 남지 않는다. 설정을 읽기 전에 남는 줄이라 `instance`는 호스트 이름이다.
+- 프로세스 환경(`docker inspect`의 `Config.Env`, `/proc/<pid>/environ`)에는 참조(`X_REF`)와 어댑터의 저장소 접근 자격 증명(`AWS_*` 환경 변수를 쓰는 경우)이 보인다. 해석한 값은 보이지 않는다. 해석값은 앱 프로세스 메모리의 환경 복사본에 있다. 같은 프로세스 권한의 메모리 읽기는 막지 못한다(코드 읽기에 따른 설명이고 `/proc` 비노출은 측정하지 않았다).
+
+DB 비밀번호를 `_REF`로 바꾸는 compose 예(값은 모두 가짜다. 실행해 확인하지 않았다). 어댑터가 든 변형 이미지가 있어야 동작한다.
+
+```yaml
+# docker-compose.override.yml 예시
+services:
+  mailo:
+    environment:
+      MAILO_SECRET_ADAPTERS: "<어댑터 패키지 이름>"
+      MAILO_DB_PASSWORD: "" # 기본 파일이 넣은 POSTGRES_PASSWORD 값을 비운다
+      MAILO_DB_PASSWORD_REF: "<scheme>://<참조>"
+```
+
+- `docker-compose.migrate-once.yml`을 쓰면 `mailo-migrate`도 같은 방식으로 비운다: `MAILO_DB_PASSWORD: ""`와 `MAILO_DB_PASSWORD_REF`(마이그레이션 전용 계정이면 그 계정의 참조)를 `mailo-migrate`에 준다. `MAILO_MIGRATE_DB_PASSWORD`를 쓰는 구성은 이 줄이 대신한다.
+- `postgres` 컨테이너의 `POSTGRES_PASSWORD`는 DB 초기화 값이라 compose가 계속 요구한다. 이 값을 저장소로 옮기는 구성은 다루지 않는다.
+
+롤백 경고: 이 기능이 없는 이전 버전은 `_REF` 변수를 읽지 않고 무시한다. `_REF`로만 지정한 필수 비밀은 이전 버전에서 "필요하다" 오류로 기동하지 못해 안전하다. 선택 비밀인 `MAILO_OPS_TOKEN`은 값이 없으면 읽기 토큰 없이 기동한다(`loadOps`가 `token: null`을 만든다. 그 상태의 `/ops`·`/metrics` 응답은 확인하지 않았다). 롤백 전에 `_REF`를 `_FILE`이나 환경 변수로 되돌린다.
+
+```txt
+위험도: 중간 (기동 경로의 비밀 해석. 저장소 장애가 새 인스턴스의 기동을 막는다. 기본 설정에는 영향이 없다)
+롤백: 이전 이미지로 교체한다. 데이터·마이그레이션 변경이 없다. `_REF`를 쓰던 배포는 롤백 전에 `_FILE`이나 환경 변수로 되돌린다
+```
 
 ## 헬스
 
@@ -887,8 +931,8 @@ groups:
 - 앞의 네 필드는 모든 줄에 있다: `ts`(ISO 8601 UTC), `instance`(`MAILO_INSTANCE_ID`, 없으면 호스트 이름 = 컨테이너 ID), `level`(`debug`·`info`·`warn`·`error`), `event`. 나머지는 이벤트마다 다르다. 호출자 필드가 이 네 값을 덮어쓰지 않는다.
 - `event: "http_request"`: 응답이 끝날 때 한 줄. 필드는 `requestId`, `method`, `route`(라우트 패턴, 예 `/jobs/:jobId`), `status`, `callerId`(인증 전에는 `null`), `durationMs`뿐이다. 쿼리 문자열, 경로 값, `Idempotency-Key`, 헤더, 본문은 없다(RQ-027). `requestId`는 오류 응답 본문의 `instance`(`urn:uuid:…`)와 같다.
 - `event: "nest_log"`: Nest 프레임워크와 `Logger`로 쓴 문자열 로그. `message`, `context`(클래스·모듈 이름), 오류 수준이면 Nest가 넘긴 `stack`이 있다. `stack`의 첫 줄에는 예외 메시지가 들어 있을 수 있다(이전 텍스트 출력과 같은 정보다).
-- 앱이 정한 이벤트 이름: `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), `ops_pause_set`·`ops_pause_cleared`(info, `actor`·`scope`(`all`·`caller`)·`callerId`(`caller`일 때만), 상태를 바꾼 관리 요청만. 멱등 재요청은 남지 않는다), `ops_job_canceled`(info, `actor`·`jobId`), `metrics_collect_failed`(warn, `group`·`error`. `/metrics`의 DB 수집 그룹이 성공에서 실패로 바뀔 때 한 번. 같은 그룹의 연속 실패 동안 반복하지 않는다), `metrics_series_limit`(warn, `metric`만. 지표 하나의 시리즈가 상한에 처음 닿았을 때 한 번), `event_cursor_gap`(warn, `callerId`만. `GET /events`가 `after` 뒤의 삭제를 발견한 응답마다 한 줄이고 헤더든 410이든 같다), Worker의 `send_paused`(warn)·`send_resumed`(info)(`scope`, `callerId`는 `caller`일 때만. 정지 상태가 바뀐 것을 관찰할 때 한 번만 남고 폴링마다 반복하지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
-- 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패는 `event: "startup_failed"`(필드 `error`는 예외 이름·코드, 설정 오류는 변수 이름만 담은 `message`)로 남는다. 설정을 읽기 전의 실패는 `instance`가 호스트 이름이다(`MAILO_INSTANCE_ID`를 아직 읽지 못했다).
+- 앱이 정한 이벤트 이름: `secrets_resolved`(info, `count`·`schemes`만. 기동 때 `X_REF`를 해석했을 때 한 번, "외부 시크릿 소스"), `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), `ops_pause_set`·`ops_pause_cleared`(info, `actor`·`scope`(`all`·`caller`)·`callerId`(`caller`일 때만), 상태를 바꾼 관리 요청만. 멱등 재요청은 남지 않는다), `ops_job_canceled`(info, `actor`·`jobId`), `metrics_collect_failed`(warn, `group`·`error`. `/metrics`의 DB 수집 그룹이 성공에서 실패로 바뀔 때 한 번. 같은 그룹의 연속 실패 동안 반복하지 않는다), `metrics_series_limit`(warn, `metric`만. 지표 하나의 시리즈가 상한에 처음 닿았을 때 한 번), `event_cursor_gap`(warn, `callerId`만. `GET /events`가 `after` 뒤의 삭제를 발견한 응답마다 한 줄이고 헤더든 410이든 같다), Worker의 `send_paused`(warn)·`send_resumed`(info)(`scope`, `callerId`는 `caller`일 때만. 정지 상태가 바뀐 것을 관찰할 때 한 번만 남고 폴링마다 반복하지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
+- 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패는 `event: "startup_failed"`(필드 `error`는 예외 이름·코드, 설정 오류와 비밀값 해석 오류는 변수 이름·방식·고정 종류만 담은 `message`)로 남는다. 설정을 읽기 전의 실패는 `instance`가 호스트 이름이다(`MAILO_INSTANCE_ID`를 아직 읽지 못했다).
 - 본문·제목·수신자 주소·SMTP 인증 정보·키는 어느 필드에도 넣지 않는다. 예외는 이름과 코드(`Error:57014`)만 쓴다(RQ-027). 이 규칙은 canary 문자열 테스트로 확인한다.
 - 로그 수집기가 인스턴스를 구분하려면 `instance`를 쓴다. 로그와 DB 행의 연결: 결과를 기록한 시도의 `instance`가 `mail_attempts.instance` 컬럼에 같은 값으로 남는다(128자까지). 로그의 `jobId`(`job_completed` 등)로 시도 행을 찾고 `instance`로 기록한 인스턴스를 확인한다. lease 회수로 쓴 `LEASE_EXPIRED` 시도, 0003 적용 전 행, 롤링 배포 중 이전 버전이 쓴 행은 NULL이다(점유한 인스턴스를 DB에 쓰지 않는다: lease는 `lease_token`으로만 다룬다). REST 응답에는 노출하지 않는다. 컨테이너를 다시 만들면 호스트 이름이 바뀌므로 고정 이름이 필요하면 `MAILO_INSTANCE_ID`를 준다.
 
@@ -971,6 +1015,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - `/metrics`(RQ-049~052): 운영 크기(수백만 행)·다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프에서의 쿼리 비용과 풀 점유(예비 연결 4개 가정), 롤링 배포(구버전 404는 코드 읽기 결과)와 롤백, 알림 규칙의 발화 조건과 임계값, 부하에서의 스크레이프 간격. 컨테이너·실제 Prometheus 스크레이프·`promtool`은 한 번씩 실행했다("지표").
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
+- 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패 경로를 확인했다. 실제 저장소 어댑터, 컨테이너(`read_only`·`cap_drop`)에서의 해석, 변형 이미지, compose 예시의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복, `/proc/<pid>/environ`에서 해석값이 보이지 않는지는 확인하지 않았다.
 - `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).
 - TLS를 켠 PostgreSQL 서버에 대한 `MAILO_DB_SSLMODE` 접속.
 - TLS 종단 프록시 구성, 다중 인스턴스 배포.

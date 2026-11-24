@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -350,5 +350,55 @@ describe("secretVar·privateKeyVar의 `_REF` 끝 이름 거부 (RQ-075, ADR-0016
       ),
     ).toThrow(/_REF로 끝날 수 없다/);
     rmSync(path.dirname(file), { recursive: true, force: true });
+  });
+});
+
+describe(".env.example의 X_REF 예시 (RQ-075, ADR-0016 결정 10)", () => {
+  const text = readFileSync(
+    path.resolve(import.meta.dirname, "../../../../.env.example"),
+    "utf8",
+  );
+  const lines = text.split("\n");
+
+  it("활성 줄에는 X_REF가 없다(기존 구성이 해석 단계에서 바뀌지 않는다)", async () => {
+    const active = Object.fromEntries(
+      lines
+        .filter((l) => /^[A-Z][A-Z0-9_]*=/.test(l))
+        .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+    );
+    expect(Object.keys(active).filter((n) => n.endsWith("_REF"))).toEqual([]);
+    const copy = await resolveSecrets(active, {
+      ...APP_SECRET_RESOLVE_OPTIONS,
+    });
+    expect(copy).toEqual(active);
+  });
+
+  it("주석 처리한 *_REF 예시는 모두 허용 목록의 이름이고 주석을 풀어도 해석된다", async () => {
+    const examples = lines
+      .map((l) => /^#(MAILO_[A-Z0-9_]+_REF)=(.+)$/.exec(l))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => [m[1] as string, m[2] as string] as const);
+    expect(examples.length).toBeGreaterThan(0);
+    const source = fakeSource({
+      scheme: "aws-sm",
+      resolve: async () => "resolved-value",
+    });
+    const env = await resolveSecrets(
+      {
+        MAILO_SECRET_ADAPTERS: "fake-adapter",
+        ...Object.fromEntries(examples),
+      },
+      {
+        ...APP_SECRET_RESOLVE_OPTIONS,
+        importModule: fakeImporter({ "fake-adapter": { default: source } }),
+      },
+    );
+    for (const [name] of examples)
+      expect(env[name.slice(0, -"_REF".length)]).toBe("resolved-value");
+  });
+
+  it("MAILO_SECRET_ADAPTERS와 MAILO_SECRET_RESOLVE_TIMEOUT_MS 예시가 있다", () => {
+    expect(text).toContain("#MAILO_SECRET_ADAPTERS=");
+    expect(text).toContain("#MAILO_SECRET_RESOLVE_TIMEOUT_MS=10000");
   });
 });

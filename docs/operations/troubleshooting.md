@@ -539,6 +539,36 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 - 가장 오래된 시도가 24시간을 넘기면 한 건씩 풀린다. 그 전에 만료 시각(기본 24시간)에 이르면 `EXPIRED`가 된다. 할당이 처리량보다 작으면 만료가 쌓인다.
 - 조치: `callers.json`의 `sendQuota24h`를 늘리거나, 호출처의 발송량을 줄이거나, 만료 TTL(`MAILO_JOB_EXPIRY_SECONDS`, 요청별로는 `ttlSeconds`와 상한 `MAILO_JOB_EXPIRY_MAX_SECONDS`)을 조정한다. 설정 값을 바꾸면 재시작이 필요하다.
 
+## 기동 시 비밀값 해석 실패
+
+`X_REF`(외부 시크릿 소스, `deployment.md` "외부 시크릿 소스(`X_REF`)")를 쓰는 배포에서 인스턴스가 뜨지 않을 때 본다. 종료 코드는 1이다. 앱은 `startup_failed` 로그의 `message`, 마이그레이션 CLI는 표준 오류에 줄마다 `비밀값 해석 실패: <변수>(<방식>): <종류>`를 낸다. 실패한 변수는 모두 모아 한 번에 나온다. 값, 참조 문자열(저장소의 비밀 ID), 어댑터 오류 메시지는 어디에도 나오지 않는다.
+
+- 확인: `docker compose logs --no-log-prefix mailo | jq -c 'select(.event=="startup_failed") | .message'`.
+- 방식은 `env+ref`·`file+ref`·`env+file+ref`(충돌), `ref`, `ref:<scheme>`(등록된 어댑터의 scheme)다.
+
+| 종류 | 뜻 | 조치 |
+| ---- | -- | ---- |
+| `conflict` | `X_REF`와 `X` 또는 `X_FILE`이 함께 비어 있지 않다. 방식이 어느 것과 겹쳤는지 알려 준다 | 하나만 남긴다. `.env`에 남은 평문 값이면 지우거나 compose `environment:`에서 `X: ""`로 비운다 |
+| `empty` | 어댑터가 빈 문자열을 돌려줬다 | 저장소의 값을 확인한다 |
+| `invalid-ref` | `X_REF`가 `<scheme>://<참조>` 형식이 아니다(`//` 뒤가 비었거나 scheme에 대문자 등) | 형식을 고친다. 평문 비밀을 `_REF`에 넣지 않았는지 본다 |
+| `reserved-scheme` | scheme이 `file`이다 | 파일은 `X_FILE`로 지정한다 |
+| `unknown-scheme` | 그 scheme의 어댑터가 `MAILO_SECRET_ADAPTERS`에 없다(어댑터를 지정하지 않은 경우 포함) | 어댑터가 든 이미지를 쓰고 `MAILO_SECRET_ADAPTERS`를 지정한다. scheme 오타도 본다 |
+| `unknown-name` | 이름이 `MAILO_`로 시작하고 `_REF`로 끝나는데 `X_REF`를 받는 변수가 아니다(오타, `MAILO_CLI_TOKEN_REF`), 또는 변수 이름이 `_FILE`·`_REF`로 끝난다. 변수 칸에 `_REF`가 붙은 이름이 나온다 | 이름을 고친다. 받는 변수 목록은 `deployment.md`다 |
+| `timeout` | 어댑터가 `MAILO_SECRET_RESOLVE_TIMEOUT_MS`(기본 10초) 안에 끝나지 않았다 | 저장소 접근 경로(네트워크, DNS, 엔드포인트)를 본다. 필요하면 제한 시간을 늘린다(최대 60000). 코어는 재시도하지 않는다 |
+| `adapter-error` | 어댑터가 닫힌 코드 없이 실패했다 | 어댑터가 로그를 남기는지 본다. 어댑터는 값과 참조를 로그에 쓰지 않아야 한다 |
+| `adapter-error:not-found` | 저장소에 그 비밀이나 키가 없다 | 참조의 이름·키 오타와 저장소의 비밀을 확인한다 |
+| `adapter-error:access-denied` | 저장소가 거부했다 | 인스턴스의 저장소 접근 자격 증명과 권한(정책, 키 권한)을 확인한다 |
+| `adapter-error:throttled` | 저장소가 요청을 제한했다 | 잠시 뒤 재시작한다. 인스턴스를 한꺼번에 다시 시작하지 않는다 |
+| `adapter-error:unavailable` | 저장소에 닿지 못하거나 저장소 오류다 | 네트워크와 저장소 상태를 확인한다. 이미 실행 중인 인스턴스는 영향이 없다(기동 때 한 번만 읽는다) |
+| `adapter-error:invalid-value` | 어댑터가 값을 받을 수 없다고 판정했다(예: JSON 키 없음, 형식) | 저장소 값의 형식과 참조의 키 지정을 확인한다 |
+
+닫힌 코드는 진단 힌트다. 어댑터가 분류를 잘못 붙이면 원인을 잘못 읽을 수 있다.
+
+- `비밀값 어댑터 로드 실패: <패키지>: <종류>`는 해석 전에 나는 오류다. 종류: `invalid-specifier`(경로·URL·대문자·하위 경로 등 bare 패키지 이름이 아님. 줄에 `<n>번째 항목`으로 나온다), `not-found`(이미지에 패키지가 없다), `import-failed`(패키지를 불러오다 실패했다), `invalid-export`(기본 export가 `scheme`·`resolve`를 가진 객체가 아니다), `reserved-scheme`(`file`), `duplicate-scheme`(두 어댑터가 같은 scheme). 이 오류가 나면 해석은 시도하지 않는다.
+- `MAILO_SECRET_RESOLVE_TIMEOUT_MS은 100 이상 60000 이하의 정수여야 한다`는 설정 값 오류다.
+- 새 인스턴스가 저장소 장애로 뜨지 못하는 동안 이미 실행 중인 인스턴스는 계속 동작한다. 재시작이 필요한 변경(비밀 교체)은 저장소가 복구된 뒤 한다.
+- 로그에서 값이 보이면 보고한다. 어댑터가 오류 메시지나 자체 로그에 값을 쓴 경우다. 코어는 어댑터 오류 메시지를 읽지 않는다.
+
 ## DB 연결 문제
 
 - `GET /health/ready`가 503이고 `checks.database`가 `DOWN`, `circuitBreaker.state`가 `unknown`이다. 로그에 `{"event":"readiness_check_failed","name":<오류 클래스>,"code":<pg 오류 코드>}`가 남는다(접속 정보는 남기지 않는다).
@@ -616,5 +646,6 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 - "수신 도메인 거부"와 "운영 CLI 종료 코드"는 통합 테스트(`test/http/rest-recipient-domains.integration-spec.ts`, `test/file-channel/recipient-domains.integration-spec.ts`, `test/cli/`)가 확인한다. 운영 환경 로그·거부 기록은 확인하지 않았다.
 - 실제 Gmail의 응답 코드·텍스트로 `lastReason` 분류를 대조하지 않았다(ADR-0007 구현 중 확정 2).
 - "지표 해석"은 지표 이름과 라벨을 코드의 카탈로그와 대조했고 `/metrics` 통합 테스트(`test/http/metrics-*.integration-spec.ts`, `test/e2e/metrics-counters.integration-spec.ts`)가 값을 확인한다. 위 증상 표의 원인 후보와 조치는 부하나 실제 장애에서 확인하지 않았다.
+- "기동 시 비밀값 해석 실패"의 종류별 메시지는 단위·통합 테스트(`test/secrets/`, `test/e2e/secret-sources.integration-spec.ts`, `test/e2e/secret-startup.integration-spec.ts`)가 가짜 어댑터로 확인한다. 닫힌 코드의 뜻은 어댑터가 정한다. 실제 저장소(AWS Secrets Manager 등)의 오류가 어떤 코드로 오는지는 확인하지 않았다.
 - 긴 트랜잭션의 원인 목록(`pg_dump`, prepared transaction)은 일반 지식이며 Mailo 피드로 재현하지 않았다.
 - "SMTP 계정 구성"의 기동 오류와 로그 이벤트는 단위·통합 테스트(`test/config/smtp-accounts.spec.ts`, `test/callers/account-id.spec.ts`, `test/e2e/multi-account.integration-spec.ts`, `test/worker/account-startup.spec.ts`)가 확인한다. 운영 환경에서 실행하지 않았고 실제 Gmail·Workspace 계정 둘 이상으로 확인하지 않았다.

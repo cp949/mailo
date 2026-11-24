@@ -453,3 +453,18 @@ storix와 구조가 달라서 그대로 옮기지 않는 부분은 "storix와 �
 번호는 "사용자가 판단할 질문"의 순서와 같다.
 
 새 RQ는 RQ-075~081을 "새 RQ 번호"의 후보 표 그대로 확정한다(`docs/requirements/mail-sending.md` 19절, 모두 미착수).
+
+### 2026-11-24 묶음 A(코어) 구현 때 확정
+
+결정 문구는 바꾸지 않았다. 구현이 후보 문구와 다르게 정한 곳과 후보 문구가 열어 둔 곳만 적는다.
+
+- 시그니처. 결정 2의 후보 `resolveSecrets(env, { scope, importModule? })` 대신 `resolveSecrets(env, { names, rejectUnknown?, importModule?, logger? })`다. `secrets/`가 다른 모듈의 이름 규칙을 알면 leaf가 아니므로 호출자가 허용 목록(`names`)을 넘긴다. 범위 `all`은 `src/secret-names.ts`의 `APP_SECRET_RESOLVE_OPTIONS`(`names` + `rejectUnknown: { prefix: "MAILO_" }`)이고, 범위 `database`는 `config`가 공개한 `DATABASE_SECRET_VARIABLES`(`MAILO_DATABASE_URL`, `MAILO_DB_PASSWORD`)만 `names`로 주고 `rejectUnknown`을 생략한다(알 수 없는 `*_REF` 검사 없음).
+- 이름 규칙의 소유. 정규식은 값을 읽는 로더가 소유하고 공개한다: `config/secret-variables.ts`(관리 토큰, SMTP 계정 비밀, 키링 접두어, 고정 이름), `callers`의 `JWS_SECRET_VARIABLE`, `envelope`의 `JWE_KEY_VARIABLE`. 로더가 쓰는 정규식과 허용 목록이 같은 객체라서 어긋나지 않고, 대조 테스트(`test/secrets/secret-names.spec.ts`)가 관리 토큰 이름 최대 길이 같은 경계와 동적 이름 해석을 확인한다. 키링은 `^<접두어>_V\d+$`이고 앞자리 0(`_V01`)은 해석 뒤 키 로더가 기존 오류로 거부한다.
+- `unknown-name` 판정. 이름 `<NAME>_REF`에서 `<NAME>`이 허용 목록의 규칙에 맞는데 `_FILE`·`_REF`로 끝나면 `unknown-name`이다. 규칙에 맞지 않으면 `rejectUnknown.prefix`로 시작할 때만 `unknown-name`이고 그 밖의 변수(`AWS_*` 등)는 무시한다. 실패 목록의 변수 칸에는 참조 변수 이름(`X_REF`)을 적는다. `MAILO_CLI_TOKEN_REF`는 범위 밖이라 같은 이유로 거부된다.
+- 실패 표기. 방식 칸은 충돌이면 `env+ref`·`file+ref`·`env+file+ref`, 어댑터가 등록된 scheme이면 `ref:<scheme>`, 그 밖(형식 오류, `file` 예약, 등록되지 않은 scheme)은 `ref`다. 등록되지 않은 scheme과 참조 문자열은 오류에 싣지 않는다(오타나 평문 비밀이 `_REF`에 들어갔을 수 있다). 실패는 변수 이름 순으로 정렬해 줄마다 `비밀값 해석 실패: <변수>(<방식>): <종류>`로 보고한다.
+- 정적 실패(충돌, 형식, 예약, 알 수 없는 이름·scheme)가 있는 변수는 어댑터를 부르지 않고 나머지 변수는 병렬로 해석해 실패를 모두 보고한다. 하나라도 실패하면 어떤 값도 돌려주지 않는다.
+- 어댑터 로드 실패의 라벨. 지정자가 bare 이름 규칙을 통과하면 이름을, 아니면 `<n>번째 항목`(원문 없음)을 적는다. `ERR_MODULE_NOT_FOUND`(Jest는 `MODULE_NOT_FOUND`)는 메시지에 지정자 이름이 있을 때만 `not-found`이고 어댑터 내부 의존성 누락은 `import-failed`다. 메시지는 판정에만 쓰고 옮기지 않는다.
+- 설정 오류. 해석 제한 시간의 형식·범위 오류는 `config`의 `ConfigError`를 쓰지 못하므로(leaf) `SecretSettingsError`다. `main.ts`의 `startup_failed` 로그와 마이그레이션 CLI가 `SecretResolutionError`·`SecretAdapterLoadError`·`SecretSettingsError`의 `message`를 싣는다. 마이그레이션 CLI는 표준 오류에 메시지만 낸다.
+- `secrets_resolved`(info)는 해석한 변수가 1건 이상일 때만 남고 필드는 `count`·`schemes`뿐이다. 설정을 읽기 전의 로거로 남기므로 `instance`는 호스트 이름이다. 마이그레이션 CLI는 로그를 남기지 않는다.
+- 해석값은 환경 복사본의 `X`에 쓰고 `X_REF`는 복사본에 그대로 둔다. `docker inspect`·`/proc`에는 참조와 어댑터 자격 증명이 보이고 값은 보이지 않는다는 결정 6의 설명은 코드 읽기에 따른 것이고 `/proc`에서 측정하지 않았다.
+- 검증 범위. 가짜 어댑터로 단위(`test/secrets/`), 통합(`test/e2e/secret-sources.integration-spec.ts`, 실제 PostgreSQL과 로컬 `smtp-server`)과 컴파일한 진입점의 실패 경로(`test/e2e/secret-startup.integration-spec.ts`, `node_modules/.cache` 아래로 컴파일)를 확인했다. 컨테이너·compose 기동, 롤링 배포·롤백, 실제 저장소 어댑터, `/proc` 비노출 측정은 확인하지 않았다. `AGENTS.md`의 패키지 규칙 예외와 명령표(결정 4의 변경안)는 묶음 B에서 반영한다.
