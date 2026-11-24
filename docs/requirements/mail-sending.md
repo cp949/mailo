@@ -110,7 +110,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 | 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-082 이후를 해당 묶음에서 추가한다(RQ-070~074는 10단계가, RQ-075~081은 11단계가 쓴다) |
 | 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했고 A 문서(RQ-067~069: 키 사고 대응, DB 유지보수, 레지스트리 변경 반영)를 작성했다(코드 변경 없음, 문서 검토 남음). C Java 샘플 연동(선택, RQ-066)은 구현 전이다 |
 | 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨). 묶음 A 보존 현황 문서(RQ-070, 문서 작성 완료·검토 남음), B 종결 때 비움(RQ-071, 마이그레이션 없음, 구현 완료·미검증 항목 있음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개, 구현 완료·미검증 항목 있음), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 `0019` 하나, 구현 완료·미검증 항목 있음) |
-| 11단계 | 외부 시크릿 소스(ADR-0016, 승인됨). 묶음 A 코어(RQ-075~078, `X_REF` 규약·기동 전 해석·어댑터 계약과 로더·실패 정책, 구현 완료·컨테이너 기동 미확인), B AWS 어댑터와 변형 이미지(RQ-079·080, 어댑터 단위 테스트·로컬 이미지 스모크 완료, `variants` 잡의 GitHub 실행 미확인), C 운영 가이드와 수동 시나리오(RQ-081, 구현 전). 마이그레이션 없음 |
+| 11단계 | 외부 시크릿 소스(ADR-0016, 승인됨). 묶음 A 코어(RQ-075~078, `X_REF` 규약·기동 전 해석·어댑터 계약과 로더·실패 정책, 구현 완료·롤링 배포·롤백 미실행), B AWS 어댑터와 변형 이미지(RQ-079·080, 어댑터 단위 테스트·로컬 이미지 스모크 완료, `variants` 잡의 GitHub 실행 미확인), C 운영 가이드와 수동 시나리오(RQ-081, 문서 작성과 LocalStack 4.12 수동 시나리오 실행 완료, 문서 검토 남음). 마이그레이션 없음 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -2513,11 +2513,11 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 ## 19. 외부 시크릿 소스
 
-결정은 [ADR-0016](../adr/0016-external-secret-sources.md)이고 구현은 묶음 A(코어) → B(AWS 어댑터와 변형 이미지) → C(운영 가이드와 수동 시나리오) 순서다. RQ-075~078은 묶음 A, RQ-079·080은 묶음 B, RQ-081은 묶음 C의 범위다. 마이그레이션은 없다. 코어 `apps/mailo`에는 새 npm 의존성이 없다. AWS SDK는 묶음 B의 어댑터 패키지에만 들어간다. 묶음 A(RQ-075~078)와 B(RQ-079·080)는 구현했고 묶음 C(RQ-081)는 구현 전이다. 묶음 B의 `variants` 잡은 GitHub에서 실행한 적이 없다.
+결정은 [ADR-0016](../adr/0016-external-secret-sources.md)이고 구현은 묶음 A(코어) → B(AWS 어댑터와 변형 이미지) → C(운영 가이드와 수동 시나리오) 순서다. RQ-075~078은 묶음 A, RQ-079·080은 묶음 B, RQ-081은 묶음 C의 범위다. 마이그레이션은 없다. 코어 `apps/mailo`에는 새 npm 의존성이 없다. AWS SDK는 묶음 B의 어댑터 패키지에만 들어간다. 묶음 A(RQ-075~078)와 B(RQ-079·080)는 구현했고 묶음 C(RQ-081)는 문서와 수동 시나리오를 작성했다(코드 변경 없음). 묶음 B의 `variants` 잡은 GitHub에서 실행한 적이 없다.
 
 ### RQ-075 `X_REF` 규약과 알 수 없는 `*_REF` 거부
 
-- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 컨테이너 기동 미확인)
+- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 롤링 배포·롤백 미실행. 변형 이미지의 컨테이너 기동은 RQ-081 수동 시나리오로 확인)
 
 **요구사항:**
 
@@ -2539,11 +2539,11 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 - `secrets/resolve.spec.ts`: 충돌 조합 셋과 `X`가 빈 문자열인 경우(충돌 아님), 형식 오류, `file` 예약, 해석값 빈 문자열(`empty`), `unknown-name`(`rejectUnknown`, `_FILE`·`_REF` 끝 이름). `secrets/secret-names.spec.ts`: 허용 목록 기준 알 수 없는 `MAILO_*_REF`(오타, `MAILO_CLI_TOKEN_REF`)와 마이그레이션 CLI 범위의 무시, 로더 세 곳의 `_REF` 끝 `secretVar`·`privateKeyVar` 거부(변이 확인: 거부 조건을 지우면 세 테스트가 실패), `.env.example`의 활성 줄·주석 예시.
 - `e2e/secret-startup.integration-spec.ts`: 컴파일한 `main.js`를 평문 환경 변수 구성(`X_REF` 없음)으로 띄워 기동하고 `secrets_resolved`를 남기지 않는다.
 - 구현: `secrets/resolve.ts`, `config/secret-variables.ts`, `callers/registry.ts`, `envelope/key-file.ts`, `config/smtp-accounts.ts`, `secret-names.ts`.
-- 남은 미검증: 컨테이너(`read_only`·`cap_drop`)·compose 기동과 롤링 배포·롤백은 실행하지 않았다(L3 미실행). 실제 저장소 어댑터는 묶음 B 범위다.
+- 남은 미검증: 롤링 배포·롤백은 실행하지 않았다. `X_REF` 없는 구성의 컨테이너 기동도 실행하지 않았다. 변형 이미지의 `read_only`·`cap_drop` compose 기동은 RQ-081의 수동 시나리오가 확인한다(LocalStack 4.12, 실제 AWS 아님).
 
 ### RQ-076 기동 전 해석, 환경 복사본, 동적 이름
 
-- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 컨테이너 기동 미확인)
+- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 롤링 배포·롤백 미실행. 변형 이미지의 컨테이너 기동은 RQ-081 수동 시나리오로 확인)
 
 **요구사항:**
 
@@ -2567,11 +2567,11 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 - `e2e/secret-sources.integration-spec.ts`(실제 PostgreSQL, 로컬 `smtp-server`): `MAILO_DB_PASSWORD_REF`·`MAILO_DATABASE_URL_REF`로 받은 값으로 실제 DB에 접속하고 틀린 비밀번호는 `28P01`로 실패한다. `createApp`에 복사본을 넘겨 기동한 앱이 REF 개인키로 JWE를 풀고(REST), REF JWS 비밀로 서명한 파일을 수집하고(파일 채널, 다른 비밀의 서명은 거부), REF SMTP 비밀번호로 인증해 발송하고, REF 운영 토큰으로 `/ops/accounts`를 연다.
 - `e2e/secret-startup.integration-spec.ts`(컴파일한 진입점을 자식 프로세스로 실행, 가짜 어댑터를 컴파일 폴더의 `node_modules`에 설치, 전용 schema): `migrate-cli.js`가 `MAILO_DATABASE_URL_REF`로 접속해 마이그레이션을 적용하고, `main.js`가 DB URL·SMTP 비밀번호·DB 본문 키·지문 키·JWE 개인키·운영 토큰을 모두 `X_REF`로 받아 기동해 `/health/ready` 200과 `/ops/accounts` 200을 낸다(변이 확인: `main.ts`가 `loadConfig(env)`를 `loadConfig()`로, `createApp`에서 `env`를 빼면 이 테스트가 실패한다). 출력에 값 canary가 없다. 어댑터가 해석 뒤 타이머 같은 핸들을 남겨도 `migrate-cli.js`는 성공하면 종료 코드 0과 같은 출력(`마이그레이션 적용 N건`)으로 끝난다(`process.exit(0)`, 이 호출을 지우면 테스트가 제한 시간에 죽는 것을 확인했다).
 - 구현: `secrets/`, `secret-names.ts`, `main.ts`, `db/migrate-cli.ts`.
-- 남은 미검증: 컨테이너(`read_only`·`cap_drop`)·compose 기동과 롤링 배포·롤백은 실행하지 않았다(L3 미실행). 실제 저장소 어댑터는 묶음 B 범위다.
+- 남은 미검증: 롤링 배포·롤백은 실행하지 않았다. `X_REF` 없는 구성의 컨테이너 기동도 실행하지 않았다. 변형 이미지의 `read_only`·`cap_drop` compose 기동은 RQ-081의 수동 시나리오가 확인한다(LocalStack 4.12, 실제 AWS 아님).
 
 ### RQ-077 어댑터 계약과 로더
 
-- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 컨테이너 기동 미확인)
+- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 롤링 배포·롤백 미실행. 변형 이미지의 컨테이너 기동은 RQ-081 수동 시나리오로 확인)
 
 **요구사항:**
 
@@ -2596,7 +2596,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 ### RQ-078 해석 실패 정책과 값 비노출
 
-- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 컨테이너 기동 미확인)
+- [ ] **진행 상태:** 진행 중 (11단계 묶음 A, 구현 완료, 롤링 배포·롤백 미실행. 변형 이미지의 컨테이너 기동은 RQ-081 수동 시나리오로 확인)
 
 **요구사항:**
 
@@ -2615,7 +2615,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 - `secrets/resolve.spec.ts`: `signal`을 무시하는 어댑터의 timeout 확정과 `abort`, timeout 뒤 늦은 거부의 미처리 거부 없음(`Promise.race`가 거부를 구독하므로 이 테스트는 구조적 성질을 확인한다), 닫힌 코드 5종의 `adapter-error:<코드>` 통과와 그 밖 코드·비객체 던짐의 `adapter-error`, 해석 실패 종류별 메시지, 오류에 canary(값, 어댑터 메시지, 참조) 없음, `secrets_resolved`의 건수·scheme만, 설정 오류(`MAILO_SECRET_RESOLVE_TIMEOUT_MS`)와 어댑터 로드 실패가 해석보다 먼저. `e2e/secret-startup.integration-spec.ts`(컴파일한 `main.js`·`migrate-cli.js` 실행): 종료 코드 1, `startup_failed`의 `error`·`message`, 마이그레이션 CLI의 표준 오류 문구, 출력에 canary 없음, `X_REF`가 없으면 해석 단계가 기존 설정 오류 경로로 간다.
 - 구현: `secrets/resolve.ts`, `secrets/errors.ts`, `main.ts`의 `startup_failed` 클래스 목록, `db/migrate-cli.ts`.
-- 남은 미검증: 컨테이너(`read_only`·`cap_drop`)·compose 기동과 롤링 배포·롤백은 실행하지 않았다(L3 미실행). 실제 저장소 어댑터는 묶음 B 범위다. 어댑터 코드가 코어 밖에서 값을 로그에 쓰는지는 코어가 통제하지 못한다.
+- 남은 미검증: 롤링 배포·롤백은 실행하지 않았다. 변형 이미지의 `read_only`·`cap_drop` compose 기동과 컨테이너 PID 1 `/proc/1/environ`의 값 비노출은 RQ-081의 수동 시나리오가 확인한다(LocalStack 4.12, 실제 AWS 아님). 어댑터 코드가 코어 밖에서 값을 로그에 쓰는지는 코어가 통제하지 못한다.
 
 ### RQ-079 AWS Secrets Manager 어댑터
 
@@ -2664,21 +2664,24 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0016은 2026-11-24에 승인됐다.
 
 ### RQ-081 운영 문서와 수동 시나리오
 
-- [ ] **진행 상태:** 미착수 (11단계 묶음 C)
+- [ ] **진행 상태:** 진행 중 (11단계 묶음 C, 문서와 수동 시나리오 작성 완료. LocalStack 4.12 시나리오 실행 통과, 문서 검토 남음)
 
 **요구사항:**
 
 - `docs/operations/aws-secrets-manager.md`(새 문서)가 이미지, 참조 형식, IAM 최소 권한 예, 자격 증명 체인 주의, 한계, 검증하지 않은 것을 쓴다. 실제 계정 ID·ARN을 쓰지 않는다(ADR-0016 결정 10).
-- LocalStack 수동 시나리오의 도입 여부는 묶음 C에서 결정한다. 도입하면 "수동, CI 아님"으로 표시한다.
+- LocalStack 수동 시나리오를 `scripts/secrets-localstack/`에 둔다(ADR-0016 질문 9의 결정은 "구현 중 확정" 묶음 C). "수동, CI 아님"으로 표시하고 기본 compose·CI에 넣지 않는다. LocalStack 2026.03.0 이후 이미지는 Auth Token이 있어야 시작하므로 기본은 토큰 없이 시작하는 4.12 고정 이미지이고, 최신 이미지는 환경 변수로 토큰을 줄 때만 쓴다. 토큰을 저장소에 두지 않는다.
 - 실제 AWS를 검증하지 않았다고 표시한다.
 
 **수용 조건:**
 
-- [ ] 문서가 "검증하지 않은 것"을 적고 새 링크가 존재한다. (문서 검토로만 확인한다.)
+- [ ] 문서가 "검증하지 않은 것"을 적고 새 링크가 존재한다. (문서 검토로만 확인한다. 링크 존재는 `grep`으로 수동 점검했다. 자동 검증 없음.)
+- [x] 수동 시나리오가 변형 이미지를 `read_only`·`cap_drop: [ALL]`·`no-new-privileges` 컨테이너로 LocalStack에 연결해 기동하고, 값이 맞아야 통과하는 경로와 값 없는 기동 실패 5종을 확인한다.
 
 **판정 근거:**
 
-- 아직 없다.
+- `scripts/secrets-localstack/run.sh`(2026-11-24, `localstack/localstack:4.12`, 로컬 빌드 기본·변형 이미지, L3 스크립트이고 자동 테스트가 아니다): 14건 통과, 실패 0건. 모든 비밀을 `_REF`로 받고(운영 토큰은 ARN 참조, 나머지는 JSON 키 참조) 기동한다. 운영 토큰으로 `/health/ready` 200과 틀린 토큰 401, DB 비밀번호(PostgreSQL 초기 비밀번호와 같은 값)로 DB 접속, Mailpit이 SMTP 비밀번호를 검사해 작업이 `SENT`, DB 본문 키·지문 키가 키 형식으로 해석돼 등록이 202다. `secrets_resolved`가 `count: 5`, `schemes: aws-sm`이다. Mailo 로그에 값·SecretId·ARN이 없고 `docker inspect`의 `Config.Env`와 PID 1의 `/proc/1/environ`에 해석한 값이 없다. 값 없는 기동 실패 5종(`adapter-error:not-found`, `adapter-error:invalid-value`, `conflict`, `adapter-error:unavailable`, 기본 이미지의 `unknown-scheme`)은 종료 코드 1이고 출력에 값이 없다. Mailpit의 기대 비밀번호를 다른 값으로 바꾸면 SMTP 항목이 실패하는 것을 확인했다(변이 확인).
+- LocalStack 정책 확인(2026-11-24): 2026.03.0(2026-03-23)부터 단일 이미지가 Auth Token을 요구한다. 토큰 없이 `localstack-pro:2026.8.2`를 실행하면 종료 코드 55로 끝나고 `4.12`는 시작한다. 출처와 결정은 ADR-0016 "구현 중 확정"과 `aws-secrets-manager.md`.
+- 한계: LocalStack은 IAM·KMS를 검사하지 않는다. `access-denied`·`throttled` 경로, 자격 증명 체인, 실제 AWS의 지연·제한은 확인하지 않았다. LocalStack 최신 이미지(토큰 필요) 경로는 토큰이 없어 실행하지 않았다. 롤링 배포·롤백, 문서 검토(독립 리뷰)는 남았다.
 
 ## 확정한 항목
 

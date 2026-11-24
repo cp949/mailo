@@ -589,7 +589,7 @@ secrets:
 - 저장소가 응답하지 않으면 새 인스턴스는 기동하지 못하고(`restart: unless-stopped`가 재시작을 반복한다), 이미 실행 중인 인스턴스는 영향이 없다. 해석 1건과 어댑터 모듈 `import()` 1건은 각각 `MAILO_SECRET_RESOLVE_TIMEOUT_MS`(기본 10초) 안에 끝나야 하고(`import()`가 끝나지 않으면 `import-failed`), 코어는 재시도하지 않는다. 어댑터가 재시도할 수 있다. 해석은 병렬이라 건수가 늘어도 전체 시간은 가장 느린 1건에 가깝다. 컨테이너의 healthcheck `start_period`(30초)는 마이그레이션 CLI와 앱이 각각 해석하는 시간을 포함해야 한다. 기본 timeout 10초 두 번이 모두 실패 직전까지 가면 20초다.
 - 실패는 종료 코드 1이다. 앱은 `startup_failed` 로그(필드 `error`, `message`), 마이그레이션 CLI는 표준 오류에 한 줄씩 `비밀값 해석 실패: <변수>(<방식>): <종류>`를 낸다. 변수 이름, 지정 방식, 실패 종류만 담고 값·참조 문자열·어댑터 오류 메시지는 담지 않는다. 종류별 조치는 `troubleshooting.md` "기동 시 비밀값 해석 실패"다.
 - 성공하면 `secrets_resolved`(info) 한 줄이 남는다. 필드는 `count`(해석 건수)와 `schemes`(쓴 scheme, 쉼표 구분)뿐이다. 해석 대상이 없으면 남지 않는다. 설정을 읽기 전에 남는 줄이라 `instance`는 호스트 이름이다.
-- 프로세스 환경(`docker inspect`의 `Config.Env`, `/proc/<pid>/environ`)에는 참조(`X_REF`)와 어댑터의 저장소 접근 자격 증명(`AWS_*` 환경 변수를 쓰는 경우)이 보인다. 해석한 값은 보이지 않는다. 해석값은 앱 프로세스 메모리의 환경 복사본에 있다. 같은 프로세스 권한의 메모리 읽기는 막지 못한다(코드 읽기에 따른 설명이고 `/proc` 비노출은 측정하지 않았다).
+- 프로세스 환경(`docker inspect`의 `Config.Env`, `/proc/<pid>/environ`)에는 참조(`X_REF`)와 어댑터의 저장소 접근 자격 증명(`AWS_*` 환경 변수를 쓰는 경우)이 보인다. 해석한 값은 보이지 않는다. 해석값은 앱 프로세스 메모리의 환경 복사본에 있다. 같은 프로세스 권한의 메모리 읽기는 막지 못한다. `Config.Env`와 PID 1의 `/proc/1/environ`에 해석값이 없는 것은 LocalStack 수동 시나리오에서 확인했다(`aws-secrets-manager.md` "LocalStack 수동 시나리오", 2026-11-24).
 
 DB 비밀번호를 `_REF`로 바꾸는 compose 예(값은 모두 가짜다. 실제 AWS와 compose 기동으로 확인하지 않았다). 어댑터가 든 변형 이미지가 있어야 동작한다.
 
@@ -619,7 +619,7 @@ services:
 
 #### AWS 변형 이미지(`-aws`)
 
-AWS Secrets Manager의 비밀을 `X_REF`로 읽는 이미지다(ADR-0016 결정 4·8, RQ-079·080).
+AWS Secrets Manager의 비밀을 `X_REF`로 읽는 이미지다(ADR-0016 결정 4·8, RQ-079·080). AWS 쪽 구성과 운영 절차는 `aws-secrets-manager.md`가 소유한다.
 
 - 이미지: `ghcr.io/cp949/mailo:vX.Y.Z-aws`. 같은 릴리스 커밋의 기본 이미지(digest) 위에 어댑터 `@cp949/mailo-secret-source-aws`와 AWS SDK(`@aws-sdk/client-secrets-manager`)만 얹었다. 기본 이미지에는 둘 다 없다. 이동 태그(`latest-aws`)는 없다. 변형은 기본 이미지와 Release를 발행한 뒤 별도 잡이 발행하므로 늦거나 없을 수 있다. 이 경우 기본 이미지는 이미 나가 있다(`ci.md` "variants 잡").
 - 쓰는 법: 위 GHCR 절의 override처럼 `image`를 `-aws` 태그로 주고 `build: !reset null`을 쓴다. `MAILO_SECRET_ADAPTERS=@cp949/mailo-secret-source-aws`, `AWS_REGION`(필수), `X_REF`를 준다.
@@ -628,7 +628,7 @@ AWS Secrets Manager의 비밀을 `X_REF`로 읽는 이미지다(ADR-0016 결정 
 - 오류 코드(`troubleshooting.md` "기동 시 비밀값 해석 실패"): `not-found`(비밀 없음), `access-denied`(권한·자격 증명 없음·서명·KMS 복호화 거부), `throttled`, `unavailable`(서비스 오류, 네트워크, 시간 초과), `invalid-value`(참조 형식 오류, `AWS_REGION` 없음, `SecretBinary`만 있음, JSON이 아니거나 키가 없거나 값이 문자열이 아님). SDK의 오류 메시지·SecretId·값은 오류에 싣지 않는다.
 - 재시도: SDK 기본(요청당 최대 3회)이 해석 제한 시간 안에서 동작한다. 코어는 재시도하지 않는다.
 - `read_only: true`·`cap_drop: [ALL]`·`--network none` 컨테이너에서 환경 변수 자격 증명으로 해석 스모크가 통과했다(`adapters/secret-source-aws/image-smoke/run.sh`). 이 경로에서 SDK가 필수로 쓰는 쓰기 경로는 없었다(`HOME`은 `/home/node`이고 `~/.aws`가 없어도 오류가 아니다). 다른 자격 증명 경로(인스턴스·작업 역할, 웹 ID 토큰, SSO 캐시)는 실행하지 않았다.
-- 검증하지 않은 것: 실제 AWS 계정(IAM, KMS, 자격 증명 체인, IMDSv2, 네트워크 제한, 실제 지연·제한), 변형 이미지의 취약점 스캔(스캔 단계가 없다), `variants` 잡의 GitHub 실행. IAM 정책 예시와 KMS 설정은 이 문서에 없다(별도 운영 가이드 예정).
+- 검증하지 않은 것: 실제 AWS 계정(IAM, KMS, 자격 증명 체인, IMDSv2, 네트워크 제한, 실제 지연·제한), 변형 이미지의 취약점 스캔(스캔 단계가 없다), `variants` 잡의 GitHub 실행. IAM 정책 예시, KMS 설정, 자격 증명 체인, 값 교체, 롤백 절차는 `aws-secrets-manager.md`다.
 
 ```txt
 위험도: 중간 (비밀 저장소 장애가 새 인스턴스의 기동을 막는다. 변형 이미지는 AWS SDK와 그 취약점을 이 저장소가 소유한다)
@@ -1039,8 +1039,9 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - `/metrics`(RQ-049~052): 운영 크기(수백만 행)·다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프에서의 쿼리 비용과 풀 점유(예비 연결 4개 가정), 롤링 배포(구버전 404는 코드 읽기 결과)와 롤백, 알림 규칙의 발화 조건과 임계값, 부하에서의 스크레이프 간격. 컨테이너·실제 Prometheus 스크레이프·`promtool`은 한 번씩 실행했다("지표").
 - 백업·복구 절차.
 - compose `secrets:` 방식의 시크릿 마운트(예시는 `docker compose config` 문법만 확인했다).
-- 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패·성공 경로(프로세스 수준)를 확인했다. compose 예시의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복, `/proc/<pid>/environ`에서 해석값이 보이지 않는지는 확인하지 않았다.
+- 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패·성공 경로(프로세스 수준)를 확인했다. 이 절의 compose override 예시(DB 비밀번호 `_REF`)와 `docker-compose.migrate-once.yml`의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복은 확인하지 않았다. 변형 이미지의 compose 기동(독립 compose 파일)과 `/proc/1/environ`의 값 비노출은 LocalStack 수동 시나리오가 확인한다(아래 줄).
 - AWS 어댑터와 변형 이미지(ADR-0016 묶음 B, 2026-11-24): 어댑터 단위 테스트(가짜 SDK 클라이언트, 로컬 HTTP fixture를 거치는 실제 SDK), 로컬에서 빌드한 기본 이미지의 어댑터·SDK 부재 확인(`image-smoke/verify-base.sh`), 변형 이미지를 `read_only`·`cap_drop: [ALL]`·`--network none`으로 실행한 해석 스모크(`image-smoke/run.sh`: bare 패키지 이름 로드, 해석, JSON 키, 닫힌 코드, 로드 오류)를 실행했다. 실제 AWS(IAM, KMS, 자격 증명 체인, IMDSv2, throttling), 취약점 스캔, `release.yml` `variants` 잡의 GitHub 실행, 발행된 `-aws` 이미지의 pull과 compose 기동은 확인하지 않았다.
+- LocalStack 수동 시나리오(ADR-0016 묶음 C, 2026-11-24, `scripts/secrets-localstack/run.sh`, LocalStack 4.12): 로컬 빌드한 변형 이미지를 `read_only`·`cap_drop: [ALL]` compose 컨테이너로 띄워 14건을 확인했다. 실제 AWS와 LocalStack 최신 이미지(Auth Token 필요)는 실행하지 않았다(`aws-secrets-manager.md`).
 - `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).
 - TLS를 켠 PostgreSQL 서버에 대한 `MAILO_DB_SSLMODE` 접속.
 - TLS 종단 프록시 구성, 다중 인스턴스 배포.

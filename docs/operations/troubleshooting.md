@@ -564,7 +564,7 @@ SELECT e.id, e.caller_id, e.job_id, e.failure_reason, e.created_at
 
 닫힌 코드는 진단 힌트다. 어댑터가 분류를 잘못 붙이면 원인을 잘못 읽을 수 있다.
 
-AWS 어댑터(`aws-sm`, 변형 이미지 `-aws`)가 코드를 붙이는 기준은 `deployment.md` "AWS 변형 이미지(`-aws`)"의 오류 코드 줄이다. 이 어댑터 고유의 확인 사항:
+AWS 어댑터(`aws-sm`, 변형 이미지 `-aws`)가 코드를 붙이는 기준은 `deployment.md` "AWS 변형 이미지(`-aws`)"의 오류 코드 줄이다. 이 어댑터 고유의 확인 사항(AWS 쪽 원인과 IAM·KMS·자격 증명 확인은 `aws-secrets-manager.md` "시작 실패와 조치"):
 
 - `adapter-error:invalid-value`의 원인이 `AWS_REGION` 없음, 형식이 틀린 `SecretId`, ARN의 지역과 `AWS_REGION`의 불일치(어댑터는 `AWS_REGION`만 쓴다. 이 경우 서비스 응답의 분류는 추정이다)일 수 있다. 변형 이미지의 컨테이너 환경에 `AWS_REGION`이 있는지 본다.
 - `adapter-error:access-denied`는 정책 거부 외에 자격 증명을 얻지 못한 경우(SDK 기본 체인 실패)도 포함한다. 컨테이너에 `AWS_ACCESS_KEY_ID` 같은 변수나 플랫폼 역할이 있는지 본다.

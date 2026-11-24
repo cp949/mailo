@@ -196,7 +196,7 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
   - 계정 파일에는 `user`·`from` 주소가 있다(비밀번호 값은 없다). `MAILO_SMTP_USER`와 같은 민감도로 다루고 읽기 전용으로 마운트한다. 로그·오류·지표에는 계정 ID만 쓴다.
   - 기동 오류: 변수가 없으면 `MAILO_SMTP_SECRET_<이름> 또는 MAILO_SMTP_SECRET_<이름>_FILE이 필요하다(accounts[i].auth.secretVar)`, `_FILE`을 읽지 못하면 `MAILO_SMTP_SECRET_<이름>_FILE이 가리키는 파일을 읽지 못했다(<errno>)`다. 값은 오류에 나오지 않는다.
 - DB 접속 URL: 비밀번호를 바꾸면 PostgreSQL 계정과 시크릿을 함께 바꾸고 재시작한다.
-- 외부 시크릿 소스(`X_REF`, ADR-0016): 비밀을 저장소에서 기동 때 한 번 읽는다(`deployment.md` "외부 시크릿 소스(`X_REF`)"). 키 교체 절차(새 버전 추가, 현재 버전 올림, 이전 키 보관)는 그대로다.
+- 외부 시크릿 소스(`X_REF`, ADR-0016): 비밀을 저장소에서 기동 때 한 번 읽는다(`deployment.md` "외부 시크릿 소스(`X_REF`)"). 키 교체 절차(새 버전 추가, 현재 버전 올림, 이전 키 보관)는 그대로다. AWS Secrets Manager 구성은 `aws-secrets-manager.md`다.
   - 키 버전마다 저장소에 별도 비밀을 둔다. 버전이 있는 키(DB 본문 키 `_V<n>`, 지문 키 `_V<n>`, JWE 개인키, 호출처 JWS 비밀키)의 `X_REF`는 값이 바뀌지 않는 비밀을 가리킨다.
   - AWS 어댑터(`aws-sm://<SecretId>#<JSON 키>`)로 한 비밀에 여러 값을 JSON으로 묶으면, 그 비밀을 다시 쓸 때 이미 쓰는 키 버전의 값이 바뀌지 않게 한다. 키 버전마다 별도 비밀을 두는 편이 안전하다. 같은 `SecretId`를 가리키는 변수마다 `GetSecretValue`가 한 번씩 나간다.
   - 저장소의 자동 교체나 같은 이름의 값 덮어쓰기를 켜지 않는다. 재시작 뒤 이전 행의 복호화와 지문 비교가 실패한다. Mailo는 같은 `X_REF`의 값이 바뀐 것을 감지하지 못한다(`_FILE`도 같다).

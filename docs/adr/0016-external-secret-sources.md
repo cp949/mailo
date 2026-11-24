@@ -4,7 +4,7 @@
 
 승인 (2026-11-24). 결정 1~10과 "사용자가 판단할 질문" 9개의 권고안을 모두 승인했다. 질문의 확정 답은 "구현 중 확정"에 적었다.
 
-구현 상태: 묶음 A(코어)와 B(AWS 어댑터, 변형 이미지, CI·릴리스) 구현(2026-11-24). 묶음 B의 `adapter`·`variants` 잡은 GitHub에서 실행하지 않았다. C(운영 가이드와 수동 시나리오)는 구현 전이다. 이 문서 본문에 "승인 전"·"구현하지 않았다"로 쓰인 문구는 작성 시점의 것이고 현재 상태는 이 줄과 "구현 중 확정"이 정한다.
+구현 상태: 묶음 A(코어)와 B(AWS 어댑터, 변형 이미지, CI·릴리스) 구현(2026-11-24). 묶음 B의 `adapter`·`variants` 잡은 GitHub에서 실행하지 않았다. 묶음 C(운영 가이드 `docs/operations/aws-secrets-manager.md`와 LocalStack 수동 시나리오 `scripts/secrets-localstack/`)는 작성했고(2026-11-24) 문서 검토(독립 리뷰)가 남았다. 이 문서 본문에 "승인 전"·"구현하지 않았다"로 쓰인 문구는 작성 시점의 것이고 현재 상태는 이 줄과 "구현 중 확정"이 정한다.
 
 검증 범위는 코드·문서 읽기다(2026-11-24). 테스트, 스크립트, 이미지 빌드, 외부 서비스 호출을 실행하지 않았다. "배경"의 "확인한 사실"은 Mailo와 형제 프로젝트 storix의 코드·문서에서 읽은 것이다. 그 밖의 것은 "가정"과 "미결정·확인하지 않은 것"에 모았다. 문서에는 줄 번호 대신 파일·함수 이름으로 근거를 적었다(`docs/agents/writing-styles.md`).
 
@@ -499,3 +499,21 @@ storix와 구조가 달라서 그대로 옮기지 않는 부분은 "storix와 �
 - 클라이언트 생성(`createClient`) 실패도 `try` 안에서 닫힌 코드로 바꾼다(자격 증명 체인 실패 등이 SDK 오류 객체 그대로 나가지 않는다).
 - 변형 이미지 스모크의 권한 검사에 그룹 쓰기(`-perm -0020`)를 더했다.
 - 변수 N개면 클라이언트 생성과 자격 증명 조회가 N번이다(합치지 않는다. 결정 8의 "중복 제거 없음"과 같다).
+
+### 2026-11-24 묶음 C(운영 가이드와 수동 시나리오) 구현 때 확정
+
+결정 문구는 바꾸지 않았다. 질문 9의 결정, 결정 9의 "확인하지 않은 것"을 확인한 곳, 구현이 정한 곳만 적는다. 코드 변경은 없다.
+
+- 질문 9 결정: LocalStack 수동 시나리오를 둔다(결정 9의 B). 위치는 `scripts/secrets-localstack/`(`run.sh`, `compose.localstack.yml`, `init-secrets.sh`)이고 독립 compose 파일이다. 기본 compose·CI·compose profile에 넣지 않는다(결정 9의 C 불채택). 운영 문서는 `docs/operations/aws-secrets-manager.md`(결정 10)다.
+- 이미지 선택(Auth Token 문제): LocalStack for AWS는 2026-03-23(`2026.03.0`)부터 `localstack/localstack` 이미지 하나로 나오고 시작에 Auth Token이 필요하다. 그래서 시나리오의 기본 이미지는 토큰 없이 시작하는 `localstack/localstack:4.12`(digest 고정)다. 최신 이미지는 `LOCALSTACK_IMAGE`와 `LOCALSTACK_AUTH_TOKEN`을 환경에 줄 때만 쓰고 토큰은 LocalStack 컨테이너에만 전달한다. 토큰이 없어 최신 이미지 경로는 실행하지 않았다. 선택지 (b)(가짜 HTTP fixture 절차 설명)는 어댑터 단위 테스트와 이미지 스모크가 이미 자동으로 하고 있어 새 정보를 더하지 못해 채택하지 않았고, (c)(시나리오 없음)는 4.12가 토큰 없이 실행돼 필요하지 않았다.
+- LocalStack 사실 확인(2026-11-24, 읽은 쪽은 공식 문서·블로그, 실행은 이 저장소 로컬):
+  - 릴리스 노트 `2026.03.0`(2026-03-23): "an auth token or CI auth token is required to start LocalStack for AWS"(`blog.localstack.cloud/localstack-for-aws-release-2026-03-0/`). 2026-04-06까지의 `LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT=1` 우회는 끝났다. 같은 글이 비상업 용도의 무료 Hobby 플랜을 쓴다.
+  - 공지 글(2026-03-05, `blog.localstack.cloud/localstack-single-image-next-steps/`): 무료 플랜은 취미·개인 개발자용이다. 고정 버전(예: 4.12)을 쓰는 방법을 안내하고 고정 버전에는 이후 갱신이 없다고 쓴다. CI에는 CI 전용 토큰을 쓰라고 안내한다.
+  - 인증 문서(`docs.localstack.cloud/getting-started/auth-token/`): Auth Token은 컨테이너를 시작하는 데 필수다. 서비스 문서(`docs.localstack.cloud/aws/services/secretsmanager/`)는 Secrets Manager가 Hobby 플랜부터 포함이라고 쓴다. 라이선스 문서(`docs.localstack.cloud/aws/licensing/`)는 Hobby를 비상업 용도로 쓰고 CI 테스트를 Hobby 기능으로 표시한다.
+  - 로컬 실행: 토큰 없이 `localstack/localstack-pro:2026.8.2`는 종료 코드 55로 끝난다(`License activation failed`). `localstack/localstack:4.12`(4.12.0, 빌드 2025-12-11, `edition: community`)는 토큰 없이 시작하고 `secretsmanager`가 `available`이다.
+  - 확인하지 않은 것: 4.12 이미지의 라이선스 조건, Hobby 플랜에 LocalStack 계정이 필요한지, 4.12 이후 보안 갱신 여부. 이 시나리오는 가짜 값과 compose 네트워크 안의 접근만 쓴다.
+- 시나리오로 확인한 것(`run.sh` 14건 통과, 2026-11-24, 4.12): 결정 6의 "`/proc`에서 측정하지 않았다"를 변형 이미지 컨테이너의 PID 1(`node dist/main.js`)의 `/proc/1/environ`과 `docker inspect`의 `Config.Env`에 해석값이 없다는 것으로 확인했다(참조와 가짜 AWS 키만 있다). 모든 비밀이 `_REF`인 구성(운영 토큰은 ARN 참조, 나머지는 JSON 키 참조)이 `read_only`·`cap_drop: [ALL]`·`no-new-privileges` compose 컨테이너에서 `secrets_resolved`(`count` 5, `schemes` `aws-sm`)를 남기고 기동한다. DB 비밀번호·운영 토큰·SMTP 비밀번호는 값이 맞아야 통과하는 경로로 확인했다(DB는 PostgreSQL 초기 비밀번호와 같은 값, 운영 토큰은 틀린 값이 401, SMTP는 Mailpit이 비밀번호를 검사하고 기대값을 바꾸면 항목이 실패함). 값 없는 기동 실패 5종(`adapter-error:not-found`, `adapter-error:invalid-value`, `conflict`, `adapter-error:unavailable`, 기본 이미지의 `unknown-scheme`)은 종료 코드 1이고 출력에 값·SecretId·ARN이 없다. DB 본문 키와 지문 키는 키 형식으로 해석된 것만 확인했다(어떤 32바이트 값이든 통과한다).
+- 시나리오가 확인하지 못하는 것: LocalStack은 IAM과 KMS를 검사하지 않아 `access-denied`·`throttled`와 자격 증명 체인(역할, IRSA, IMDS)을 확인하지 못한다. 가짜 자격 증명(`test`/`test`)을 쓴다. 롤링 배포·롤백은 시나리오 범위 밖이다.
+- AWS 동작 확인(2026-11-24, AWS 공식 문서를 읽음. 실제 계정에서 실행하지 않음): `GetSecretValue`는 비밀 ARN에, 고객 관리형 키는 `kms:Decrypt`를 키 ARN에 허용하는 정책 예시가 있고(Secrets Manager 사용 설명서 "Identity-based policies"), ARN 끝 6자는 AWS가 붙이며 이름 끝 `-??????`로 맞출 수 있다. `kms:ViaService` 조건은 `secretsmanager.<리전>.amazonaws.com`이다("Secret encryption and decryption"). `aws/secretsmanager` 키의 키 정책은 계정 주체가 Secrets Manager를 거칠 때의 사용을 허용하고 교차 계정은 지원하지 않는다. IMDSv2 `PUT` 응답 hop limit 기본값은 1이고 `modify-instance-metadata-options`로 올릴 수 있다(EC2 사용 설명서). SDK 공통 자격 증명 체인은 처음 찾은 자격 증명에서 멈춘다(SDKs and Tools 참조 가이드). 운영 문서는 읽은 것과 기억을 구분해 표시한다. 읽지 않은 것: ECS 태스크 역할과 execution role의 구분, EKS IRSA·Pod Identity의 세부, Docker bridge 컨테이너에 필요한 hop limit 값(2), JavaScript SDK 체인의 정확한 순서.
+- 구현 중 관찰: 해석 실패 메시지의 변수 칸은 `X_REF`가 아니라 `X`(예: `MAILO_SMTP_PASSWORD(ref:aws-sm)`)로 나온다. `unknown-name`만 참조 변수 이름을 쓴다(묶음 A의 확정과 같다). DNS로 닿지 못하는 엔드포인트는 SDK 재시도 3회를 거쳐도 `MAILO_SECRET_RESOLVE_TIMEOUT_MS` 안에 `adapter-error:unavailable`로 끝났다(`timeout`이 아니다).
+- `docs/agents/testing.md`의 L3 표에 `scripts/secrets-localstack/`를 더했다.

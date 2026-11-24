@@ -1,7 +1,7 @@
 # 운영 문서
 
 Mailo를 배포·운영하고 호출처를 연동하는 문서다. 요구사항은 `../requirements/`, 결정은 `../adr/`, API 계약은 `../api/`에 있다.
-모든 문서의 값·변수 이름·경로는 2026-11-23 코드와 대조했다. 실행하지 않은 검증은 각 문서의 "검증하지 않은 것" 절에 적었다.
+모든 문서의 값·변수 이름·경로는 2026-11-23 코드와 대조했다(`aws-secrets-manager.md`는 2026-11-24). 실행하지 않은 검증은 각 문서의 "검증하지 않은 것" 절에 적었다.
 
 | 문서 | 내용 | 읽을 사람 |
 | ---- | ---- | --------- |
@@ -11,12 +11,14 @@ Mailo를 배포·운영하고 호출처를 연동하는 문서다. 요구사항�
 | [data-retention.md](./data-retention.md) | 개인정보(수신자, 발신자, 제목·본문, 호출처가 정한 Key·파일 이름, SMTP 응답 텍스트)가 DB·로그·지표·백업에 얼마나 남고 어떻게 지워지는지 표, Mailo 밖에 남는 것, 보존 설정과 기동 검사, 호출처 안내, 보존 기간 변경·수동 삭제의 위험도 | 운영자, 보안 담당 |
 | [db-maintenance.md](./db-maintenance.md) | 테이블별 갱신·삭제 패턴, 팽창·VACUUM 점검 쿼리, 오래 열린 트랜잭션 확인, 보존 삭제 지연 판단, 감사 테이블 행 수 판단, 파티셔닝 검토 시작 조건, 로컬 단일 측정 결과와 한계 | 운영자, DB 운영자 |
 | [troubleshooting.md](./troubleshooting.md) | 차단기 `open`, lease 만료, `unreadable` 파일, 수집 거부 사유 코드, 피드 지연, 기동 시 비밀값 해석 실패, 지표 해석, 로그 이벤트 이름 | 운영자 |
+| [aws-secrets-manager.md](./aws-secrets-manager.md) | AWS Secrets Manager에서 비밀값을 읽는 구성(`X_REF`, 변형 이미지 `-aws`): 선택 기준, 비밀 값 형식, 최소 권한 IAM 정책·KMS, 자격 증명 체인(ECS·EKS·EC2, IMDSv2), 값 교체와 재시작, 시작 실패의 AWS 쪽 원인, 롤백, LocalStack 수동 시나리오(`scripts/secrets-localstack/`)와 검증하지 않은 것 | 배포·보안 담당 |
 | [nfs.md](./nfs.md) | NAS/NFS에서 파일 채널을 운영할 때의 mount 옵션, 컨테이너(Docker NFS 볼륨, 같은 호스트 loopback 확인)에서 쓰는 방법, 폴더 권한, 실측 결과와 한계 | 인프라 담당 |
 | [ci.md](./ci.md) | GitHub Actions 잡 구성, 필수·선택 구분, 로컬 재현 명령, 로컬 확인 범위 | 개발자 |
 
 ## 읽는 순서
 
 - 새로 배포한다: `deployment.md` → `key-management.md` → `caller-onboarding.md`.
+- 비밀값을 AWS Secrets Manager에서 읽는다: `aws-secrets-manager.md`. 규약과 변수는 `deployment.md` "외부 시크릿 소스(`X_REF`)".
 - 호출처를 추가한다: `caller-onboarding.md`. 파일 채널이 NAS/NFS면 `nfs.md`.
 - 호출처의 서명·암호화 구현을 서버 없이 확인한다: `../api/conformance/README.md`(공개 가짜 키로 만든 골든 벡터). 키 규칙은 `key-management.md`.
 - 개인정보가 어디에 얼마나 남는지 확인한다: `data-retention.md`.
