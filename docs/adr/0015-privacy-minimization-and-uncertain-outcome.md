@@ -6,7 +6,7 @@
 
 2026-11-24에 초안을 쓰고 같은 날 사용자가 결정 1~10의 권고안 전체를 승인했다. 열린 질문이던 8건도 모두 권고대로 승인했다. 확정한 답은 "구현 중 확정"의 2026-11-24 승인 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 10. 개인정보 최소화와 결과 불명 정책"이다. 범위는 그 표의 두 항목(수신자 주소 보존 단축, 결과 불명 처리 opt-in)이고 넓히지 않았다.
 
-구현 상태(2026-11-24): 구현 전이다. 구현은 묶음 A(문서) → B(종결 때 비움)를 먼저 한다. 묶음 C·D는 시작하지 않았다. 새 RQ는 RQ-070~074(미착수)다.
+구현 상태(2026-11-24): 묶음 B(결정 2, RQ-071)를 구현했다(미검증 항목 있음). 묶음 A(문서, RQ-070)는 별도 브랜치에서 작성한다. 묶음 C·D는 시작하지 않았다.
 
 검증 범위는 코드·문서 읽기다(2026-11-24). 테스트, 스크립트, 쿼리, 측정을 실행하지 않았다. "배경"의 "확인한 사실"은 코드와 문서에서 읽은 것이고 그 밖의 것은 "미결정·확인하지 않은 것"에 모았다. 문서에는 줄 번호 대신 파일·함수 이름으로 근거를 적었다(`docs/agents/writing-styles.md`).
 
@@ -392,3 +392,13 @@
 
 - 이번 구현 범위는 묶음 A와 B다. 묶음 C·D는 별도 지시 전에 시작하지 않는다.
 - 묶음 A는 브랜치 `docs/data-retention`, 묶음 B는 `feat/redact-on-terminal`에서 한다. 둘 다 이 승인 커밋 위에서 분기한다.
+
+### 2026-11-24 묶음 B(결정 2)
+
+결정 문구는 바꾸지 않는다. 코드는 `queue/complete.ts`, `queue/maintenance.ts`, `queue/cancel.ts`다.
+
+- 종결 UPDATE 세 곳이 본문 세 열, `body_deleted_at`, `recipients`(`'{}'`), `envelope`(`'{}'`)를 같은 문장에서 비운다. 결과 기록과 lease 회수는 둘 다 `applyOutcome`을 거쳐 UPDATE가 한 곳이고, `terminal`이 참일 때만 비운다(`RETRY_WAIT`은 그대로).
+- 이벤트용 수신자는 결과 기록·lease 회수가 잠그며 읽은 `job.recipients`다. 만료 sweep은 잠근 CTE `due`에서 비우기 전 값을 읽어 `RETURNING due.recipients`로 쓴다. 취소는 잠근 CTE `target`을 쓰고 UPDATE에도 상태 조건(`PENDING`·`RETRY_WAIT`)을 둔다. 잠금을 기다린 뒤 `claim`이 먼저 `SENDING`으로 바꿨으면 갱신하지 않고 기존 `not_cancelable` 분기로 간다(기존 통합 테스트가 통과했다).
+- 마이그레이션이 없다. `recipients`는 `NOT NULL`이라 NULL 대신 `'{}'`를 쓴다. `mail_jobs_body_state` CHECK는 본문 세 열이 함께 NULL인 경우를 허용한다.
+- `MAILO_BODY_RETENTION_SECONDS`와 `deleteExpiredBodies`는 그대로다. 대상은 이전 버전이 종결한 행뿐이다. 기본값, 기동 검사, 로그 이벤트 이름(`bodies_deleted`)은 바뀌지 않았다.
+- 설계에서 ADR과 어긋난 점은 없다. 쓰기량 변화(종결 UPDATE의 열 6개 추가, 본문 삭제용 UPDATE 제거)와 롤링 배포는 측정·실행하지 않았다.

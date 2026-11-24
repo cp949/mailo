@@ -40,7 +40,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0012](../adr/0012-metrics-endpoint.md): `GET /metrics`(읽기 토큰만, 관리 토큰 403), 전역 gauge와 인스턴스 counter 구분, 라벨 규칙과 시리즈 상한, TTL 캐시·단일 비행, 수동 텍스트 직렬화, 감사 행 수 지표. 구현했다(RQ-049~052).
 - [ADR-0013](../adr/0013-multiple-smtp-accounts.md): 다중 SMTP 계정(`MAILO_SMTP_ACCOUNTS_FILE`, `default` 출처 규칙), 호출처의 `accountId`와 작업의 등록 때 계정 고정, 계정 단위 점유·차단기·정지·24시간 할당, 마이그레이션 `0010`~`0016`, 관측과 운영 표면, 발신 주소 허용 집합. 구현 묶음 A(RQ-053~056)와 B(RQ-057~059)를 구현했고 C·D는 구현 전이다.
 - [ADR-0014](../adr/0014-caller-tools-and-docs.md): 호출처 도구와 문서. 프로토콜 적합성 벡터(`docs/api/conformance/vectors.json`, 공개 가짜 키와 production 거부), Java 샘플 연동(선택), 키 분실·유출 대응 절차, DB 유지보수 안내, 레지스트리 변경 반영 절차. 레지스트리 재로드와 파티셔닝은 구현하지 않는다. 구현 묶음 B(RQ-064·065)를 구현했고 A(RQ-067~069) 문서를 작성했다(문서 검토 남음). C(RQ-066)는 구현 전이다.
-- [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md): 개인정보 최소화와 결과 불명 정책. 종결 때 본문·수신자·봉투 즉시 비움, 이벤트·시도 수신자의 유예(기본 7일) 뒤 비움과 `recipientsRedacted`, 요청별 `onUncertainOutcome`(`retry`·`fail`)과 `OUTCOME_UNKNOWN` 종결, 호출처 보존 현황 문서. 승인됐고(2026-11-24) 모두 구현 전이다(RQ-070~074). 구현 묶음 A(문서)와 B(종결 때 비움)를 먼저 한다.
+- [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md): 개인정보 최소화와 결과 불명 정책. 종결 때 본문·수신자·봉투 즉시 비움, 이벤트·시도 수신자의 유예(기본 7일) 뒤 비움과 `recipientsRedacted`, 요청별 `onUncertainOutcome`(`retry`·`fail`)과 `OUTCOME_UNKNOWN` 종결, 호출처 보존 현황 문서. 승인됐고(2026-11-24) 묶음 B(RQ-071)를 구현했다. 나머지(RQ-070, 072~074)는 구현 전이다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
@@ -68,6 +68,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 10단계 묶음 B 종결 때 비움 반영 뒤): `pnpm test` 단위 1018건(50개 파일), `pnpm test:integration` 통합 835건(59개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 새 파일은 `queue/redact-on-terminal.integration-spec.ts`(13건)와 `http/rest-redacted-terminal.integration-spec.ts`(3건)다. 구현 뒤 전체 통합 첫 실행에서 3건이 실패했다: `queue/maintenance.integration-spec.ts` 2건(종결 행을 `sendOne`으로 만들어 본문 삭제를 시험했는데 새 버전의 종결 행은 이미 비어 있다)과 `worker/worker.integration-spec.ts`의 RQ-027 canary 테스트 1건(종결한 작업의 본문 컬럼이 이제 NULL이라 `includes` 호출이 실패했다). 기존 테스트의 변경은 둘이다. (1) maintenance 2건은 본문이 남은 종결 행을 `terminateLikeLegacyVersion`(새 helper, 이전 버전의 종결 UPDATE를 흉내 낸다)으로 만든다. 시험 목적(안전망 `deleteExpiredBodies`가 유예가 지난 행만 비우고 단계 잠금을 건너뛴다)은 그대로이고 한 테스트의 제목에 "이전 버전이 종결한 행"을 더했다. (2) worker canary 테스트는 종결 작업의 본문 컬럼이 NULL임을 확인하고, 평문 부재 검사는 종결 전(재시도 대기) 작업의 암호문으로 옮겼다. assertion을 지우거나 약화하지 않았고 검사를 더했다. 수정 뒤 해당 2개 파일만 다시 돌려 통과했고 마지막에 전체 통합을 한 번 더 돌렸다. 저장소 밖 훅이 worktree의 소스 변경을 구분하지 못해 `FORCE_RETEST=1`을 썼다. 컨테이너·볼륨·NFS·샘플 스크립트는 실행하지 않았다(해당 영역 변경 없음).
 - 검증 수치(2026-11-24 9단계 묶음 A 문서 반영 뒤): 코드 변경이 없어 `pnpm test`·`pnpm test:integration`을 실행하지 않았고 앞 줄의 수치(단위 1018건, 통합 819건)가 그대로 유효하다. 실행한 것은 `pnpm format:check` 1회(docs는 oxfmt 대상이 아니라 문서 변경을 검사하지 못한다), 문서 링크·앵커 존재 검사 스크립트, 로컬 compose PostgreSQL 17.11의 임시 schema 측정(`db-maintenance.md` "로컬 측정", 끝난 뒤 그 schema만 삭제)이다.
 - 검증 수치(2026-11-24 9단계 묶음 B 적합성 벡터 반영 뒤): `pnpm test` 단위 1018건(50개 파일, 새 파일 `envelope/conformance-vectors.spec.ts` 128건), `pnpm test:integration` 통합 819건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 기존 테스트 파일은 바꾸지 않았다. 벡터 테스트의 RED는 구현 전 모듈 export 누락(`PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`)으로 스위트가 로드되지 않은 것이다(케이스 단언 실패 RED는 아니다). 변이 확인 2건(`iat` 상한 비교, `KID_UNKNOWN` 매핑)에서 테스트가 케이스 `id`로 실패했고 되돌렸다. 컨테이너·NFS·샘플 스크립트(`scripts/container/`, `verify/run-e2e.sh`, `pnpm test:nfs`)는 실행하지 않았다(해당 영역 변경 없음). 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다.
 - 검증 수치(2026-11-24 7단계 묶음 C 운영 표면 반영 뒤): `pnpm test` 단위 890건(49개 파일), `pnpm test:integration` 통합 816건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 최종 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 3건이 실패했다(`queue/cancel.integration-spec.ts` 2건: 취소 결과에 `accountId`가 더해졌고, `cli/cli.integration-spec.ts` 1건: `sendControls`에 `pausedAccountCount`가 더해졌다). 둘 다 새 필드를 기대값에 더한 뒤 그 파일 2개(25건)만 다시 실행해 통과했다. 기존 테스트의 변경은 모두 새 필드·인자를 반영한 것이고 단언을 약화하지 않았다. (1) `test/queue/send-controls.integration-spec.ts`: `listPauses`가 `account` 행을 내므로 기대 목록에 `{ type: "account", id: "default" }`를 더했고(제목에서 "account 행은 REST 목록에 없다"를 뺐다), `getCallerPauseSummary`가 계정 ID를 세 번째 인자로 받아 호출에 `"default"`를 더했으며 `getSendControlsSummary` 기대값에 `pausedAccountCount`를 더했다. (2) `http/ops.integration-spec.ts`·`cli/cli.integration-spec.ts`의 `sendControls` 기대값에 `pausedAccountCount: 0`을 더했다. (3) `worker/metrics.spec.ts`·`queue/metrics-reads.integration-spec.ts`·`queue/cancel.integration-spec.ts`의 입력·기대값에 `accountId`를 더했다(`JobTransition`·취소 결과가 계정을 가진다). (4) `metrics/catalog.spec.ts`의 전역 접두 목록에 `mailo_account_`를 더했다. 컨테이너: `scripts/container/verify-metrics.sh`(읽기 전용 루트, 응답·토큰 행렬·`promtool check metrics` 통과, 비밀 값 노출 0건)와 `verify-sigterm-file.sh`(1000건, 재기동 뒤 중복·유실 없음)를 각 1회 실행했다. 이 스크립트는 단일 계정(`default`) 구성이다. 다중 계정 컨테이너, 롤링 배포·롤백, 실제 Gmail·Workspace, 외부 호출처의 `/health/ready` 처리, 실제 Prometheus의 새 알림 규칙 평가는 실행하지 않았다. 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다(최종 전체 실행은 한 번이다).
@@ -103,7 +104,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 | 8단계 | 관측성(ADR-0012). `GET /metrics`(RQ-049), 이름·라벨 규칙(RQ-050), 전역 gauge(RQ-051), 인스턴스 counter·gauge(RQ-052). 마이그레이션 없음 |
 | 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-075 이후를 해당 묶음에서 추가한다(RQ-070~074는 10단계가 쓴다) |
 | 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했고 A 문서(RQ-067~069: 키 사고 대응, DB 유지보수, 레지스트리 변경 반영)를 작성했다(코드 변경 없음, 문서 검토 남음). C Java 샘플 연동(선택, RQ-066)은 구현 전이다 |
-| 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨, 구현 전). 묶음 A 보존 현황 문서(RQ-070), B 종결 때 비움(RQ-071, 마이그레이션 없음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 1개). A·B를 먼저 한다 |
+| 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨). 묶음 A 보존 현황 문서(RQ-070, 구현 전), B 종결 때 비움(RQ-071, 마이그레이션 없음, 구현 완료·미검증 항목 있음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 1개). A·B를 먼저 한다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -798,7 +799,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
   - nonce는 암호화마다 96비트 난수를 새로 쓴다.
   - DB 키를 교체하면 이전 키는 그 `key_version`을 가진 행의 본문이 모두 삭제될 때까지 보관한다.
   - 키 보관은 시크릿 파일 마운트가 기본이고 환경 변수도 허용한다.
-- 종결한 작업의 본문은 종결 후 1일 뒤 삭제한다(추정 기본값). 본문 컬럼만 비우고 행과 Key는 유지한다.
+- 종결한 작업의 본문은 종결 전이의 같은 UPDATE에서 비운다(RQ-071, ADR-0015 결정 2). 종결 후 1일(추정 기본값)이 지나도 본문이 남은 행(이전 버전이 종결한 행)은 정리 단계가 비운다(안전망). 본문 컬럼만 비우고 행과 Key는 유지한다.
 
 **수용 조건:**
 
@@ -812,7 +813,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 - `crypto/body-cipher.spec.ts`: AES-256-GCM 왕복, 96비트 nonce, 다른 `job_id`(AAD)와 변조한 암호문의 복호화 실패, 키 교체 뒤 이전 버전 복호화.
 - `http/rest-intake.integration-spec.ts`, `queue/register.integration-spec.ts`, `worker/worker.integration-spec.ts`: DB 컬럼에 본문 평문이 없다(canary). `config/load-config.spec.ts`: 키를 환경 변수·시크릿 파일로 받고 현재·이전 버전을 함께 읽는다.
-- `queue/maintenance.integration-spec.ts`: 종결 후 유예가 지난 작업만 본문 컬럼을 비우고 행과 Key는 남긴다.
+- `queue/maintenance.integration-spec.ts`: 이전 버전이 종결한 행(본문이 남은 종결 행) 중 유예가 지난 것만 본문 컬럼을 비우고 행과 Key는 남긴다. 새 버전의 종결 행은 종결 직후 이미 비어 있다(`queue/redact-on-terminal.integration-spec.ts`, RQ-071).
 - 한계: AAD가 `job_id`뿐이라 DB 쓰기 권한자의 `recipients`(평문 jsonb) 변경은 막지 못한다. DB 쓰기 계정 최소화와 백업 무결성 관리로 완화한다(ADR-0008 구현 중 확정 10). 코드 동작은 바꾸지 않았다.
 - 범위: RQ-022(JWE 봉투 암호화)는 2단계이고 이 RQ의 DB 암호화만 1단계다. 복호화한 평문은 이 RQ의 경로로 DB에 저장된다(`envelope`는 DB를 쓰지 않는다).
 
@@ -1391,7 +1392,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
   - `SENDING`, `SENT`, `FAILED`, `EXPIRED`이면 409(`urn:mailo:problem:job-not-cancelable`)이고 작업은 바뀌지 않는다. 현재 상태는 `jobStatus`로 알린다(ADR-0011 구현 중 확정 1). 요청 값은 넣지 않는다(RQ-027).
 - 저장:
   - 한 트랜잭션에서 작업 전이, 본문 삭제, `JOB_CANCELED` 이벤트를 쓴다. 이벤트 쓰기가 실패하면 전이도 롤백한다(RQ-017과 같다).
-  - `finished_at = now()`(DB 시각), `failure_reason = CANCELED_BY_CALLER`. 본문 컬럼 세 개를 함께 NULL로 바꾸고 `body_deleted_at`을 쓴다. 나갈 수 없는 메일의 본문을 유예 기간 동안 두지 않는다. 행, Key, 지문은 종결 후 보존 기간(기본 30일)까지 남는다(ADR-0005 결정 7).
+  - `finished_at = now()`(DB 시각), `failure_reason = CANCELED_BY_CALLER`. 본문 컬럼 세 개를 함께 NULL로 바꾸고 `body_deleted_at`을 쓴다. 수신자·봉투도 같은 문장에서 비운다(RQ-071). 나갈 수 없는 메일의 본문을 유예 기간 동안 두지 않는다. 행, Key, 지문은 종결 후 보존 기간(기본 30일)까지 남는다(ADR-0005 결정 7).
   - `failure_reason`은 응답의 `failureReason`으로 내보내지 않는다. `CANCELED`에서 `sentAt`·`failedAt`·`failureReason`은 `null`이다.
 - 경합: 취소와 `claim`은 작업 행 잠금으로 직렬화한다. 한 작업이 취소되면서 동시에 점유되지 않는다. 취소는 `mail_circuit_breaker`를 읽거나 쓰지 않아 잠금 순서(작업 행 → 차단기 행)를 지킨다.
 - Key 계약(RQ-034): 취소된 작업의 Key로 같은 내용을 다시 보내면 200과 `CANCELED` 작업이다. 다른 내용이면 409다. 새 메일은 새 Key로 보낸다.
@@ -2333,7 +2334,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 ## 18. 개인정보 최소화와 결과 불명 정책
 
-결정은 [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md)이고 구현은 묶음 A(문서) → B(종결 때 비움) → C(이벤트 수신자 비움), D(결과 불명 opt-in) 순서다. D는 B 뒤에 시작하고 C와 D는 서로 독립이다. RQ-070은 묶음 A, RQ-071은 묶음 B, RQ-072는 묶음 C, RQ-073·074는 묶음 D의 범위다. 마이그레이션은 묶음 C(컬럼 하나, 부분 인덱스 하나)와 묶음 D(컬럼 하나)에만 있다. 새 npm 의존성은 없다. 모두 구현 전이다.
+결정은 [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md)이고 구현은 묶음 A(문서) → B(종결 때 비움) → C(이벤트 수신자 비움), D(결과 불명 opt-in) 순서다. D는 B 뒤에 시작하고 C와 D는 서로 독립이다. RQ-070은 묶음 A, RQ-071은 묶음 B, RQ-072는 묶음 C, RQ-073·074는 묶음 D의 범위다. 마이그레이션은 묶음 C(컬럼 하나, 부분 인덱스 하나)와 묶음 D(컬럼 하나)에만 있다. 새 npm 의존성은 없다. 묶음 B(RQ-071)를 구현했고 나머지는 구현 전이다.
 
 ### RQ-070 개인정보 보존 현황 문서와 호출처 안내
 
@@ -2359,27 +2360,33 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 ### RQ-071 종결 때 본문·수신자·봉투 즉시 비움
 
-- [ ] **진행 상태:** 미착수 (10단계 묶음 B)
+- [ ] **진행 상태:** 진행 중 (10단계 묶음 B, 구현 완료, 롤링 배포·롤백 실행 남음)
 
 **요구사항:**
 
 - 작업이 종결 상태(`SENT`·`FAILED`·`EXPIRED`)가 되는 UPDATE와 같은 문장에서 본문 세 열(`body_ciphertext`·`body_nonce`·`body_key_version`)을 NULL, `body_deleted_at`을 `now()`, `recipients`와 `envelope`를 `'{}'`로 바꾼다(ADR-0015 결정 2). 경로는 결과 기록(`completeAttempt`), lease 회수(`recoverExpiredLeases`), 만료 sweep(`sweepExpired`)이다. 취소(`cancelJob`)는 이미 본문을 비우므로 수신자·봉투를 더한다.
-- 종결 이벤트의 수신자는 갱신 전 값이다. `RETURNING`은 갱신 뒤 값을 주므로 갱신 전 값을 따로 읽는다.
+- 종결 이벤트의 수신자는 갱신 전 값이다. `RETURNING`은 갱신 뒤 값을 주므로 결과 기록은 잠그며 읽은 값을, sweep과 취소는 잠근 CTE에서 읽은 값을 쓴다.
 - `MAILO_BODY_RETENTION_SECONDS`와 `deleteExpiredBodies`는 남긴다(이전 버전이 종결한 행의 안전망). 기본값은 바꾸지 않는다.
 - 행, Key, 지문은 남긴다(ADR-0005 결정 7). 마이그레이션이 없다. 잠금 순서(작업 행 → 차단기 행)와 DB `now()` 규칙은 그대로다.
 
 **수용 조건:**
 
-- [ ] 결과 기록·lease 회수·만료 sweep·취소 직후 행의 본문 세 열, `body_deleted_at`, `recipients`, `envelope`가 기대 값이다(canary가 남지 않는다).
-- [ ] 종결 이벤트의 `recipients`와 `rejectedRecipients`는 갱신 전 값이다.
-- [ ] 비운 행에서 작업 조회(ID·Key), 이벤트 피드, 운영자 읽기, 같은 Key의 재등록(중복 응답), 보존 삭제가 오류 없이 동작한다.
-- [ ] 이전 버전이 종결한 행(본문 있음)을 `deleteExpiredBodies`가 여전히 비운다.
-- [ ] 재시도(`RETRY_WAIT`)로 가는 시도에서는 본문·수신자·봉투를 비우지 않는다.
-- [ ] 로그·오류·이벤트·응답에 본문·주소 canary가 없다(RQ-027).
+- [x] 결과 기록·lease 회수·만료 sweep·취소 직후 행의 본문 세 열, `body_deleted_at`, `recipients`, `envelope`가 기대 값이다(canary가 남지 않는다).
+- [x] 종결 이벤트의 `recipients`와 `rejectedRecipients`는 갱신 전 값이다.
+- [x] 비운 행에서 작업 조회(ID·Key), 이벤트 피드, 운영자 읽기, 같은 Key의 재등록(중복 응답, 다른 내용은 409), 본문 정리, 보존 삭제가 오류 없이 동작한다.
+- [x] 이전 버전이 종결한 행(본문 있음)을 `deleteExpiredBodies`가 여전히 비운다.
+- [x] 재시도(`RETRY_WAIT`)로 가는 시도에서는 본문·수신자·봉투를 비우지 않고 다음 점유가 같은 값을 받는다.
+- [x] 로그·오류·이벤트·응답에 본문·제목·`from`·`replyTo` canary가 없다(RQ-027).
+- [ ] 롤링 배포·롤백 실행(구·신 인스턴스 혼용)을 확인했다. (실행하지 않았다. 구버전이 종결한 행은 안전망이 비운다는 점은 통합 테스트로 확인했다.)
 
 **판정 근거:**
 
-- 구현 전이다.
+- `queue/redact-on-terminal.integration-spec.ts`(PostgreSQL, 13건): 종결 경로별(`SENT`, 영구 오류·소진 `FAILED`, 만료 `EXPIRED`, lease 회수의 `FAILED`·`EXPIRED`, sweep의 `PENDING`·`RETRY_WAIT`, 취소) 비움과 이벤트의 비우기 전 수신자·`rejectedRecipients`, `RETRY_WAIT` 두 경로(결과 기록, lease 회수)의 비움 없음, 비운 행의 `findJobById`·`listEvents`·재등록·`deleteExpiredBodies`·`deleteExpiredRecords`.
+- `http/rest-redacted-terminal.integration-spec.ts`(PostgreSQL, 실제 앱, 3건): 실제 종결 전이 뒤 `GET /jobs/{id}`, `GET /jobs?idempotencyKey=`, `GET /events`, `GET /ops/jobs/{id}`, 같은 Key 재전송(200)·다른 내용(409), 호출처 취소 뒤 조회·이벤트. 응답에 제목·본문 canary가 없다.
+- `queue/maintenance.integration-spec.ts`: 안전망(이전 버전이 종결한 행). `worker/worker.integration-spec.ts`의 RQ-027 canary 테스트: 종결 작업의 본문 컬럼이 NULL이고 재시도 대기 작업의 암호문에도 평문이 없다.
+- 구현: `queue/complete.ts`(`applyOutcome`의 종결 UPDATE), `queue/maintenance.ts`(`sweepExpired`), `queue/cancel.ts`(`cancelWithin`). 마이그레이션은 없다.
+- RED 확인(2026-11-24): 구현 전 `queue/redact-on-terminal.integration-spec.ts` 13건 중 10건이 실패했다(예: `expect(row.recipients).toEqual({})`에서 원래 수신자 객체를 받음). 통과한 3건은 비우면 안 되는 경로의 검증이다.
+- 한계: 롤링 배포·롤백을 실행하지 않았다. 종결 UPDATE의 쓰기 비용(열 6개 추가)은 측정하지 않았다. 종결 직후 DB 복구본의 본문·수신자는 복원하지 못한다(의도).
 
 ### RQ-072 이벤트·시도 수신자의 유예 뒤 비움
 
