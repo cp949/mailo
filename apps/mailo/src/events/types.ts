@@ -51,6 +51,11 @@ export interface FeedEvent {
   attemptCount: number | null;
   recipients: JsonValue | null;
   rejectedRecipients: JsonValue | null;
+  /**
+   * 유예 뒤 수신자를 비웠는지(`mail_events.recipients_redacted_at`이 있는지). 비웠으면 `recipients`는 `{}`이고
+   * `rejectedRecipients`는 null이다(RQ-072, ADR-0015 결정 3). `INTAKE_REJECTED`는 항상 false다.
+   */
+  recipientsRedacted: boolean;
   createdAt: Date;
 }
 

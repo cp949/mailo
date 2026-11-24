@@ -171,6 +171,8 @@ export function presentEvent(
     jobId: event.jobId,
     idempotencyKey: event.idempotencyKey,
     attempts: event.attemptCount ?? 0,
+    // 유예 뒤 비운 이벤트는 true이고 수신자 목록이 비어 있다(RQ-072, ADR-0015 결정 3). `JOB_*`에 항상 있다.
+    recipientsRedacted: event.recipientsRedacted,
     recipients: {
       to: stringList(recipients["to"]),
       cc: stringList(recipients["cc"]),

@@ -94,6 +94,7 @@ interface FeedRow {
   attempt_count: number | null;
   recipients: JsonValue | null;
   rejected_recipients: JsonValue | null;
+  recipients_redacted: boolean;
   created_at: Date;
 }
 
@@ -102,6 +103,7 @@ interface FeedRow {
  * `txid`가 `pg_snapshot_xmin(pg_current_snapshot())`보다 작은 행만 반환한다.
  * xmin보다 작은 xid의 트랜잭션은 모두 끝났으므로, 나중에 커밋된 행이 cursor 앞에 끼어들 수 없다.
  * DB 어디서든 긴 트랜잭션이 있으면 그동안 새 이벤트가 보이지 않는다. 유실은 없다.
+ * 수신자를 비운 이벤트(RQ-072)도 같은 `(txid, id)` 위치에서 같은 순서로 나온다. 비움은 두 열의 값만 바꾼다.
  * @throws InvalidCursorError `after`가 이 모듈이 만든 cursor가 아닐 때
  */
 export async function listEvents(
@@ -122,7 +124,8 @@ export async function listEvents(
   const { rows } = await db.query<FeedRow>(
     `SELECT id::text AS id, txid::text AS txid, type, job_id, rejection_id::text AS rejection_id,
             idempotency_key, failure_reason, failure_detail, attempt_count,
-            recipients, rejected_recipients, created_at
+            recipients, rejected_recipients, recipients_redacted_at IS NOT NULL AS recipients_redacted,
+            created_at
        FROM mail_events
       WHERE caller_id = $1
         AND (txid, id) > ($2::xid8, $3::bigint)
@@ -145,6 +148,7 @@ export async function listEvents(
     attemptCount: r.attempt_count,
     recipients: r.recipients,
     rejectedRecipients: r.rejected_recipients,
+    recipientsRedacted: r.recipients_redacted,
     createdAt: r.created_at,
   }));
   const last = rows.at(-1);

@@ -365,6 +365,7 @@ describe("REST 통합: 작업 취소(RQ-040, ADR-0011 결정 4)", () => {
           "jobId",
           "occurredAt",
           "recipients",
+          "recipientsRedacted",
           "type",
         ].sort(),
       );
