@@ -17,7 +17,7 @@ ADR-0005(Key 필수와 지문)와 ADR-0007(계정 상태 오류와 차단기) �
 - 2026-11-23 코드 리뷰 반영: 결정 12의 "새 점유를 멈춘다" 시점과 종료 순서는 구현 중 확정 6이 정한다. 구현 중 확정 5의 회수 시점 서술은 구현 중 확정 7이 정정한다. 결정 문구는 그대로 둔다.
 - 2026-11-23 코드 리뷰 반영(2): DB 시간제한, 결과 기록 재시도, `pause()`의 대기 상한, 풀 크기 검사는 구현 중 확정 8이, `stop_grace_period` 검사는 구현 중 확정 9가 정한다(결정 6·12 보완). 구현 중 확정 6의 "검사하는 코드는 없다"는 구현 중 확정 9가 정정한다. 결정 문구는 그대로 둔다.
 - 2026-11-24 ADR-0013 "2026-11-24 pause 경쟁 수정" 절: 구현 중 확정 6의 `pause()` 시점을 점유 호출 단위로 풀어 쓴다. `pause()` 때 이미 시작한 `claim` 호출은 끝까지 가고 호출 도중 등록된 작업을 읽을 수 있으며, 이 동작은 막지 않는다. 같은 라운드의 다음 계정 호출은 시작하지 않는다. 결정 문구는 그대로 둔다.
-- 2026-11-24 마이그레이션 실행기: 구현 중 확정 8이 정한 advisory lock 대기 예외(`lock_timeout = 0`)는 `CREATE INDEX CONCURRENTLY` 마이그레이션과 교착할 수 있다. 현재 동작과 측정은 구현 중 확정 12가 적는다. 결정 문구는 그대로 둔다.
+- 2026-11-24 마이그레이션 실행기: 구현 중 확정 8이 정한 advisory lock 대기 예외(`lock_timeout = 0`)는 `CREATE INDEX CONCURRENTLY` 마이그레이션과 교착할 수 있다. 교착의 동작과 측정은 구현 중 확정 12가 적고, 대기를 `pg_try_advisory_lock` 폴링으로 바꾼 동작과 측정은 구현 중 확정 13이 적는다. 결정 문구는 그대로 둔다.
 - 2026-11-23 ADR-0010 승인: 결정 7의 "요청별 지정은 미결정이다"는 ADR-0010 결정 1~3이 정한다(요청 `ttlSeconds`, 범위 60~`MAILO_JOB_EXPIRY_MAX_SECONDS`). 만료 시각을 등록 때 DB `now()`로 고정하는 방식(결정 7·10)은 그대로다. 결정 문구는 그대로 둔다.
 - 2026-11-23 ADR-0009 승인: 구현 중 확정 2의 점유 부분 인덱스와 점유 순서는 ADR-0009가 이어받는다(우선순위 경로·대기 순서 경로, 새 부분 인덱스). 결정 4는 점유 순서를 고정하지 않았으므로 대체하는 결정은 없다. 결정 문구는 그대로 둔다.
 - 2026-11-24 ADR-0011 승인: 결정 7의 상태 표에 `CANCELED`와 전이 두 줄(`PENDING → CANCELED`, `RETRY_WAIT → CANCELED`)이 추가된다(ADR-0011 결정 4). 결정 문구는 그대로 둔다. "미확정"의 `CANCELED` 상태 항목은 ADR-0011 결정 4가 정한다. 구현 상태: 구현 전(선행 작업만 완료).
@@ -152,7 +152,7 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
    - **문제.** 연결이 RST 없이 끊기면 `claim`·`completeAttempt`가 응답을 기다리며 멈춘다. `pause()`가 이 호출을 기다리므로 SIGTERM 뒤 종료가 `stop_grace_period`를 넘겨 SIGKILL이 되고 진행 중 전송이 재발송된다. 멈춘 트랜잭션은 차단기 행 잠금과 xmin을 잡아 이벤트 피드도 멈춘다. 이전에는 시간제한이 없었다. 결과 기록 재시도는 3회(200ms, 800ms)였고 풀 크기와 동시 전송 수의 관계를 검사하지 않았다.
    - **시간제한(추정 기본값, 환경 변수로 변경).** 앱 풀 연결에 `statement_timeout` 30초, `lock_timeout` 10초, `idle_in_transaction_session_timeout` 60초를 시작 매개변수로, pg `query_timeout` 35초와 keepAlive(첫 탐침 10초)를 건다. `query_timeout`은 `statement_timeout`보다 길어야 한다. 서버가 먼저 취소해 연결이 살아남게 하기 위해서다. 서버가 응답하지 않는 단절은 `query_timeout`이 끊는다. keepalive만으로는 감지에 수 분이 걸릴 수 있어(Linux 기본 75초 × 9회, 미측정) 실제 상한은 `query_timeout`이다.
    - pg는 `query_timeout`이 지나도 연결을 닫지 않는다. `withTransaction`은 이 오류나 ROLLBACK 실패 때 연결을 풀에 돌려주지 않고 버린다(`pool.query`는 pg-pool이 버린다). 응답 없는 연결에 ROLLBACK을 보내면 같은 시간만큼 더 기다리기 때문이다.
-   - 마이그레이션 CLI는 `statement_timeout` 없이 `lock_timeout` 10초만 건다. 인스턴스 사이의 advisory lock 대기는 `lock_timeout = 0`으로 예외를 둔다. 정리 쿼리는 500건 배치라 30초 안에 끝난다고 가정했다(미측정). [정정됨: 구현 중 확정 10. 배치는 1,000건이다.] [보완됨: 구현 중 확정 12. 이 대기는 `CREATE INDEX CONCURRENTLY`와 교착할 수 있다.]
+   - 마이그레이션 CLI는 `statement_timeout` 없이 `lock_timeout` 10초만 건다. 인스턴스 사이의 advisory lock 대기는 `lock_timeout = 0`으로 예외를 둔다. 정리 쿼리는 500건 배치라 30초 안에 끝난다고 가정했다(미측정). [정정됨: 구현 중 확정 10. 배치는 1,000건이다.] [보완됨: 구현 중 확정 12. 이 대기는 `CREATE INDEX CONCURRENTLY`와 교착할 수 있다.] [정정됨: 구현 중 확정 13. 이 대기는 `lock_timeout = 0` 예외가 아니라 `pg_try_advisory_lock` 폴링이다. 무제한 대기라는 의미는 같다.]
    - **`pause()` 상한.** 진행 중인 점유 호출을 drain 상한과 `Promise.race`로 묶는다. 상한이 지나면 `pause_timeout` 경고를 남기고 넘어간다. 그 뒤 늦게 돌아온 점유는 처리하지 않는다(`claim_after_drain_timeout`). 점유 호출이 끝나지 않았으면 `stop()`도 미완료(`drained: false`)로 보고 전송 취소 신호를 올린다. DB 풀 닫기는 5초까지만 기다린다.
    - **결과 기록 재시도.** [보완됨: 구현 중 확정 11. 마지막 시도의 최악 시간을 마감 판정에 더한다.] lease 마감(점유 호출 전 단조 시각 + lease − 10초, lease가 20초 이하이면 여유를 lease의 절반으로)까지 200ms에서 시작해 2배씩 늘리는 backoff(간격 5초 상한, ±20%)로 재시도한다. 첫 시도는 항상 한다. 마감이 지났거나 종료로 전송을 끊었으면 포기하고 lease 회수에 맡긴다. 시각은 단조 시계이고 작업 시각은 계속 DB `now()`다(결정 10).
    - **풀 크기.** 기동 때 `MAILO_DB_POOL_MAX` ≥ `MAILO_WORKER_CONCURRENCY` + 4를 검사한다. 4는 점유, 주기 작업, HTTP·헬스·파일 폴러 몫의 추정이다. 기본값(풀 10, 동시 4)은 통과한다.
@@ -175,7 +175,7 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
     - **한계.** 한 트랜잭션의 여러 문장이 각각 `query_timeout` 가까이 걸리는 경우(느리지만 응답은 오는 DB)는 총 시간이 이 합을 넘을 수 있다. 응답 없는 연결은 첫 문장에서 걸리고 `withTransaction`이 그 연결을 버리므로 단절에는 이 계산이 맞다. 둘 다 실제 단절로 재현하지 않았고 가상 시계로 재시도 시작 시각의 상한만 확인했다(`worker-resilience.integration-spec.ts`).
     - **시도 기록의 instance.** `mail_attempts.instance`(NULL 허용, 128자 이하 CHECK, `NOT VALID`)를 `0003`으로 추가했다. 결과를 기록하는 Worker가 로그의 `instance`(`MAILO_INSTANCE_ID`, 없으면 호스트 이름)와 같은 값을 쓴다. 로그의 `jobId`로 시도 행을 찾고 `instance`로 기록한 인스턴스를 확인한다. `mail_jobs`에는 `lease_owner`를 두지 않는다. 점유 상태는 `lease_token`만으로 다루고, lease 회수로 쓴 `LEASE_EXPIRED` 시도는 점유한 인스턴스를 알 수 없어 NULL이다. NULL 허용 컬럼 추가라 테이블을 다시 쓰지 않는다(PostgreSQL 11 이상). REST 응답에는 노출하지 않는다. 검증: `claim-complete.integration-spec.ts`, `worker.integration-spec.ts`.
 
-12. **마이그레이션 실행기의 advisory lock 대기와 `CREATE INDEX CONCURRENTLY` 교착(구현 중 확정 8 보완, 2026-11-24, `src/db/migrator.ts`).** 결정 문구는 바꾸지 않는다.
+12. **마이그레이션 실행기의 advisory lock 대기와 `CREATE INDEX CONCURRENTLY` 교착(구현 중 확정 8 보완, 2026-11-24, `src/db/migrator.ts`).** 결정 문구는 바꾸지 않는다. [정정됨: 구현 중 확정 13. 아래 "현재 동작"과 "범위"는 정정 전 실행기(`pg_advisory_lock` 블로킹 대기)를 설명한다. 실행기는 폴링으로 바뀌었다. 교착 원인과 측정은 이 항목이 그대로 근거다.]
     - **현재 동작.** 실행기는 `lock_timeout = 0`을 건 뒤 autocommit 단일 문장 `SELECT pg_advisory_lock(7364221001)`로 다른 인스턴스의 마이그레이션이 끝나기를 기다린다. 트랜잭션으로 실행하는 파일만 있으면 이 직렬화로 충분하다.
     - **문제.** `-- mailo:no-transaction` 파일(`CREATE INDEX CONCURRENTLY`, 이하 CIC)을 한 `migrate-cli`가 실행하는 동안 다른 `migrate-cli`가 위 락을 기다리면 `40P01`(`deadlock detected`)이 난다. 원인은 CIC가 같은 database의 기존 트랜잭션이 끝나기를 기다리는 것으로 추정한다. 대기하는 세션이 그 대기 대상이라는 점은 별도로 확인하지 않았다.
     - **결과.** 대기하던 쪽이 희생되면 그 `migrate-cli`만 종료 코드 1로 끝나고 다시 실행하면 통과한다. CIC 쪽이 희생되면 `INVALID` 인덱스가 남고 두 `migrate-cli`가 모두 실패한다. 이 경우 ADR-0009 구현 중 확정 4의 fail-closed 검사가 `INVALID` 인덱스 이름으로 막는다.
@@ -184,6 +184,19 @@ RQ-029는 구현과 운영 구조를 단순하게 유지하고 외부 의존성�
     - **오래 열린 스냅샷.** `pg_dump` 같은 긴 읽기 트랜잭션이 있으면 CIC는 `lock_timeout`(10초) 뒤 `55P03`으로 실패하고 `INVALID` 인덱스가 남을 수 있다. 측정(같은 환경): `REPEATABLE READ` 스냅샷을 20초 유지하면 CIC가 10초 뒤 실패했다.
     - **운영.** 새 CIC 마이그레이션이 들어 있는 배포는 마이그레이션을 한 번에 하나만 실행하고 그 뒤 앱을 시작한다(`docker-compose.migrate-once.yml`). 절차와 복구는 `docs/operations/deployment.md` "동시 실행 교착"과 `docs/operations/troubleshooting.md` "마이그레이션 동시 실행과 INVALID 인덱스"다.
     - **범위.** 실행기 코드는 바뀌지 않았다. 결정 6의 시간제한 구성과 위 대기 예외는 그대로다. 실행기를 바꾸려면 새 결정이 필요하다.
+
+13. **마이그레이션 실행기의 advisory lock 대기를 try-lock 폴링으로 바꾼다(구현 중 확정 8·12 정정, 2026-11-24, `src/db/migrator.ts`, `src/db/migrate-cli.ts`).** 결정 문구는 바꾸지 않는다. 구현 중 확정 12의 "실행기를 바꾸려면 새 결정이 필요하다"는 이 항목으로 처리한다. 폴링 방식은 결정 6의 시간제한 구성이나 어느 결정의 문구도 바꾸지 않는다고 판단했다.
+    - **동작.** 실행기는 `SELECT pg_try_advisory_lock(7364221001)`을 트랜잭션 밖의 autocommit 단일 문장으로 `advisoryLockPollMillis`(기본 250ms, 추정)마다 시도한다. 얻을 때까지 반복하고, 폴링 사이에는 sleep만 한다. `SET lock_timeout = 0`과 `RESET lock_timeout`은 없앴다. try-lock은 기다리지 않으므로 `lock_timeout`과 무관하다. 잠금은 얻었을 때만 풀고 모든 종료 경로에서 `release()` 전에 푼다.
+    - **교착이 사라지는 이유(해석, 아래 측정이 뒷받침).** 블로킹 `pg_advisory_lock` 문장은 대기하는 동안 스냅샷을 쥐고, 보유자의 CIC가 그 스냅샷이 끝나기를 기다려 순환이 닫혔다. 폴링 사이에는 연결에 트랜잭션도 스냅샷도 없다(`pg_stat_activity`에서 `state = idle`, `backend_xmin`·`backend_xid`가 NULL). CIC가 기다릴 대상은 폴링 문장 하나(밀리초)뿐이다.
+    - **대기 상한.** 옵션 `advisoryLockWaitMillis`가 상한이다. 기본은 무제한이고 환경 변수는 없다. 다른 인스턴스의 긴 CIC를 기다리는 것은 정상이고 상한을 두면 컨테이너가 실패·재시작을 반복하기 때문이다. 상한을 넘기면 `MigrationLockTimeoutError`(`code = "MAILO_MIGRATION_LOCK_TIMEOUT"`)로 끝나고 `schema_migrations` 생성도 파일 적용도 하지 않는다. 오류 메시지에는 고정 문구와 경과 ms만 담는다(RQ-027). 경과 시간은 프로세스의 단조 시계다. 큐 시각(결정 10)이 아니라 이 프로세스의 대기 시간이라 DB `now()`를 쓰지 않는다.
+    - **출력.** 폴링은 `onProgress` 콜백으로 알린다. `migrate-cli`는 잠금을 기다린 경우에만 평문 두 줄(대기 시작과 10초마다, 얻었을 때)을 더 출력한다. 경쟁이 없으면 출력은 `마이그레이션 적용 N건` 한 줄 그대로다. JSON 로거는 쓰지 않는다(ADR-0016 구현 중 확정).
+    - **지연과 공정성.** 경쟁 시 얻는 시점이 평균 약 125ms, 최대 250ms 늦어진다(해석). 단독 실행은 첫 시도에서 얻는다. try-lock이라 대기열이 없고 폴링 위상이 가장 빨리 오는 쪽이 얻는다. 계속 지는 기아는 이론상 가능하지만 얻은 쪽이 이미 적용된 파일을 건너뛰고 끝나므로 지연만 생긴다.
+    - **보유자 비정상 종료.** 보유 세션이 끝나면 PostgreSQL이 세션 수준 advisory lock을 풀고 대기자는 다음 폴링에서 얻는다. 한계는 이전과 같다. 보유자 호스트가 RST 없이 사라지면 서버가 소켓 단절을 알아챌 때까지 잠금이 남는다. 마이그레이션 CLI 풀에는 keepalive 설정이 없다. 대기자는 상한이 없으면 계속 기다리고, 출력 줄이 대기를 보여 준다.
+    - **측정(2026-11-24, 로컬 compose `postgres:17-alpine` 17.11, 빈 database).** 실제 PostgreSQL 통합 테스트(`test/db/migrator.integration-spec.ts`)에서 보유자의 CIC가 쓰기 트랜잭션을 기다리는 동안 대기자가 `deadlock_timeout`(1초)의 1.5배를 기다린 뒤 그 트랜잭션을 커밋하게 했다. 정정 전 실행기에서는 보유자가 `40P01`로 희생되고 `INVALID` 인덱스가 남았다. 폴링으로 바꾼 뒤에는 두 실행이 모두 성공하고 인덱스가 `valid`다. 컴파일한 `migrate-cli` 둘을 빈 database에서 겹친 수동 확인(자동 테스트가 아니다)은 정정 전 코드가 5회 중 5회 교착(대기하던 쪽이 `40P01`, 종료 코드 1)했고 정정 후 코드는 5회 모두 두 프로세스가 종료 코드 0으로 끝나고 `40P01`·`INVALID` 인덱스가 없었다.
+    - **측정하지 않은 것.** 다른 PostgreSQL 버전, `mail_jobs` 360만 행 같은 운영 크기, 쓰기 부하 중, `migrate-once` 실제 기동, 보유자 호스트가 RST 없이 사라지는 경우.
+    - **전환기.** 정정 전 이미지의 `migrate-cli`(블로킹 대기)가 대기자로 새 이미지의 CIC와 겹치면 순환이 그대로다. 같은 환경에서 새 실행기가 먼저 시작하고 정정 전 실행기가 30~90ms 뒤에 시작한 12회 모두에서 정정 전 쪽이 `40P01`로 종료 코드 1이었고 새 쪽은 종료 코드 0이었다. 이 중 6회는 `INVALID` 인덱스 수를 조회했고 모두 0이었다(대기하던 정정 전 쪽만 희생됐다). 120ms 뒤에 시작한 2회는 새 쪽이 이미 끝나 겹치지 않았다. 정정 전 이미지가 한 database에 남아 있는 동안은 마이그레이션을 한 번에 하나만 실행한다.
+    - **범위 밖.** 오래 열린 스냅샷(`pg_dump` 등)이 CIC를 `lock_timeout`까지 기다리게 하는 위험(구현 중 확정 12)은 폴링으로 해결되지 않는다. `pg_advisory_unlock` 실패 시 연결을 폐기하지 않는 점도 그대로다(실행기는 풀 연결을 돌려주기 전에 해제를 시도하고 실패는 무시한다).
+    - **운영.** 절차와 복구는 `docs/operations/deployment.md` "동시 실행 교착"과 `docs/operations/troubleshooting.md` "마이그레이션 동시 실행과 INVALID 인덱스"다.
 
 ## 검토한 대안
 
