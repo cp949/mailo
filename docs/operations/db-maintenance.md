@@ -1,7 +1,7 @@
 # DB 유지보수
 
 Mailo의 PostgreSQL 테이블에서 팽창(죽은 행이 쌓여 파일이 커지는 것)과 VACUUM을 점검하는 방법, 보존·삭제 규칙과의 관계, 파티셔닝을 검토하기 시작할 조건을 적는다.
-근거는 RQ-068, ADR-0014 결정 8, 코드(`queue/maintenance.ts`, `queue/claim.ts`, `queue/complete.ts`, `events/`)와 마이그레이션 `0001`~`0016`이다.
+근거는 RQ-068, ADR-0014 결정 8, 코드(`queue/maintenance.ts`, `queue/claim.ts`, `queue/complete.ts`, `events/`)와 마이그레이션 `0001`~`0018`이다.
 표기: "확인"은 2026-11-24에 코드를 읽거나 쿼리를 실행해 확인한 것이다. "가정"은 확인하지 못한 추정이다.
 
 수치는 모두 로컬 단일 측정이다("로컬 측정"). 운영 크기(수백만 행)와 다중 인스턴스에서 측정하지 않았다. 측정하지 않은 임계값(죽은 행 비율 N% 등)은 쓰지 않는다.
@@ -20,8 +20,8 @@ Mailo의 PostgreSQL 테이블에서 팽창(죽은 행이 쌓여 파일이 커지
 | 테이블 | 행을 바꾸는 동작 | 삭제 | 팽창 원인(확인) |
 | ------ | ---------------- | ---- | --------------- |
 | `mail_jobs` | 점유(`PENDING`·`RETRY_WAIT`에서 `SENDING`), 결과 기록(`SENT`·`RETRY_WAIT`·`FAILED`), lease 복구, 만료 sweep, 취소(종결 전이의 같은 `UPDATE`가 본문·수신자·봉투를 비운다, RQ-071), 이전 버전이 종결한 행의 본문 삭제(`UPDATE`로 본문 열을 `NULL`). 재시도마다 점유·결과 기록이 반복된다 | 종결 후 `MAILO_RECORD_RETENTION_SECONDS`(기본 30일) 뒤 보존 삭제 | 작업 한 건당 갱신 2번 이상(점유, 결과 기록. 종결 전이의 같은 갱신이 본문·수신자·봉투를 비운다(RQ-071). 재시도마다 점유·결과 기록이 추가된다). 이전 버전이 종결한 행은 본문 삭제 갱신이 1번 더 든다. 아래 "로컬 측정"의 HOT 0건은 본문 삭제가 별도 갱신이던 구조의 값이다 |
-| `mail_attempts` | 삽입만 | `mail_jobs` 삭제의 `ON DELETE CASCADE` | 보존 삭제 때 한꺼번에 죽은 행이 생긴다 |
-| `mail_events` | 삽입만(종결 이벤트, 수집 거부) | `mail_jobs`·`mail_intake_rejections` 삭제의 `CASCADE` | 보존 삭제 때 한꺼번에 죽은 행이 생긴다 |
+| `mail_attempts` | 삽입. 유예 뒤 수신자 비움이 `rejected_recipients`를 NULL로 갱신한다(RQ-072) | `mail_jobs` 삭제의 `ON DELETE CASCADE` | 보존 삭제 때 한꺼번에 죽은 행이 생긴다. 비움 갱신은 인덱스 열을 바꾸지 않아 대부분 HOT이었다(아래 "수신자 비움 측정") |
+| `mail_events` | 삽입(종결 이벤트, 수집 거부). 유예(기본 7일) 뒤 `JOB_*` 이벤트를 한 번 갱신한다(수신자 비움, `recipients_redacted_at`, RQ-072) | `mail_jobs`·`mail_intake_rejections` 삭제의 `CASCADE` | 보존 삭제 때 한꺼번에 죽은 행이 생긴다. 비움 갱신은 부분 인덱스 조건 열(`recipients_redacted_at`)을 바꿔 HOT이 되지 않았다(측정 0건) |
 | `mail_intake_rejections` | 삽입만 | 생성 후 `MAILO_RECORD_RETENTION_SECONDS` 뒤 보존 삭제 | 보존 삭제 때 죽은 행 |
 | `mail_circuit_breaker` | 계정당 한 행. 실패·상태 전이 때만 갱신한다(정상 결과마다 갱신하지 않는다, `recordAccountOk`) | 없음 | 행이 하나라 문제가 되지 않는다(가정, 측정하지 않았다) |
 | `mail_event_purges` | 보존 삭제 배치마다 `UPSERT`. 행 수는 호출처 수 × 이벤트 종류 수가 상한이다 | 없음 | 측정에서 갱신 73번이 모두 HOT였다 |
@@ -30,7 +30,7 @@ Mailo의 PostgreSQL 테이블에서 팽창(죽은 행이 쌓여 파일이 커지
 
 - 행이 약 2 KB를 넘으면 큰 열은 TOAST 테이블(`pg_toast.*`)에 저장된다(PostgreSQL 문서 지식). 측정에서 본문(`body_ciphertext`) 약 2 KiB가 TOAST로 갔고 행당 약 2.7 KB를 썼다. 본문 삭제 `UPDATE`는 TOAST 쪽에도 죽은 행을 만든다(측정: TOAST 죽은 행 400,000건). VACUUM은 `mail_jobs`를 정리할 때 TOAST도 함께 정리한다.
 - 보존 삭제는 `mail_jobs`를 지우고 `mail_attempts`·`mail_events`는 `CASCADE`로 지운다. 한 배치는 1000건이고 한 트랜잭션이다(`MAINTENANCE_BATCH_SIZE`).
-- 시각은 DB `now()` 기준이다. 정리 단계(`sweep`, `lease`, `bodies`, `records`)마다 advisory lock이 있어 인스턴스가 여럿이어도 같은 단계는 한 번에 한 인스턴스가 돈다(확인).
+- 시각은 DB `now()` 기준이다. 정리 단계(`sweep`, `lease`, `bodies`, `records`, `recipients`)마다 advisory lock이 있어 인스턴스가 여럿이어도 같은 단계는 한 번에 한 인스턴스가 돈다(확인).
 
 ## 점검 쿼리
 
@@ -108,7 +108,25 @@ SELECT count(*) AS body_due FROM mail_jobs
 
 - 세 쿼리는 인덱스 전용 스캔이고 0.1ms 미만이었다(로컬, 약 14만 행, 두 개수 쿼리는 대상이 0건일 때). 대상이 많으면 개수 쿼리는 그만큼 읽는다.
 - 보존 삭제가 한 번도 돌지 않으면 `retention_due`는 쌓인 만큼 커진다. 삭제가 정상이면 값이 0 근처에서 움직인다.
-- 로그 이벤트 `bodies_deleted`, `records_deleted`(info, `count`)와 `bodies_deleted_failed`, `records_deleted_failed`(error)로 정리 실행을 본다(확인, `worker/worker.ts`의 `drainBatches`, `troubleshooting.md` "유지 작업 로그").
+- 로그 이벤트 `bodies_deleted`, `records_deleted`, `recipients_redacted`(info, `count`)와 `bodies_deleted_failed`, `records_deleted_failed`, `recipients_redacted_failed`(error)로 정리 실행을 본다(확인, `worker/worker.ts`의 `drainBatches`, `troubleshooting.md` "유지 작업 로그").
+
+### 5. 이벤트 수신자 비움이 따라가는지
+
+```sql
+-- 비움 대상 중 아직 비우지 못한 이벤트 수. 값은 유예(초, 기본 604800)를 직접 넣는다. 부분 인덱스(`mail_events_recipients_redact_idx`)를 쓴다.
+SELECT count(*) AS redact_due FROM mail_events
+ WHERE type IN ('JOB_SENT', 'JOB_FAILED', 'JOB_EXPIRED', 'JOB_CANCELED')
+   AND recipients_redacted_at IS NULL
+   AND created_at <= now() - make_interval(secs => 604800);
+-- 비우지 못한 이벤트 중 가장 오래된 것의 나이. 유예보다 크게 길면 비움이 밀린 것이다.
+SELECT now() - min(created_at) AS oldest_unredacted_age FROM mail_events
+ WHERE type IN ('JOB_SENT', 'JOB_FAILED', 'JOB_EXPIRED', 'JOB_CANCELED')
+   AND recipients_redacted_at IS NULL;
+```
+
+- 마이그레이션 `0017`·`0018`을 처음 적용한 직후에는 보존 기간 안의 기존 이벤트(최대 30일치) 중 유예가 지난 것이 모두 대상이다. `redact_due`가 사이클당 2만 건(기본값)씩 줄어드는 것이 정상이다.
+- `redact_due`가 줄지 않으면 `recipients_redacted_failed` 로그, 정리 단계의 advisory lock, `statement_timeout`을 본다.
+- 보존 삭제가 지난 이벤트는 행이 없어 이 쿼리에 나오지 않는다. 유예가 보존 기간과 같으면 비움 대상이 없다(끄는 것과 같다).
 
 ## 판단 순서
 
@@ -116,7 +134,7 @@ SELECT count(*) AS body_due FROM mail_jobs
 2. 죽은 행이 줄지 않으면 쿼리 3으로 오래 열린 트랜잭션, prepared transaction, 복제 슬롯을 찾는다. 이것이 VACUUM이 지우지 못하는 가장 흔한 원인이다(PostgreSQL 문서 지식이고, 읽기 전용 트랜잭션과 쓰기 트랜잭션은 측정으로 확인했다).
 3. 세션이 있으면 그 세션의 주인에게 종료를 요청한다. 방치된 `idle in transaction` 세션은 `idle_in_transaction_session_timeout`이 앱 풀에서는 60초로 끊는다(`deployment.md` "DB 시간제한과 장애 동작"). 앱 밖 세션(분석, 수동 접속)에는 적용되지 않는다.
 4. 세션이 없는데 autovacuum이 돌지 않으면 DB 운영자에게 `autovacuum` 설정과 로그를 확인시킨다. 매개변수 조정은 DB 운영자의 몫이다.
-5. 보존 삭제가 밀리면(쿼리 4) `records_deleted_failed` 로그와 정리 단계의 advisory lock, `statement_timeout`(`deployment.md` "DB 시간제한과 장애 동작")을 본다.
+5. 이벤트 수신자 비움이 밀리면(쿼리 5) `recipients_redacted_failed` 로그를 먼저 본다. 보존 삭제가 밀리면(쿼리 4) `records_deleted_failed` 로그와 정리 단계의 advisory lock, `statement_timeout`(`deployment.md` "DB 시간제한과 장애 동작")을 본다.
 6. 위를 해소해도 파일 크기가 줄지 않는 것은 정상이다. 디스크를 OS에 돌려줘야 하면 "하지 않는 것"의 위험도를 읽고 DB 운영자가 정한다.
 
 ## 대응
@@ -149,6 +167,7 @@ VACUUM (VERBOSE) mail_jobs;   -- 출력의 "dead but not yet removable"이 0이 
 - 두 단계 모두 정리 루프 한 바퀴(`MAILO_MAINTENANCE_INTERVAL_SECONDS`, 기본 60초)마다 돌고 같은 바퀴에서 만료 sweep·lease 회수도 돈다(lease 회수는 점유 때마다도 한다). 한 번에 최대 20배치 × 1000건이다(`MAX_BATCHES_PER_CYCLE`, `SWEEP_BATCH`). 기본값에서 한 인스턴스의 한 단계 처리 상한은 분당 2만 건이다(코드에서 계산한 값). 같은 단계는 한 번에 한 배치만 돌지만(advisory lock) 인스턴스가 여럿일 때의 합산 상한은 확인하지 않았다. 종결 작업이 이보다 오래 빠르게 쌓이면 삭제가 따라가지 못한다.
 - 측정에서 1000건 배치는 본문 삭제 약 28ms, 보존 삭제(시도·이벤트 CASCADE 포함) 약 35ms였다(로컬, 단독 실행). 처리 상한은 시간이 아니라 사이클당 20배치 상한이 정한다.
 - 본문을 비우는 `UPDATE`는 새 행 버전과 TOAST 죽은 행을 만든다. 종결 전이가 같은 `UPDATE`로 비우면 별도 본문 삭제 `UPDATE`가 새 종결 행에서는 생기지 않는다. 아래 "로컬 측정"은 이 변경 전 구조(본문 삭제가 별도 `UPDATE`)로 쟀고, 변경 뒤 구조는 재측정하지 않았다.
+- 이벤트·시도의 수신자는 이벤트 생성 후 `MAILO_RECIPIENT_RETENTION_SECONDS`(기본 7일)가 지나면 `recipients` 단계가 같은 사이클에서 비운다(RQ-072, 보존 삭제 뒤에 돈다). 한 단계 처리 상한은 위와 같다(사이클당 20배치 × 1000건). 이벤트 행과 시도 행은 지우지 않고 값만 비운다. 비움은 작업 행을 `FOR KEY SHARE ... SKIP LOCKED`로 잡아 같은 작업을 지우는 보존 삭제와 겹치지 않는다(`redactEventRecipients`).
 - 보존 삭제는 한 번에 많은 죽은 행을 만든다(측정: 10만 작업에서 `mail_jobs` 99,770 + `mail_attempts` 109,769 + `mail_events` 99,770). 배치 크기를 키우지 않는다. 1000건 단위는 트랜잭션이 길어져 이벤트 피드 cursor(`xmin`)를 멈추지 않게 정한 값이다(`maintenance.ts`).
 
 ## 배포 전 종결 행의 수신자·봉투 비우기
@@ -157,8 +176,8 @@ VACUUM (VERBOSE) mail_jobs;   -- 출력의 "dead but not yet removable"이 0이 
 
 - 모든 인스턴스가 새 버전이 된 뒤에 실행한다. 구버전 인스턴스가 있으면 그 인스턴스가 종결하는 행이 계속 생긴다.
 - 대상은 종결 상태(`SENT`·`FAILED`·`EXPIRED`·`CANCELED`)이고 `recipients`나 `envelope`가 `'{}'`가 아닌 행이다. 종결하지 않은 행은 발송에 쓰이므로 건드리지 않는다.
-- 이벤트(`mail_events`)와 시도 기록(`mail_attempts`)의 수신자는 대상이 아니다(RQ-072의 몫이다).
-- 종결 행의 `recipients`·`envelope`를 읽는 코드는 찾지 못했다(코드 읽기). 지운 값은 복원하지 못한다. 이벤트에는 수신자 사본이 남아 있다.
+- 이벤트(`mail_events`)와 시도 기록(`mail_attempts`)의 수신자는 대상이 아니다. `recipients` 단계가 유예(기본 7일) 뒤 비운다(RQ-072).
+- 종결 행의 `recipients`·`envelope`를 읽는 코드는 찾지 못했다(코드 읽기). 지운 값은 복원하지 못한다. 이벤트에는 수신자 사본이 유예 동안 남아 있다.
 
 ```sql
 -- 대상 건수
@@ -207,6 +226,30 @@ DELETE FROM mail_ops_audit WHERE at < now() - interval '365 days';
 ```
 
 - 10만 행 삭제는 0.06초였고 죽은 행 100,000건이 남았다. autovacuum이 정리했다(로컬 한 번).
+
+## 수신자 비움 측정
+
+목적: 이벤트·시도 수신자 비움(RQ-072, ADR-0015 결정 3)의 배치 시간, 죽은 행, HOT 비율을 한 번 확인한다. 운영 크기가 아니다.
+
+환경(2026-11-24): PostgreSQL 17.11(`postgres:17-alpine`, 로컬 compose), WSL2 호스트, 단독 실행, 기본 서버 설정. 임시 schema에 `0001`~`0018`을 적용하고 끝난 뒤 그 schema만 지웠다.
+
+방법: 작업·이벤트(`JOB_SENT`, 수신자 1명, 거부 수신자 1명)·시도 각 20만 건을 넣고 이벤트 시각을 10~20일 전으로 흩어 모두 유예(7일)를 넘게 했다. `VACUUM ANALYZE` 뒤 `redactEventRecipients`(배치 1000건)를 대상이 없어질 때까지 호출했다. 앱 함수를 그대로 썼다.
+
+결과:
+
+| 항목 | 관찰 |
+| ---- | ---- |
+| 비운 이벤트 | 200,000건, 배치 201회, 합계 9.3초 |
+| 배치 시간 | 최소 14ms, 중앙값 37ms, p95 44ms, 최대 1,897ms |
+| `mail_events` 갱신 | 200,000건, HOT 0건(0%), 측정 끝 `n_dead_tup` 55,304 |
+| `mail_attempts` 갱신 | 200,000건, HOT 195,545건(97.8%), 측정 끝 `n_dead_tup` 38,164 |
+| 크기 | `mail_events` 51.9 MB, `mail_attempts` 31.9 MB, 비움 인덱스 8.4 MB |
+
+- 이벤트의 HOT가 0인 것은 갱신 열이 부분 인덱스 조건에 들어가기 때문이다(ADR-0015 결정 3의 예상과 같다). 갱신마다 새 행 버전과 인덱스 항목이 생긴다.
+- 죽은 행 수는 측정 중 autovacuum이 돌아 일부를 회수한 뒤의 값일 수 있다. 정확한 최댓값이 아니다.
+- 최대 1,897ms인 배치가 한 번 있었다. 어느 배치인지 기록하지 않았다. 중앙값의 50배라 `statement_timeout` 기본값(30초) 안이지만 여유를 판단할 근거는 아니다.
+
+한계: 로컬에서 한 번 실행했다. 운영 크기(수백만 행), 쓰기 부하 중 실행, 여러 인스턴스, 보존 삭제와 겹치는 실제 부하를 확인하지 않았다. 교착 방지(작업 행 잠금)는 통합 테스트로 확인했다. 잠금을 뺀 변형은 400건 규모에서 교착이 났다(`queue/redact-event-recipients.integration-spec.ts`).
 
 ## 파티셔닝 검토 시작 조건
 
@@ -269,6 +312,7 @@ DELETE FROM mail_ops_audit WHERE at < now() - interval '365 days';
 
 ## 검증하지 않은 것
 
+- 이벤트 수신자 비움의 운영 크기·다중 인스턴스·롤링 배포(구버전 인스턴스가 `0017` 이후에도 도는 상태) 동작.
 - 운영 크기(수백만 행)와 다중 인스턴스에서의 팽창, autovacuum 지연, 보존 삭제 소요.
 - 실제 `pg_dump` 실행 중의 VACUUM 지연(읽기 전용 `REPEATABLE READ` 트랜잭션으로 대신했다).
 - `VACUUM FULL`의 잠금과 실행 시간(실행하지 않았다).

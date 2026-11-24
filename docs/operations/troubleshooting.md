@@ -42,6 +42,7 @@ SELECT classification, counted, count(*) FROM mail_attempts
 | 입력 폴더의 파일이 남는다 | `file_poll`의 `unreadable`·`deleteFailed`, `file_inbox_missing` |
 | 이벤트가 안 온다 | 작업 상태, 긴 트랜잭션, cursor 저장 |
 | 호출처가 오래 폴링하지 않았다, `Mailo-Cursor-Gap` 헤더나 410이 온다 | "이벤트 피드 공백" |
+| 이벤트의 `recipients`가 비어 있고 `recipientsRedacted`가 `true`다, 수신자가 비워지지 않는다 | "이벤트 수신자 비움" |
 | 등록이 400 `RECIPIENT_DOMAIN_NOT_ALLOWED`다, 파일이 `VALIDATION_FAILED`로 거부된다 | "수신 도메인 거부" |
 | 운영 CLI가 0이 아닌 코드로 끝난다 | "운영 CLI 종료 코드" |
 | `/health/ready`가 503 | DB 연결(`readiness_check_failed`) |
@@ -305,6 +306,47 @@ CREATE INDEX CONCURRENTLY mail_jobs_account_priority_claim_idx
 롤백: 불필요. 인덱스가 없는 동안 계정 점유와 적체 건수가 느려질 뿐 동작은 같다
 ```
 
+## 이벤트 수신자 비움
+
+근거: RQ-072, ADR-0015 결정 3. 이벤트 생성 후 `MAILO_RECIPIENT_RETENTION_SECONDS`(기본 7일)가 지나면 `JOB_*` 이벤트의 수신자와 시도 기록의 거부 수신자를 비운다. 이벤트 행은 지우지 않는다.
+
+해석:
+
+- 이벤트에 `recipientsRedacted: true`가 있고 `recipients`가 빈 목록이면 정상이다. 유예가 지난 이벤트다. 호출처는 `Idempotency-Key`로 자기 기록과 맞춘다(`caller-onboarding.md`). 비운 값은 복원하지 못한다.
+- `GET /jobs`의 `rejectedRecipients`도 유예 뒤 빈 목록이다. 시도 기록에서 읽기 때문이다.
+- 이벤트 ID·순서·cursor는 비움 전과 같다. `Mailo-Cursor-Gap`은 비움 때문에 나지 않는다.
+
+비워지지 않을 때. 순서대로 본다.
+
+1. 유예 설정을 본다. `MAILO_RECIPIENT_RETENTION_SECONDS`가 `MAILO_RECORD_RETENTION_SECONDS`와 같으면 비움이 삭제와 같은 시점이라 끈 것과 같다(`deployment.md` "보존").
+2. `db-maintenance.md` 쿼리 5로 `redact_due`와 `oldest_unredacted_age`를 본다. 마이그레이션 직후 백필이면 `redact_due`가 사이클당 2만 건씩 줄어든다.
+3. 로그 `recipients_redacted_failed`(error)의 `error`를 본다. `statement_timeout`이면 DB 부하나 락을 본다(`deployment.md` "DB 시간제한과 장애 동작").
+4. 다른 인스턴스가 같은 단계를 돌고 있으면 이 인스턴스는 건너뛴다. 로그에 `count`가 없는 것이 정상이다.
+5. 작업 행을 오래 잡은 세션이 있으면 그 작업의 이벤트는 건너뛴다. 다음 사이클이 이어받는다.
+6. 인덱스를 본다. 없거나 `INVALID`이면 비움이 순차 읽기로 느려진다(정합성 문제는 없다).
+
+```sql
+-- 비움 인덱스 유효성. valid가 false이거나 행이 없으면 아래 복구를 한다(0018)
+SELECT c.relname, i.indisvalid AS valid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+ WHERE c.relname = 'mail_events_recipients_redact_idx';
+```
+
+## 이벤트 수신자 비움 인덱스
+
+마이그레이션 `0018`(`CREATE INDEX CONCURRENTLY`)이 실패하면 앱이 뜨지 않고 오류 메시지에 `mail_events_recipients_redact_idx`가 있다. 실행기가 `INVALID` 인덱스를 보고 기록하지 않고 실패한 것이다("등급별 적체"의 인덱스 복구와 같은 동작이다).
+
+1. 인덱스를 지운다.
+   ```sql
+   DROP INDEX CONCURRENTLY IF EXISTS mail_events_recipients_redact_idx;
+   ```
+2. `CONCURRENTLY`가 실패한 원인을 없앤다(잠금 대기 `55P03`이면 긴 트랜잭션을 확인한다).
+3. 마이그레이션을 다시 실행한다(컨테이너 재시작 또는 `pnpm --filter @cp949/mailo migrate`). `0018`이 다시 실행돼 기록된다. `0017`(컬럼 추가)은 앞서 적용돼 있다.
+
+```txt
+위험도: 낮음 (인덱스 재생성. 쓰기를 막지 않는다)
+롤백: 불필요. 인덱스가 없는 동안 수신자 비움이 느려질 뿐 동작은 같다
+```
+
 ## 만료 시각
 
 근거: RQ-008·039, ADR-0002 결정 7, ADR-0010.
@@ -494,9 +536,10 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 | `sweep_expired` | 만료 시각을 넘긴 `PENDING`·`RETRY_WAIT` 작업을 `EXPIRED`로 바꾸고 `JOB_EXPIRED` 이벤트를 썼다 |
 | `lease_recovered` | lease가 지난 `SENDING` 작업을 회수했다 |
 
-- 인스턴스가 여럿이면 각 단계(`sweep_expired`, `lease_recovered`, 본문 삭제 `bodies_deleted`, 보존 삭제 `records_deleted`)는 배치마다 DB advisory lock을 잡은 인스턴스만 돌린다. 못 잡은 인스턴스는 기다리지 않고 건너뛰므로 로그에 `count`가 없다. 배치는 최대 1,000건이다(ADR-0002 구현 중 확정 10).
+- 인스턴스가 여럿이면 각 단계(`sweep_expired`, `lease_recovered`, 본문 삭제 `bodies_deleted`, 보존 삭제 `records_deleted`, 수신자 비움 `recipients_redacted`)는 배치마다 DB advisory lock을 잡은 인스턴스만 돌린다. 못 잡은 인스턴스는 기다리지 않고 건너뛰므로 로그에 `count`가 없다. 배치는 최대 1,000건이다(ADR-0002 구현 중 확정 10).
 | `bodies_deleted` | 종결 후 유예가 지났는데 본문이 남은 작업(이전 버전이 종결한 행)의 본문을 비웠다. 종결 전이가 본문을 바로 비우므로(RQ-071) 새 버전만 쓰면 `count`가 없다 |
 | `records_deleted` | 보존 기간이 지난 작업 행(시도·이벤트 포함)과 거부 기록을 삭제했다 |
+| `recipients_redacted` | 유예(`MAILO_RECIPIENT_RETENTION_SECONDS`)가 지난 `JOB_*` 이벤트의 수신자와 그 작업의 시도 기록 거부 수신자를 비웠다(`count`는 이벤트 수). 로그에 주소는 없다(RQ-072, RQ-027) |
 | `<이름>_failed`(error) | 위 작업의 실패. `error`에 오류 이름 |
 
 그 밖의 Worker 로그: `smtp_plaintext_enabled`(warn, `accountId`, `auth`, `message`, 평문(`security=none`) 계정마다 기동 때 한 번. 인증 정보와 본문이 평문으로 나간다. `deployment.md` "평문 SMTP 모드"), `worker_started`, `worker_paused`(`inFlight`, 종료 신호 직후 새 점유 중지), `worker_stopping`, `worker_stopped`(`drained`), `job_completed`(`jobId`, `status`, `classification`, `probe`), `poll_loop_crashed`, `maintenance_loop_crashed`.

@@ -111,8 +111,9 @@ services:
   - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX CONCURRENTLY`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다).
   - 실행기는 표식 파일을 실행한 뒤 기록 전에 현재 schema의 `INVALID` 인덱스(`pg_index.indisvalid = false`)를 조회한다. 있으면 기록하지 않고 인덱스 이름을 담은 오류로 실패한다. `IF NOT EXISTS`는 같은 이름의 `INVALID` 인덱스가 있으면 건너뛰고 성공하기 때문이다. 같은 schema에서 수동 `CREATE INDEX CONCURRENTLY`가 진행 중이어도 실패한다.
   - 같은 실행에서 앞서 적용한 파일은 이미 커밋돼 있다. 표식 파일이 실패해도 앞 파일은 롤백되지 않는다.
-  - 현재 표식 파일은 `0005_job_priority_claim_index.sql`과 `0012`~`0016`이다. 나머지(`0001`~`0004`, `0006`~`0011`)는 트랜잭션 실행이다.
-  - 인덱스 생성(`0005`, `0012`~`0014`)의 확인·복구 절차는 `troubleshooting.md` "등급별 적체"다.
+  - 현재 표식 파일은 `0005_job_priority_claim_index.sql`, `0012`~`0016`, `0018`이다. 나머지(`0001`~`0004`, `0006`~`0011`, `0017`)는 트랜잭션 실행이다.
+  - 인덱스 생성(`0005`, `0012`~`0014`)의 확인·복구 절차는 `troubleshooting.md` "등급별 적체"다. 이벤트 수신자 비움 인덱스(`0018`)는 "이벤트 수신자 비움 인덱스"다.
+  - 이벤트 수신자 비움(`0017`, `0018`, RQ-072)은 새 코드가 `mail_events.recipients_redacted_at`을 읽으므로 마이그레이션이 먼저 적용돼야 한다. compose 기본 구성은 시작 때 마이그레이션을 먼저 돌린다. 롤링 배포에서 구버전 인스턴스는 이 컬럼을 열거하지 않아 영향이 없다(코드 읽기, 실행하지 않았다). 구버전은 수신자를 비우지 않으므로 구버전이 만든 이벤트도 새 인스턴스의 비움 단계가 유예 뒤 비운다. 롤백은 코드를 이전 버전으로 바꾸는 것이고 컬럼과 인덱스는 남긴다. 이미 비운 수신자는 복원하지 못한다.
 - 잠금 대기: 기본(트랜잭션) 실행은 풀에 `lock_timeout`이 걸려 있으면 그 값(CLI는 10초)을 쓰고, 없으면(0) 10초를 `SET LOCAL`로 건다. 표식 파일은 같은 값을 세션 `SET`으로 걸고 끝나면 `RESET`한다. 마이그레이션이 다른 쿼리를 막는 잠금을 10초 넘게 기다리면 실패한다(`55P03`). 인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
 
 ### 마이그레이션 일회성 실행(선택)
@@ -331,7 +332,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | ---- | ------ | ---- | ---- |
 | `MAILO_BODY_RETENTION_SECONDS` | 86400 | 1~31536000 | 종결 전이가 본문을 바로 비우므로(RQ-071) 이전 버전이 종결한 행의 본문 삭제 유예(안전망) |
 | `MAILO_RECORD_RETENTION_SECONDS` | 2592000 (30일) | 1~31536000 | 종결 후 작업 행·시도·이벤트·Key 보존, 거부 기록은 생성 후. `BODY` 이상이고 `JOB_EXPIRY_MAX` 이상이어야 한다 |
-| `MAILO_MAINTENANCE_INTERVAL_SECONDS` | 60 | 1~86400 | 만료 sweep·lease 회수·본문 삭제·보존 삭제 주기 |
+| `MAILO_RECIPIENT_RETENTION_SECONDS` | 604800 (7일, 추정) | 60~31536000, `MAILO_RECORD_RETENTION_SECONDS` 이하 | 이벤트·시도의 수신자(`mail_events.recipients`·`rejected_recipients`, `mail_attempts.rejected_recipients`)를 비우기까지의 유예(RQ-072, ADR-0015 결정 3). 유예 뒤 이벤트 응답은 `recipientsRedacted: true`와 빈 수신자 목록을 낸다. 보존 기간과 같으면 끄는 것과 같다. 이 변수를 주지 않았고 `MAILO_RECORD_RETENTION_SECONDS`가 7일보다 짧으면 기본값을 그 보존 기간으로 줄인다. 명시한 값이 범위 밖이거나 보존 기간을 넘으면 기동 실패. 값을 줄이면 이미 비운 이벤트는 그대로이고 다음 사이클부터 새 유예가 적용된다. 호출처가 이벤트를 읽는 간격보다 짧게 두지 않는다(호출처가 빈 수신자를 받는다) |
+| `MAILO_MAINTENANCE_INTERVAL_SECONDS` | 60 | 1~86400 | 만료 sweep·lease 회수·본문 삭제·보존 삭제·수신자 비움 주기 |
 
 ### SMTP(RQ-005)
 
@@ -472,6 +474,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 | `MAILO_MAX_CONTENT_BYTES` ≤ `MAILO_MAX_REQUEST_BYTES` | 기동 실패 |
 | `MAILO_RETRY_CAP_SECONDS` ≥ `MAILO_RETRY_BASE_SECONDS` | 기동 실패 |
 | `MAILO_RECORD_RETENTION_SECONDS` ≥ `MAILO_BODY_RETENTION_SECONDS`, ≥ `MAILO_JOB_EXPIRY_MAX_SECONDS`(생략하면 `MAILO_JOB_EXPIRY_SECONDS`) | 기동 실패. 요청이 상한까지 TTL을 늘릴 수 있어서 기준이 상한이다(ADR-0010 결정 6) |
+| `MAILO_RECIPIENT_RETENTION_SECONDS` ≤ `MAILO_RECORD_RETENTION_SECONDS` | 기동 실패. 이 변수를 생략한 경우는 기본값(7일)을 보존 기간으로 줄여 통과한다 |
 | `MAILO_JOB_EXPIRY_SECONDS` ≤ `MAILO_JOB_EXPIRY_MAX_SECONDS` | 기동 실패 |
 | `MAILO_JWS_IAT_MAX_AGE_SECONDS` + `MAILO_JWS_IAT_SKEW_SECONDS` ≤ `MAILO_RECORD_RETENTION_SECONDS` | 기동 실패 |
 | DB 본문 키 ≠ 지문 키(모든 버전 쌍) | 기동 실패 |
@@ -886,7 +889,7 @@ groups:
 docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > mailo-$(date +%F).dump
 ```
 
-- 덤프에 들어 있는 것: 작업 행(수신자 평문, 본문 암호문, 지문), 시도 기록, 이벤트, 거부 기록, 차단기 행, `schema_migrations`. 본문은 DB 본문 키로 암호화돼 있다(종결 전이에서 삭제, RQ-071). 종결한 작업 행의 수신자·봉투도 비어 있다. 예외는 이전 버전이 종결한 행(배포 전에 이미 종결된 행 포함)이다. 이 행은 본문이 유예(기본 1일) 뒤 비워지지만 수신자·봉투는 보존 삭제(`MAILO_RECORD_RETENTION_SECONDS`, 기본 30일)까지 남는다. 안전망(`deleteExpiredBodies`)이 본문 세 열만 비우기 때문이다. 배포 직후 앞당겨 비우는 SQL은 `db-maintenance.md` "배포 전 종결 행의 수신자·봉투 비우기"다.
+- 덤프에 들어 있는 것: 작업 행(수신자 평문, 본문 암호문, 지문), 시도 기록, 이벤트, 거부 기록, 차단기 행, `schema_migrations`. 본문은 DB 본문 키로 암호화돼 있다(종결 전이에서 삭제, RQ-071). 종결한 작업 행의 수신자·봉투도 비어 있다. 예외는 이전 버전이 종결한 행(배포 전에 이미 종결된 행 포함)이다. 이 행은 본문이 유예(기본 1일) 뒤 비워지지만 수신자·봉투는 보존 삭제(`MAILO_RECORD_RETENTION_SECONDS`, 기본 30일)까지 남는다. 안전망(`deleteExpiredBodies`)이 본문 세 열만 비우기 때문이다. 배포 직후 앞당겨 비우는 SQL은 `db-maintenance.md` "배포 전 종결 행의 수신자·봉투 비우기"다. 이벤트·시도의 수신자는 유예(`MAILO_RECIPIENT_RETENTION_SECONDS`, 기본 7일) 안이면 평문이고 유예 뒤에는 비어 있다(RQ-072). 덤프는 덤프 시점의 값을 그대로 담는다.
 - 복원에 필요한 키:
   - DB 본문 암호화 키: 미종결 작업(과 이전 버전이 종결해 유예(기본 1일) 안에 본문이 남은 작업)의 본문을 읽는 데 필요하다. 해당 `body_key_version`의 키가 없으면 그 작업은 복호화 실패(`BodyCipherError:UNKNOWN_KEY_VERSION`)로 `job_internal_error`를 남기고 3번째 시도에서 `FAILED`가 된다.
   - 지문 키: `fingerprint_key_version`이 남아 있는 모든 작업 행의 버전이 필요하다. 없으면 그 Key로 다시 오는 요청의 비교가 예외가 되어 REST는 503, 파일은 `file_ingest_failed`다(코드 읽기 결과). 현재 버전 키는 기동 조건이다.
@@ -915,6 +918,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 운영 CLI를 `docker compose exec`로 실행하지 않았다(직접 `docker run`한 읽기 전용 컨테이너에서만 확인했다). 호스트에서 `https` 프록시 뒤 주소로 접속하는 구성도 실행하지 않았다.
 - 작업 취소 도입(`0006`·`0007`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기 시간(대용량·쓰기 부하). 구버전의 동작은 코드를 읽어 적었다.
 - 요청별 만료 시간 도입의 롤링 배포·롤백 실행, 긴 `MAILO_JOB_EXPIRY_MAX_SECONDS`에서의 대기 건수와 점유 지연.
+- 이벤트 수신자 비움(`0017`·`0018`)의 롤링 배포·롤백 실행, `ADD COLUMN`의 `ACCESS EXCLUSIVE` 잠금 대기와 `CREATE INDEX CONCURRENTLY`의 쓰기 부하 아래 시간, 배포 직후 30일치 백필의 운영 크기 소요(`db-maintenance.md` "수신자 비움 측정"은 로컬 20만 건 한 번이다).
 - 마이그레이션의 대용량 DB 적용 시간. `0005`(`CREATE INDEX CONCURRENTLY`)를 쓰기 부하 중에 적용한 시간도 측정하지 않았다.
 - SMTP 계정 도입(묶음 A·B, `0010`~`0016`)의 롤링 배포·롤백 실행, `ACCESS EXCLUSIVE` 잠금 대기와 `CREATE INDEX CONCURRENTLY`·`DROP INDEX CONCURRENTLY`의 동시 쓰기 부하 아래 시간, 레거시 인덱스 삭제 뒤 구버전 점유 성능(한 쿼리 측정만), 다중 인스턴스(4개 이상) 동시 부하의 poll 비용·풀 점유·계정 advisory lock 경합, 둘 이상의 실제 Gmail·Workspace 계정, 계정별 한도 수치. 구버전의 `accountId` 거부와 컬럼 무시는 코드 읽기와 통합 테스트(컬럼 없는 `INSERT`)로만 확인했다. 컨테이너 `read_only`에서 계정 파일 마운트와 `_FILE` 비밀 읽기는 실행하지 않았다.
 - `/metrics`(RQ-049~052): 운영 크기(수백만 행)·다중 인스턴스·Prometheus 복제본 여러 개의 동시 스크레이프에서의 쿼리 비용과 풀 점유(예비 연결 4개 가정), 롤링 배포(구버전 404는 코드 읽기 결과)와 롤백, 알림 규칙의 발화 조건과 임계값, 부하에서의 스크레이프 간격. 컨테이너·실제 Prometheus 스크레이프·`promtool`은 한 번씩 실행했다("지표").
