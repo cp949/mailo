@@ -2,6 +2,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import type pg from "pg";
 import { withTransaction } from "../db/index.js";
 import { DEFAULT_PRIORITY, PRIORITY_RANK } from "./priority.js";
+import { DEFAULT_ON_UNCERTAIN } from "./uncertain.js";
 import type {
   JobStatus,
   RegisterDeps,
@@ -54,9 +55,9 @@ export async function register(
             `INSERT INTO mail_jobs
                (id, caller_id, idempotency_key, fingerprint, fingerprint_key_version,
                 recipients, envelope, body_ciphertext, body_nonce, body_key_version, expires_at,
-                priority, account_id)
+                priority, account_id, on_uncertain)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10,
-                     now() + make_interval(secs => $11::double precision), $12, $13)
+                     now() + make_interval(secs => $11::double precision), $12, $13, $14)
              ON CONFLICT (caller_id, idempotency_key) DO NOTHING
              RETURNING id`,
             [
@@ -73,6 +74,7 @@ export async function register(
               input.expiresInSeconds,
               PRIORITY_RANK[input.priority ?? DEFAULT_PRIORITY],
               input.accountId,
+              input.onUncertain ?? DEFAULT_ON_UNCERTAIN,
             ],
           );
           if (inserted.rowCount === 1) return { kind: "created", jobId };

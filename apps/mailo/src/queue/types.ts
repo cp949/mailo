@@ -1,5 +1,6 @@
 import type { JsonValue } from "../events/index.js";
 import type { Priority } from "./priority.js";
+import type { OnUncertain } from "./uncertain.js";
 
 export type JobStatus =
   | "PENDING"
@@ -85,6 +86,11 @@ export interface RegisterInput {
    */
   priority?: Priority;
   /**
+   * 결과 불명 시도 뒤의 처리(RQ-073, ADR-0015 결정 6). 생략하면 `retry`다. 등록 때 `mail_jobs.on_uncertain`에 고정되고
+   * 같은 Key의 기존 행이 있으면 기존 행을 바꾸지 않는다. 중복 판정은 지문(`canonicalRequest`)이 한다.
+   */
+  onUncertain?: OnUncertain;
+  /**
    * true이면 새 작업을 만들지 않는다. 같은 Key의 기존 작업이 있을 때만 `duplicate`·`fingerprint_mismatch`를 돌려주고
    * 없으면 `denied`다. 호출자의 승인 정책(예: 발신 주소 허용 범위)을 통과하지 못한 요청이 이미 등록된 Key를
    * 재전송했을 때는 기존 작업을 그대로 돌려주기 위한 것이다(ADR-0005 결정 4의 멱등 재시도를 정책 변경이 깨지 않게 한다).
@@ -136,6 +142,8 @@ export interface JobTransition {
   /** 작업의 SMTP 계정 ID. 구성에서 빠진 계정이면 지표가 `unregistered`로 센다(ADR-0013 결정 5). */
   accountId: string;
   status: JobStatus;
+  /** `OUTCOME_UNKNOWN`으로 종결한 전이면 true다(RQ-074). 아니면 필드가 없다. */
+  outcomeUnknown?: true;
 }
 
 /**
@@ -224,4 +232,6 @@ export type CompleteResult =
       status: "SENT" | "RETRY_WAIT" | "FAILED" | "EXPIRED";
       nextAttemptAt: Date | null;
       breaker: BreakerSnapshot | null;
+      /** `fail` 정책의 결과 불명으로 `OUTCOME_UNKNOWN` 종결했으면 true다(지표용, RQ-074). 아니면 필드가 없다. */
+      outcomeUnknown?: true;
     };

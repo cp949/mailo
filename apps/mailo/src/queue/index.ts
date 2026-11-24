@@ -44,6 +44,13 @@ export {
   type Priority,
 } from "./priority.js";
 export {
+  DEFAULT_ON_UNCERTAIN,
+  OUTCOME_UNKNOWN,
+  isOnUncertain,
+  isUncertainOutcome,
+  type OnUncertain,
+} from "./uncertain.js";
+export {
   completeAttempt,
   recoverExpiredLeases,
   type CompleteDeps,

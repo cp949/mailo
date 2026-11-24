@@ -10,6 +10,7 @@ import {
 import { tryMaintenanceLock } from "./maintenance.js";
 import { notifyTransitions } from "./transitions.js";
 import { breakerInitialWait, retryDelaySeconds } from "./retry-policy.js";
+import { OUTCOME_UNKNOWN, isUncertainOutcome } from "./uncertain.js";
 import type {
   AccountErrorReason,
   AttemptDetail,
@@ -42,6 +43,8 @@ interface LockedJob {
   expires_at: Date;
   recipients: JsonValue;
   leased_at: Date | null;
+  /** 등록 때 고정된 결과 불명 처리(`retry`·`fail`, RQ-073). */
+  on_uncertain: string;
   db_now: Date;
 }
 
@@ -61,7 +64,7 @@ const EVENT_TYPE: Record<"SENT" | "FAILED" | "EXPIRED", JobEventType> = {
 };
 
 const JOB_COLUMNS = `id, caller_id, account_id, idempotency_key, attempts, account_trips,
-  last_account_response, expires_at, recipients, leased_at, now() AS db_now`;
+  last_account_response, expires_at, recipients, leased_at, on_uncertain, now() AS db_now`;
 
 /**
  * 시도 결과를 기록하고 작업 상태를 전이한다. lease_token이 맞을 때만 적용한다(ADR-0002 결정 6).
@@ -69,6 +72,8 @@ const JOB_COLUMNS = `id, caller_id, account_id, idempotency_key, attempts, accou
  * 늦게 도착한 이전 점유의 결과는 `{ applied: false, reason: "LEASE_LOST" }`로 거부하고 아무것도 쓰지 않는다.
  *
  * 판정 순서(ADR-0002 결정 7): 영구 오류 → FAILED, 시도 횟수 소진 → FAILED, 만료 → EXPIRED, 그 밖 → RETRY_WAIT.
+ * 요청이 `fail`을 고른 작업(`on_uncertain`)의 결과 불명 시도(`isUncertainOutcome`)는 `retryOrFinish`보다 먼저
+ * `FAILED`·`OUTCOME_UNKNOWN`으로 종결한다. 소진·만료와 겹쳐도 이 사유가 우선한다(ADR-0015 결정 8, RQ-074).
  * 계정 상태 오류는 실패 시점의 차단기 상태로 갈린다(ADR-0007 결정 2, 구현 중 확정 8).
  * - 차단기가 open이거나 이 실패로 open이 되면 계정 단위 장애다. 1·2를 건너뛰고 시도 횟수에 넣지 않는다.
  *   `MAIL FROM` 이후 단계의 오류가 차단기를 `maxAccountTrips`회 연 작업에서 같은 응답으로 다시 나오면 FAILED다(결정 4).
@@ -140,6 +145,7 @@ async function applyOutcome(
   let breaker: BreakerSnapshot | null = null;
   let accountTrips = job.account_trips;
   let lastAccountResponse = job.last_account_response;
+  let outcomeUnknown = false;
 
   const expiresAt = job.expires_at;
   const afterExpiry = (next: Date) =>
@@ -234,14 +240,22 @@ async function applyOutcome(
     }
   } else {
     // TRANSIENT 또는 LEASE_EXPIRED. LEASE_EXPIRED와 내부 오류 TRANSIENT는 계정 상태를 알 수 없어 차단기를 건드리지 않는다.
+    // 차단기 처리는 `on_uncertain`과 무관하게 먼저 하고 정책 분기는 그 뒤에 둔다. `fail`이어도 차단기에 주는 영향은 `retry`와 같다.
     if (outcome.classification === "TRANSIENT" && !outcome.internal) {
       breaker = await recordAccountOk(client, deps.breaker, { jobId: job.id });
     }
-    ({ target, failureReason, nextAttemptAt } = retryOrFinish(
-      job,
-      attemptsAfter,
-      deps,
-    ));
+    if (job.on_uncertain === "fail" && isUncertainOutcome(outcome)) {
+      // 시도 횟수는 기존 규칙대로 센다(`attemptsAfter`는 위에서 이미 `counted`를 반영했다).
+      outcomeUnknown = true;
+      target = "FAILED";
+      failureReason = OUTCOME_UNKNOWN;
+    } else {
+      ({ target, failureReason, nextAttemptAt } = retryOrFinish(
+        job,
+        attemptsAfter,
+        deps,
+      ));
+    }
   }
 
   const terminal = target !== "RETRY_WAIT";
@@ -329,7 +343,13 @@ async function applyOutcome(
     });
   }
 
-  return { applied: true, status: target, nextAttemptAt, breaker };
+  return {
+    applied: true,
+    status: target,
+    nextAttemptAt,
+    breaker,
+    ...(outcomeUnknown && { outcomeUnknown: true as const }),
+  };
 }
 
 /**
@@ -405,6 +425,7 @@ export async function recoverExpiredLeases(
         callerId: row.caller_id,
         accountId: row.account_id,
         status: result.status,
+        ...(result.outcomeUnknown && { outcomeUnknown: true as const }),
       });
     }
     return rows.length;
