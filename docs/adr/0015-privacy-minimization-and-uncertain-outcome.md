@@ -19,7 +19,7 @@
 - ADR-0007 결정 3(DATA 단계 타임아웃은 `TRANSIENT`)은 `retry`(기본)에서 그대로다. `fail`은 같은 분류를 재시도하지 않는 종결로 바꾼다.
 - ADR-0011 결정 5가 "기존 관계"로 남긴 단계 10의 `onUncertainOutcome`을 결정 6~9가 정한다. 그 결정의 `outcomeUncertain` 표시는 그대로다.
 - ADR-0005 결정 3의 요청별 정책 필드(`policy`)에 `onUncertainOutcome`이 들어간다(ADR-0009·0010과 같은 방식).
-- RQ-016(`rejectedRecipients`), RQ-017(실패 이벤트의 수신자), RQ-023(본문 삭제 시점), RQ-048(`outcomeUncertain`)의 문구는 구현 때 갱신한다. 새 RQ 번호 후보는 "새 RQ 번호 후보" 절이다.
+- RQ-016(`rejectedRecipients`), RQ-017(실패 이벤트의 수신자), RQ-023(본문 삭제 시점), RQ-048(`outcomeUncertain`)의 문구는 구현 때 갱신한다. 새 RQ 번호는 "새 RQ 번호" 절이다.
 
 ## 배경
 
