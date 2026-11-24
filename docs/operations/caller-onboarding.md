@@ -534,6 +534,7 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 - `retry`(생략 포함): 재시도한다. 같은 메일이 두 번 갈 수 있다.
 - `fail`: 재시도하지 않고 `FAILED`·`failureReason: OUTCOME_UNKNOWN`으로 끝낸다. 시도 횟수 소진, 만료와 겹쳐도 이 사유다. 응답 코드가 있는 실패(`550` 등)와 DATA 이전 단계의 오류는 `fail`이어도 기존대로 처리한다.
 - 값은 등록 때 작업에 고정된다. 같은 Key로 값을 바꾸거나 생략과 `retry`를 바꿔 보내면 409(파일은 `FINGERPRINT_MISMATCH`)다. 도입 전에 등록한 작업은 `retry`이고, 그 Key를 `retry` 명시로 다시 보내도 409다.
+- **호출처 라이브러리가 `retry`를 항상 명시하도록 바꾸면 업그레이드 직후 재전달에서 409가 날 수 있다.** 이미 등록된 Key의 재전송은 등록 때와 같은 필드로 보낸다. `retry`는 기본값이므로 `fail`이 필요한 요청에만 필드를 넣는 것을 권한다.
 - `onUncertainOutcome`은 평문 최상위 필드다. JWE 복호화 평문(`content`) 안에 넣으면 `UNKNOWN_FIELD`(파일은 `VALIDATION_FAILED`)다. 파일 JWS에서는 서명 대상이다. 잘못된 값은 REST 400(`/onUncertainOutcome` `INVALID_FORMAT`), 파일은 `VALIDATION_FAILED`다.
 
 사용 기준:
@@ -547,13 +548,14 @@ CREATE TABLE mailo_event_cursor (name text PRIMARY KEY, cursor text);  -- 행 �
 `OUTCOME_UNKNOWN`을 받았을 때:
 
 1. outbox 행을 "확인 필요"로 표시하고 `outcomeUncertain`이 `true`인지 본다(항상 `true`다).
-2. 메일이 나갔는지는 Mailo가 알려 주지 못한다. 사용처가 가진 수단(수신자 문의, 발송 계정의 보낸편지함)으로 확인한다.
+2. 메일이 나갔는지는 Mailo가 알려 주지 못한다. 사용처 자체의 발송 기록과 대조하는 것을 먼저 한다. 그 밖의 수단은 환경에 따라 다르다(예: 수신자 문의, 발송 계정의 보낸편지함. Workspace SMTP relay로 보내면 보낸편지함에 남지 않을 수 있다).
 3. 다시 보내기로 하면 새 `Idempotency-Key`(새 outbox 행)로 등록한다. 같은 Key로 보내면 `FAILED` 작업이 돌아올 뿐 다시 발송되지 않는다.
 
 한계(정확히 한 번을 보장하지 않는다):
 
 - 점유 직후 프로세스가 죽어 전송 전이었던 시도도 알 수 없는 시도로 본다. 보내지 않은 메일이 `OUTCOME_UNKNOWN`으로 끝날 수 있다.
 - 메일이 나갔는데 `OUTCOME_UNKNOWN`이 올 수 있다(SMTP 서버가 수락한 뒤 응답이 끊긴 경우).
+- DATA 단계에는 서버의 `354` 응답을 기다리는 구간과 수락 응답이 없는 폴백 일시 오류(`SENT_WITHOUT_ACCEPTED_RECIPIENT`)도 들어간다. 서버가 아직 수락하기 전에 연결이 끊겨도 `OUTCOME_UNKNOWN`이 될 수 있다(ADR-0015 결정 5가 DATA 구간을 나누는 안을 택하지 않고 받아들인 한계).
 - Mailo 배포로 전송이 끊기는 경우(종료 대기 시간 초과)에도 `fail` 요청이 종결된다. 운영팀이 `stop_grace_period`를 lease 이상으로 두는지 확인한다(`deployment.md` "종료와 stop_grace_period").
 - 서버가 응답했지만 Mailo가 받지 못한 경우처럼 두 종류 밖의 불명은 정책 대상이 아니다.
 

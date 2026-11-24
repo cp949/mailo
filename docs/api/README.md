@@ -96,6 +96,7 @@
 - 한계: `fail`은 정확히 한 번을 보장하지 않는다.
   - 점유 직후 프로세스가 죽어 전송 전이었던 시도도 알 수 없는 시도로 본다. 보내지 않은 메일이 `OUTCOME_UNKNOWN`으로 끝날 수 있다.
   - 메일이 나갔는데 `OUTCOME_UNKNOWN`이 올 수 있다.
+  - DATA 단계에는 서버의 `354` 응답을 기다리는 구간도 들어가므로 서버가 수락하기 전에 연결이 끊겨도 `OUTCOME_UNKNOWN`이 될 수 있다.
   - 서버 배포 중 전송이 끊기면(종료 대기 시간 초과) `fail` 요청이 종결된다.
 - 모든 Mailo 인스턴스를 교체한 뒤에 이 필드를 보내기 시작한다. 이전 버전은 이 필드를 400 `UNKNOWN_FIELD`로 거부한다(파일 채널은 수집 거부). 절차는 `docs/operations/deployment.md`와 `caller-onboarding.md`에 있다.
 - 이 필드는 `openapi.yaml`의 `Job`·`OpsJob`(`additionalProperties: false`)에 더한 것이라 계약 변경이다. 모르는 필드는 무시해야 한다(위 "호출처가 모르는 값을 만났을 때"). 보존 기간(종결 후 30일)이 지나 작업이 지워지면 값은 조회할 수 없다.
