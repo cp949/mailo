@@ -11,6 +11,8 @@ const FAILURE_REASON: Record<string, string> = {
   ATTEMPTS_EXHAUSTED: "MAX_ATTEMPTS_EXCEEDED",
   ACCOUNT_REPEATED: "ACCOUNT_ERROR_REPEATED",
   EXPIRED: "EXPIRED",
+  // 요청이 `onUncertainOutcome: fail`을 골라 결과 불명 시도 뒤 재시도 없이 끝났다(RQ-074, ADR-0015 결정 7). 저장 값과 응답 이름이 같다.
+  OUTCOME_UNKNOWN: "OUTCOME_UNKNOWN",
 };
 
 function failureReasonOf(stored: string | null): string | null {
