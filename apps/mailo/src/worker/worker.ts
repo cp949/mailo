@@ -415,6 +415,8 @@ export function createWorker(
       let failures = 0;
       let saturated = false;
       for (const accountId of round) {
+        // pause 때 이미 시작한 호출은 끝까지 가지만, 같은 라운드의 다음 계정 호출은 새 점유라 시작하지 않는다(ADR-0002 결정 12, RQ-025).
+        if (pauseController.signal.aborted) break;
         const remaining = free - claimed.length;
         if (remaining <= 0) break;
         const until = claimBackoffUntil.get(accountId);
