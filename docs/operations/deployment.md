@@ -101,15 +101,15 @@ services:
 
 - 마이그레이션 실행기(`src/db/migrator.ts`)는 `apps/mailo/migrations/NNNN_이름.sql`을 파일명 순서로 적용한다. 파일마다 트랜잭션 하나이고, 실패하면 그 파일만 롤백하고 중단한다.
 - 적용 기록은 `schema_migrations`에 남는다. 이미 적용한 파일은 건너뛴다. 적용한 파일의 내용이 바뀌어도 감지하지 않으므로 적용한 파일은 고치지 않고 새 파일을 추가한다(AGENTS.md).
-- 실행기는 시작할 때 advisory lock(키 `7364221001`)을 잡고 적용을 마칠 때까지 쥔다. 인스턴스 여럿이 동시에 기동하면 하나만 적용하고 나머지는 `pg_advisory_lock`에서 기다린다(`lock_timeout = 0`). 적용할 파일이 트랜잭션 실행뿐이면 이 직렬화로 충분하다.
-- `-- mailo:no-transaction` 파일(`CREATE INDEX CONCURRENTLY`, 이하 CIC)이 있으면 직렬화가 교착을 막지 못한다. 한 `migrate-cli`가 CIC를 실행하는 동안 다른 `migrate-cli`가 advisory lock을 기다리면 `40P01`(`deadlock detected`)이 난다. 아래 "동시 실행 교착"이 현재 동작과 운영 방법을 정한다.
+- 실행기는 시작할 때 advisory lock(키 `7364221001`)을 얻고 적용을 마칠 때까지 쥔다. 인스턴스 여럿이 동시에 기동하면 하나만 적용하고 나머지는 `pg_try_advisory_lock`을 250ms마다 시도하며 기다린다. 이 시도는 트랜잭션 밖이고 `lock_timeout`과 무관하다. 대기 시간 상한은 두지 않는다(환경 변수 없음). 먼저 얻은 쪽이 끝나면 나머지는 이미 적용된 파일을 건너뛰고 끝난다. 기다리는 동안 `migrate-cli`가 평문 줄을 출력한다("로그").
+- `-- mailo:no-transaction` 파일(`CREATE INDEX CONCURRENTLY`, 이하 CIC)이 있어도 이 방식은 `40P01`이 나지 않는다. 대기하는 쪽에 트랜잭션도 스냅샷도 없어 CIC가 기다릴 대상이 되지 않기 때문이다. 이전 방식(블로킹 `pg_advisory_lock`)은 대기 문장의 스냅샷을 CIC가 기다려 교착했다. 이전 이미지와 겹치는 전환기의 위험은 아래 "동시 실행 교착"이 정한다.
 - `Dockerfile`의 기본 `CMD`는 `node dist/main.js`다. compose 밖에서 이미지를 실행하면 마이그레이션이 돌지 않는다. 먼저 `node dist/db/migrate-cli.js`를 실행한다.
 - 호스트에서 직접 적용: `MAILO_DATABASE_URL`을 주고 `pnpm build`를 한 뒤 `pnpm --filter @cp949/mailo migrate`(빌드 결과 `dist/db/migrate-cli.js`를 실행한다).
 - down 마이그레이션은 없다. 롤백은 적용 전에 받아 둔 `pg_dump`를 복원하는 방법뿐이다("백업과 복구"). 마이그레이션을 적용하기 전에 백업한다. 적용한 파일을 고쳐 되돌리지 않는다.
 - 트랜잭션 안에서 쓸 수 없는 문장(`CREATE INDEX CONCURRENTLY`)은 파일 첫 줄에 `-- mailo:no-transaction`을 둔다. 이 파일은 `BEGIN` 없이 실행된다. 규칙:
   - 문장은 정확히 하나여야 한다. 실행기가 주석·문자열·달러 인용 안의 `;`를 빼고 세어 둘 이상이거나 판정이 애매하면(닫히지 않은 따옴표·`E'...'`) 실행 전에 거부한다. 여러 문장을 한 번에 보내면 PostgreSQL이 암묵 트랜잭션으로 묶어 `CONCURRENTLY`가 실패하기 때문이다.
   - 성공하면 `schema_migrations`에 기록한다. 실패하면 기록하지 않아 다음 실행(컨테이너 재시작 포함)에서 다시 시도하므로 문장은 멱등해야 한다(`IF NOT EXISTS` 등).
-  - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX CONCURRENTLY`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다). 실패 원인에는 `migrate-cli` 동시 실행의 교착(`40P01`)과 오래 열린 스냅샷의 `55P03`이 있다(아래 "동시 실행 교착"). 조회·복구 절차는 `troubleshooting.md` "마이그레이션 동시 실행과 INVALID 인덱스"다.
+  - `CREATE INDEX CONCURRENTLY`가 실패하면 `INVALID` 인덱스가 남는다. 운영자가 `DROP INDEX CONCURRENTLY`로 지운 뒤 다시 실행한다(`\d <테이블>`의 `INVALID` 표시로 찾는다). 실패 원인에는 이전 이미지의 `migrate-cli`와 겹친 교착(`40P01`)과 오래 열린 스냅샷의 `55P03`이 있다(아래 "동시 실행 교착"). 조회·복구 절차는 `troubleshooting.md` "마이그레이션 동시 실행과 INVALID 인덱스"다.
   - 실행기는 표식 파일을 실행한 뒤 기록 전에 현재 schema의 `INVALID` 인덱스(`pg_index.indisvalid = false`)를 조회한다. 있으면 기록하지 않고 인덱스 이름을 담은 오류로 실패한다. `IF NOT EXISTS`는 같은 이름의 `INVALID` 인덱스가 있으면 건너뛰고 성공하기 때문이다. 같은 schema에서 수동 `CREATE INDEX CONCURRENTLY`가 진행 중이어도 실패한다.
   - 같은 실행에서 앞서 적용한 파일은 이미 커밋돼 있다. 표식 파일이 실패해도 앞 파일은 롤백되지 않는다.
   - 현재 표식 파일은 `0005_job_priority_claim_index.sql`, `0012`~`0016`, `0018`이다. 나머지(`0001`~`0004`, `0006`~`0011`, `0017`)는 트랜잭션 실행이다.
@@ -125,24 +125,31 @@ services:
 위험도: 중간 (혼용 구간에 호출처가 비운 이벤트를 구분하지 못한다. 비운 값은 복원하지 못한다. 0017이 잠금을 기다리는 동안 이벤트 쓰기가 막힐 수 있다)
 롤백: 코드를 이전 버전으로 교체한다. 컬럼과 인덱스는 남긴다. 이미 비운 이벤트·시도의 수신자는 백업 복원으로만 되돌린다
 ```
-- 잠금 대기: 기본(트랜잭션) 실행은 풀에 `lock_timeout`이 걸려 있으면 그 값(CLI는 10초)을 쓰고, 없으면(0) 10초를 `SET LOCAL`로 건다. 표식 파일은 같은 값을 세션 `SET`으로 걸고 끝나면 `RESET`한다. 마이그레이션이 다른 쿼리를 막는 잠금을 10초 넘게 기다리면 실패한다(`55P03`). 인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
+- 잠금 대기: 기본(트랜잭션) 실행은 풀에 `lock_timeout`이 걸려 있으면 그 값(CLI는 10초)을 쓰고, 없으면(0) 10초를 `SET LOCAL`로 건다. 표식 파일은 같은 값을 세션 `SET`으로 걸고 끝나면 `RESET`한다. 마이그레이션이 다른 쿼리를 막는 잠금을 10초 넘게 기다리면 실패한다(`55P03`). 인스턴스 사이의 advisory lock 대기는 try-lock 폴링이라 `lock_timeout`과 무관하다.
 - 오래 열린 스냅샷: CIC는 같은 database에서 먼저 시작한 트랜잭션이 끝나기를 기다린다. `pg_dump` 같은 긴 읽기 트랜잭션이 있으면 `lock_timeout`(CLI 10초) 뒤 `55P03`으로 실패하고 `INVALID` 인덱스가 남을 수 있다. 측정(2026-11-24, 로컬 compose `postgres:17-alpine`): `REPEATABLE READ` 스냅샷을 20초 유지한 동안 CIC가 10초 뒤 `55P03`으로 실패했다. 배포 전에 긴 트랜잭션과 덤프 작업이 없는지 `db-maintenance.md` 점검 쿼리 3으로 본다. 복구는 `troubleshooting.md` "마이그레이션 동시 실행과 INVALID 인덱스"다.
 
 ### 동시 실행 교착
 
-현재 동작(`src/db/migrator.ts`)이다. 실행기는 `lock_timeout = 0`을 건 뒤 autocommit 단일 문장 `SELECT pg_advisory_lock(7364221001)`로 기다린다.
+현재 동작(`src/db/migrator.ts`)이다. 실행기는 autocommit 단일 문장 `SELECT pg_try_advisory_lock(7364221001)`을 트랜잭션 밖에서 250ms마다 시도한다. 폴링 사이의 연결은 `idle`이고 트랜잭션과 스냅샷이 없다. 값은 코드의 옵션(`advisoryLockPollMillis`, `advisoryLockWaitMillis`)이고 환경 변수는 없다. 근거는 ADR-0002 구현 중 확정 13이다.
 
-- 원인(추정): 락을 쥔 쪽이 CIC를 실행하면 CIC는 같은 database의 기존 트랜잭션이 끝나기를 기다린다(PostgreSQL 문서의 CIC 동작). 락을 기다리는 쪽의 문장도 그 기존 트랜잭션에 든다. CIC는 그 문장이 끝나기를, 그 문장은 락이 풀리기를 기다려 순환이 생긴다. 대기하는 세션이 CIC의 대기 대상이라는 점은 별도로 확인하지 않았고, 교착이 난다는 사실만 아래 측정으로 확인했다.
-- 조건: 같은 database에 `migrate-cli` 둘 이상이 겹치고, 하나가 CIC 파일을 실제로 실행한다. 적용할 CIC 파일이 없으면 겹쳐도 교착이 나지 않는다(코드 읽기, 측정하지 않았다).
+- 조건: 같은 database에 `migrate-cli` 둘 이상이 겹친다. 이 이미지의 `migrate-cli`끼리는 CIC 파일을 실행하는 중에 겹쳐도 교착하지 않는다.
 - 겹치는 경우: 기본 compose에서 `mailo` 인스턴스 여럿을 동시에 올린다. 마이그레이션 중에 다른 컨테이너를 재시작한다(재시작해도 `migrate-cli`가 먼저 돈다). 수동 `pnpm --filter @cp949/mailo migrate`를 컨테이너 기동과 겹친다.
-- 앱의 worker·intake 트랜잭션은 순환에 들어가지 않는다. 앱은 `pg_try_advisory_xact_lock`만 쓰고 기다리지 않는다. CIC는 그 트랜잭션이 끝나기를 기다릴 뿐이다.
-- 결과는 두 가지다. 대기하던 `migrate-cli`가 희생되면 그쪽이 종료 코드 1로 끝나고 CIC는 계속된다. 이 경우 `INVALID` 인덱스는 남지 않고 다시 실행하면 바로 통과한다. CIC 쪽이 희생되면 `INVALID` 인덱스가 남고 두 `migrate-cli`가 모두 실패한다.
-- 측정(2026-11-24, 로컬 compose `postgres:17-alpine`, `migrate-cli` 둘을 겹쳐 실행): 빈 DB와 작은 테이블에서 5회 모두 교착했고 대기하던 쪽이 약 1.1초 만에 희생됐다. `mail_jobs` 360만 행에서 CIC 쪽이 희생된 경우 5건 모두 `INVALID` 인덱스가 남았다. `migrate-cli` 하나만 실행했을 때는 교착이 없었다. 다른 PostgreSQL 버전·운영 크기·쓰기 부하 중에는 측정하지 않았다.
+- 대기자는 끝날 때까지 기다린다. 상한이 없으므로 보유자가 CIC로 오래 걸리면 대기자도 그만큼 걸린다. 대기 중에는 `마이그레이션 잠금 대기 중(다른 실행이 진행 중, 경과 N초)`가 처음 한 번과 10초마다 나오고, 얻으면 `마이그레이션 잠금 획득(대기 N초)`가 나온다("로그"). 기다린 쪽이 앱을 시작하는 시점은 보유자가 끝난 뒤다.
+- 보유자 프로세스가 죽으면 PostgreSQL이 세션의 잠금을 풀고 대기자가 다음 폴링에서 얻는다. 보유자 호스트가 RST 없이 사라지면 서버가 소켓 단절을 알아챌 때까지 잠금이 남는다(마이그레이션 풀에는 keepalive 설정이 없다). 이때 대기자는 계속 기다리고 출력 줄만 남는다. 보유자는 `troubleshooting.md` "마이그레이션 동시 실행과 INVALID 인덱스"의 1단계 쿼리로 찾는다.
+- 앱의 worker·intake 트랜잭션은 이 방식과 무관하다. 앱은 `pg_try_advisory_xact_lock`만 쓰고 기다리지 않는다. CIC는 그 트랜잭션이 끝나기를 기다릴 뿐이다.
+- 이전 방식의 원인(추정): 블로킹 `pg_advisory_lock` 문장은 대기하는 동안 스냅샷을 쥔다. 락을 쥔 쪽의 CIC는 같은 database에서 먼저 시작한 트랜잭션이 끝나기를 기다린다(PostgreSQL 문서의 CIC 동작). CIC는 그 문장이 끝나기를, 그 문장은 락이 풀리기를 기다려 순환이 생긴다. 희생자는 `deadlock_timeout`(1초) 안에 대기가 시작됐는지로 갈렸다. 대기하던 쪽이 희생되면 그 `migrate-cli`만 종료 코드 1이었고 `INVALID` 인덱스는 남지 않았다. CIC 쪽이 희생되면 `INVALID` 인덱스가 남고 두 `migrate-cli`가 모두 실패했다.
+- 측정(2026-11-24, 로컬 compose `postgres:17-alpine` 17.11, 빈 database에서 컴파일한 `migrate-cli` 둘을 동시에 실행, 자동 테스트 아님): 이전 방식은 5회 중 5회 교착했고 대기하던 쪽이 종료 코드 1(`40P01`)이었다. 이 방식은 5회 모두 두 프로세스가 종료 코드 0이었고 `40P01`과 `INVALID` 인덱스가 없었다. 기다린 쪽의 출력은 대기 줄 두 개와 `마이그레이션 적용 0건`이었다. 같은 조건의 회귀는 `test/db/migrator.integration-spec.ts`가 자동으로 확인한다.
+- 측정하지 않은 것: 다른 PostgreSQL 버전, `mail_jobs` 360만 행 같은 운영 크기, 쓰기 부하 중. 이전 방식은 360만 행에서 CIC 쪽이 희생된 5건이 모두 `INVALID` 인덱스를 남겼다(이전 조사, 로컬 compose 17).
+
+전환기(이전 이미지와 새 이미지가 한 database에서 겹치는 동안):
+
+- 이전 이미지의 `migrate-cli`는 블로킹 `pg_advisory_lock`으로 기다린다. 이전 쪽이 대기자이고 새 이미지가 CIC를 실행하는 중이면 순환이 그대로 생긴다. 측정(위와 같은 환경): 새 쪽이 먼저 시작하고 이전 쪽이 30~90ms 뒤에 시작한 12회 모두 이전 쪽이 `40P01`로 종료 코드 1이었고 새 쪽은 종료 코드 0이었다. 이 중 6회에서 `INVALID` 인덱스 수는 0이었다. 이전 쪽이 먼저 잠금을 얻고 새 쪽이 기다리는 경우는 새 쪽이 폴링하므로 교착하지 않는다.
+- 롤링 배포 중 이전 이미지 인스턴스가 한 대라도 남아 있으면 아래 "운영 방법"의 "한 번에 하나"를 지킨다.
 
 운영 방법:
 
-- 새 CIC 마이그레이션(`-- mailo:no-transaction` 파일)이 들어 있는 배포는 마이그레이션을 한 번에 하나만 실행하고, 끝난 뒤 앱을 시작한다. `docker-compose.migrate-once.yml`("마이그레이션 일회성 실행")이 이 순서를 compose로 강제한다. `mailo-migrate`가 한 번 실행하고 `mailo`는 그것이 성공해야 시작한다.
-- 기본 compose를 쓰면 한 인스턴스를 먼저 올려 마이그레이션이 끝난 것을 확인한 뒤 나머지를 올린다. 마이그레이션 중에는 컨테이너를 재시작하거나 수동 `migrate`를 실행하지 않는다.
+- 새 CIC 마이그레이션(`-- mailo:no-transaction` 파일)이 들어 있는 배포에서 이전 이미지가 한 database에 남아 있는 동안은 마이그레이션을 한 번에 하나만 실행하고, 끝난 뒤 앱을 시작한다. `docker-compose.migrate-once.yml`("마이그레이션 일회성 실행")이 이 순서를 compose로 강제한다. `mailo-migrate`가 한 번 실행하고 `mailo`는 그것이 성공해야 시작한다.
+- 모든 인스턴스가 이 이미지 이후이면 기본 compose의 동시 기동으로 교착하지 않는다. 그래도 큰 테이블의 CIC는 오래 걸리고 다른 인스턴스가 그만큼 기다리므로 `migrate-once`가 더 예측하기 쉽다.
 - 교착이나 `INVALID` 인덱스 오류가 나면 `troubleshooting.md` "마이그레이션 동시 실행과 INVALID 인덱스"로 복구한다.
 - `migrate-once`의 실제 기동은 문법만 확인했다("검증하지 않은 것"). 위 운영 방법은 compose 파일과 이 문서를 읽은 결과다.
 
@@ -298,7 +305,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 
 - `0012`·`0013`: 계정 단위 점유 인덱스(`mail_jobs_account_priority_claim_idx`, `mail_jobs_account_claim_idx`). `0014`: 계정 24시간 할당용 `mail_attempts_account_quota_idx`. 셋 다 `CREATE INDEX CONCURRENTLY IF NOT EXISTS`라 쓰기를 막지 않는다. 150만 행 임시 schema에서 328ms·292ms·170ms였다(ADR-0013 측정, 동시 쓰기 없음, 로컬 단일 실행). 동시 쓰기 부하에서의 시간은 측정하지 않았다.
 - `0015`·`0016`: 기존 점유 인덱스 `mail_jobs_priority_claim_idx`·`mail_jobs_claim_idx`를 `DROP INDEX CONCURRENTLY IF EXISTS`로 지운다. 새 인덱스와 함께 두면 계획이 기존 인덱스를 고르기 때문이다(ADR-0013 M5). 이번 릴리스의 마지막 마이그레이션이다.
-- 파일 일곱이 모두 순서대로 적용된다(컨테이너 기동 때 자동). 인스턴스를 동시에 올리면 교착할 수 있으므로 한 번에 하나만 마이그레이션한다("동시 실행 교착"). `-- mailo:no-transaction` 파일이라 실패하면 기록되지 않고 다음 실행에서 다시 시도한다. `CONCURRENTLY`가 실패해 `INVALID` 인덱스가 남으면 실행기가 인덱스 이름을 담아 실패한다. `troubleshooting.md` "등급별 적체"의 "인덱스 복구"를 따른다.
+- 파일 일곱이 모두 순서대로 적용된다(컨테이너 기동 때 자동). 이전 이미지의 `migrate-cli`가 남아 있으면 겹칠 때 교착할 수 있으므로 한 번에 하나만 마이그레이션한다("동시 실행 교착"). `-- mailo:no-transaction` 파일이라 실패하면 기록되지 않고 다음 실행에서 다시 시도한다. `CONCURRENTLY`가 실패해 `INVALID` 인덱스가 남으면 실행기가 인덱스 이름을 담아 실패한다. `troubleshooting.md` "등급별 적체"의 "인덱스 복구"를 따른다.
 - 롤링 배포 중 영향: 인스턴스가 하나씩 새 버전으로 바뀌는 동안 아직 이전 버전(묶음 A 이전)이 도는 인스턴스는 지워진 인덱스 없이 점유한다. 정확성은 영향받지 않지만 점유와 적체 건수가 대기 건수에 비례해 느려진다(ADR-0013 M8: 대기 25만 건에서 한 쿼리 약 110~150ms, 한 쿼리 측정). 대기 건수가 작으면 무시할 수준이다. 롤링 배포를 실제로 실행해 확인하지 않았다. 대기가 많을 때는 인스턴스를 한꺼번에 바꾼다(짧은 중단을 받아들인다).
 - 묶음 B 코드는 새 인덱스가 없으면 점유가 느려질 뿐 동작은 같다. 마이그레이션이 실패하면 앱이 뜨지 않는다.
 
@@ -976,6 +983,7 @@ groups:
 - `event: "http_request"`: 응답이 끝날 때 한 줄. 필드는 `requestId`, `method`, `route`(라우트 패턴, 예 `/jobs/:jobId`), `status`, `callerId`(인증 전에는 `null`), `durationMs`뿐이다. 쿼리 문자열, 경로 값, `Idempotency-Key`, 헤더, 본문은 없다(RQ-027). `requestId`는 오류 응답 본문의 `instance`(`urn:uuid:…`)와 같다.
 - `event: "nest_log"`: Nest 프레임워크와 `Logger`로 쓴 문자열 로그. `message`, `context`(클래스·모듈 이름), 오류 수준이면 Nest가 넘긴 `stack`이 있다. `stack`의 첫 줄에는 예외 메시지가 들어 있을 수 있다(이전 텍스트 출력과 같은 정보다).
 - 앱이 정한 이벤트 이름: `secrets_resolved`(info, `count`·`schemes`만. 기동 때 `X_REF`를 해석했을 때 한 번, "외부 시크릿 소스"), `unhandled_error`, `readiness_check_failed`, `db_idle_client_error`, `job_canceled`(앱 계층, `jobId`·`callerId`·`canceledBy`, 호출처가 대기 작업을 취소했을 때. 이미 취소된 작업의 재요청에는 남지 않는다), `ops_pause_set`·`ops_pause_cleared`(info, `actor`·`scope`(`all`·`caller`)·`callerId`(`caller`일 때만), 상태를 바꾼 관리 요청만. 멱등 재요청은 남지 않는다), `ops_job_canceled`(info, `actor`·`jobId`), `metrics_collect_failed`(warn, `group`·`error`. `/metrics`의 DB 수집 그룹이 성공에서 실패로 바뀔 때 한 번. 같은 그룹의 연속 실패 동안 반복하지 않는다), `metrics_series_limit`(warn, `metric`만. 지표 하나의 시리즈가 상한에 처음 닿았을 때 한 번), `event_cursor_gap`(warn, `callerId`만. `GET /events`가 `after` 뒤의 삭제를 발견한 응답마다 한 줄이고 헤더든 410이든 같다), Worker의 `send_paused`(warn)·`send_resumed`(info)(`scope`, `callerId`는 `caller`일 때만. 정지 상태가 바뀐 것을 관찰할 때 한 번만 남고 폴링마다 반복하지 않는다), Worker와 파일 폴러의 이벤트(`claim_failed`, `worker_paused`, `drain_timeout`, `file_poll`, `file_inbox_missing` 등, `troubleshooting.md`).
+- 마이그레이션 CLI(`migrate-cli`)의 출력은 JSON이 아니라 평문이다. 평소에는 `마이그레이션 적용 N건` 한 줄이다. 다른 실행이 advisory lock을 쥐고 있어 기다릴 때만 `마이그레이션 잠금 대기 중(다른 실행이 진행 중, 경과 N초)`(처음 한 번과 10초마다)와 `마이그레이션 잠금 획득(대기 N초)`(기다린 뒤 얻었을 때)가 더 나온다. 줄에는 숫자와 고정 문구만 있다(RQ-027). JSON 필터에는 아래 `fromjson?` 예가 평문 줄을 건너뛴다.
 - 필터 예: `docker compose logs --no-log-prefix mailo | jq -c 'select(.level=="error" or .level=="warn")'`. JSON이 아닌 줄(Node가 직접 쓰는 경고, 기동 전 설정 오류 메시지)이 섞일 수 있으니 `jq -R 'fromjson? | select(.)'`를 쓴다. 기동 실패는 `event: "startup_failed"`(필드 `error`는 예외 이름·코드, 설정 오류와 비밀값 해석 오류는 변수 이름·방식·고정 종류만 담은 `message`)로 남는다. 설정을 읽기 전의 실패는 `instance`가 호스트 이름이다(`MAILO_INSTANCE_ID`를 아직 읽지 못했다).
 - 본문·제목·수신자 주소·SMTP 인증 정보·키는 어느 필드에도 넣지 않는다. 예외는 이름과 코드(`Error:57014`)만 쓴다(RQ-027). 이 규칙은 canary 문자열 테스트로 확인한다.
 - 로그 수집기가 인스턴스를 구분하려면 `instance`를 쓴다. 로그와 DB 행의 연결: 결과를 기록한 시도의 `instance`가 `mail_attempts.instance` 컬럼에 같은 값으로 남는다(128자까지). 로그의 `jobId`(`job_completed` 등)로 시도 행을 찾고 `instance`로 기록한 인스턴스를 확인한다. lease 회수로 쓴 `LEASE_EXPIRED` 시도, 0003 적용 전 행, 롤링 배포 중 이전 버전이 쓴 행은 NULL이다(점유한 인스턴스를 DB에 쓰지 않는다: lease는 `lease_token`으로만 다룬다). REST 응답에는 노출하지 않는다. 컨테이너를 다시 만들면 호스트 이름이 바뀌므로 고정 이름이 필요하면 `MAILO_INSTANCE_ID`를 준다.
@@ -1001,7 +1009,7 @@ groups:
 - 앱 풀의 모든 연결에 서버 쪽 `statement_timeout`(30초), `lock_timeout`(10초), `idle_in_transaction_session_timeout`(60초)을 시작 매개변수로 건다. 클라이언트 쪽 `query_timeout`(35초)과 TCP keepalive(첫 탐침 10초)도 켠다. 값은 모두 추정이고 위 환경 변수로 바꾼다.
 - 이유: 연결이 RST 없이 끊기면 `claim`이 응답을 영원히 기다려 점유와 종료가 멈춘다. 종료가 `stop_grace_period`를 넘기면 SIGKILL로 끝나 진행 중 전송이 재발송된다. 멈춘 트랜잭션이 차단기 행 잠금과 xmin을 잡으면 이벤트 피드(ADR-0006 결정 7)도 멈춘다.
 - 서버가 응답하는 장애(잠금 대기, 느린 쿼리)는 서버 시간제한이 먼저 끊고 연결은 살아남는다(57014, 55P03). 서버 응답이 오지 않는 단절은 `query_timeout`이 쿼리를 끊고 `withTransaction`이 그 연결을 풀에서 버린다. keepalive만으로는 죽은 연결 감지에 수 분이 걸릴 수 있다(Linux 기본 75초 × 9회, 이 환경에서 측정하지 않았다). 따라서 실제 상한은 `query_timeout`이다.
-- 마이그레이션 CLI(`migrate-cli`)는 `statement_timeout` 없이 실행한다(DDL이 오래 걸릴 수 있다). `lock_timeout` 10초는 건다. 인스턴스 사이의 advisory lock 대기에는 적용하지 않는다. 이 대기는 다른 인스턴스의 `CREATE INDEX CONCURRENTLY`와 교착할 수 있다("기동 순서와 마이그레이션"의 "동시 실행 교착"). 기동 때 마이그레이션이 다른 쿼리를 막는 잠금을 오래 기다리면 실패하고 컨테이너가 재시작한다.
+- 마이그레이션 CLI(`migrate-cli`)는 `statement_timeout` 없이 실행한다(DDL이 오래 걸릴 수 있다). `lock_timeout` 10초는 건다. 인스턴스 사이의 advisory lock 대기에는 적용하지 않는다. 이 대기는 `pg_try_advisory_lock` 폴링이라 `lock_timeout`과 무관하고 다른 인스턴스의 `CREATE INDEX CONCURRENTLY`와 교착하지 않는다("기동 순서와 마이그레이션"의 "동시 실행 교착"). 기동 때 마이그레이션이 다른 쿼리를 막는 잠금을 오래 기다리면 실패하고 컨테이너가 재시작한다.
 - 정리 쿼리(만료 sweep, 본문 삭제, 보존 삭제, lease 회수)는 1000건 배치라 30초 안에 끝난다고 가정했다(측정하지 않았다). 정상 쿼리가 30초를 넘는 환경(매우 큰 테이블, 느린 디스크)에서는 `MAILO_DB_STATEMENT_TIMEOUT_MS`를 올리고 `MAILO_DB_QUERY_TIMEOUT_MS`도 함께 올린다. 호출처 할당 집계(`claim`)는 `mail_attempts`의 24시간 구간을 세므로 기록이 매우 많으면 같은 영향을 받는다.
 - 결과 기록(`completeAttempt`) 실패는 lease 마감(점유 호출 전 시각 + lease − 10초, 단조 시계)까지 재시도한다. 간격은 200ms에서 2배씩 늘고 5초에서 멈추며 ±20% 흩뿌린다. 이전에는 3회(200ms, 800ms)였다. 마감이 지났거나 종료 때 전송을 끊었으면 포기하고 lease 회수에 맡긴다. 로그 `complete_failed`(`attempt`, `retry`)로 본다.
 
@@ -1062,7 +1070,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패·성공 경로(프로세스 수준)를 확인했다. 이 절의 compose override 예시(DB 비밀번호 `_REF`)와 `docker-compose.migrate-once.yml`의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복은 확인하지 않았다. 변형 이미지의 compose 기동(독립 compose 파일)과 초기 프로세스 환경(`/proc/1/environ`)의 값 부재는 LocalStack 수동 시나리오가 확인한다(아래 줄).
 - AWS 어댑터와 변형 이미지(ADR-0016 묶음 B, 2026-11-24): 어댑터 단위 테스트(가짜 SDK 클라이언트, 로컬 HTTP fixture를 거치는 실제 SDK), 로컬에서 빌드한 기본 이미지의 어댑터·SDK 부재 확인(`image-smoke/verify-base.sh`), 변형 이미지를 `read_only`·`cap_drop: [ALL]`·`--network none`으로 실행한 해석 스모크(`image-smoke/run.sh`: bare 패키지 이름 로드, 해석, JSON 키, 닫힌 코드, 로드 오류)를 실행했다. 실제 AWS(IAM, KMS, 자격 증명 체인, IMDSv2, throttling), 취약점 스캔, 발행된 `-aws` 이미지의 pull과 compose 기동은 확인하지 않았다. `release.yml` `variants` 잡은 이후 GitHub에서 성공했다(`v0.6.0`, run 45380436731, `ci.md`).
 - LocalStack 수동 시나리오(ADR-0016 묶음 C, 2026-11-24, `scripts/secrets-localstack/run.sh`, LocalStack 4.12): 로컬 빌드한 변형 이미지를 `read_only`·`cap_drop: [ALL]` compose 컨테이너로 띄워 `run.sh`가 통과했다(2026-11-24). 실제 AWS와 LocalStack 최신 이미지(Auth Token 필요)는 실행하지 않았다(`aws-secrets-manager.md`).
-- 마이그레이터 동시 실행 교착의 측정은 로컬 compose `postgres:17-alpine`에서 `migrate-cli` 둘을 겹친 것뿐이다(2026-11-24). `migrate-once`가 이 겹침을 없애는 것은 compose 파일을 읽어 확인했고 실행하지 않았다. 다른 PostgreSQL 버전, 운영 크기, 쓰기 부하 중 결과는 모른다.
+- 마이그레이터 동시 실행의 측정은 로컬 compose `postgres:17-alpine`(17.11)의 빈 database에서 컴파일한 `migrate-cli` 둘을 겹친 것뿐이다(2026-11-24, 이 이미지 5회와 이전 이미지 5회, 전환기 혼합 12회). `mail_jobs` 360만 행 같은 운영 크기와 쓰기 부하 중에서 폴링 방식은 측정하지 않았다. `migrate-once`가 이 겹침을 없애는 것은 compose 파일을 읽어 확인했고 실행하지 않았다. 다른 PostgreSQL 버전 결과는 모른다. 보유자 호스트가 RST 없이 사라지는 경우의 잠금 잔존 시간은 측정하지 않았다.
 - `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).
 - TLS를 켠 PostgreSQL 서버에 대한 `MAILO_DB_SSLMODE` 접속.
 - TLS 종단 프록시 구성, 다중 인스턴스 배포.

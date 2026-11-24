@@ -356,22 +356,34 @@ SELECT c.relname, i.indisvalid AS valid FROM pg_index i JOIN pg_class c ON c.oid
 
 | 증상(`migrate-cli` 로그·종료 코드)                                              | 원인                                                                                                              |
 | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `deadlock detected`(`40P01`), 종료 코드 1, 인덱스 이름을 담은 오류는 없음       | 같은 database에서 `migrate-cli` 둘이 겹쳤다. 락을 기다리던 쪽이 희생됐다. `INVALID` 인덱스는 남지 않는다        |
-| `deadlock detected`(`40P01`) 또는 `INVALID` 인덱스 이름을 담은 오류. 두 `migrate-cli`가 모두 실패 | 같은 겹침에서 CIC를 실행하던 쪽이 희생됐다. `INVALID` 인덱스가 남는다                                |
+| `deadlock detected`(`40P01`), 종료 코드 1, 인덱스 이름을 담은 오류는 없음       | 같은 database에서 이전 이미지의 `migrate-cli`가 대기자로 겹쳤다. 락을 기다리던 쪽이 희생됐다. `INVALID` 인덱스는 남지 않는다 |
+| `deadlock detected`(`40P01`) 또는 `INVALID` 인덱스 이름을 담은 오류. 두 `migrate-cli`가 모두 실패 | 같은 겹침에서 CIC를 실행하던 쪽이 희생됐다. `INVALID` 인덱스가 남는다. 이 이미지의 `migrate-cli`끼리는 이렇게 되지 않는다 |
+| `마이그레이션 잠금 대기 중(다른 실행이 진행 중, 경과 N초)`가 10초마다 반복되고 끝나지 않음 | 다른 `migrate-cli`가 advisory lock을 쥐고 있다. 정상이면 끝나기를 기다린다. 오래 계속되면 아래 1단계의 첫 쿼리로 보유자를 찾는다 |
+| `마이그레이션 실패: MigrationLockTimeoutError code=MAILO_MIGRATION_LOCK_TIMEOUT` | `runMigrations`에 `advisoryLockWaitMillis`를 준 호출에서만 나온다. `migrate-cli`는 상한을 두지 않아 이 오류가 나오지 않는다. 아무것도 적용하지 않았다 |
 | `canceling statement due to lock timeout`(`55P03`)과 `INVALID` 인덱스 이름 오류 | `pg_dump` 같은 오래 열린 스냅샷이 CIC를 `lock_timeout`(10초)까지 기다리게 했다. `INVALID` 인덱스가 남을 수 있다 |
 
-- 겹침과 교착의 조건, 측정(2026-11-24, 로컬 compose `postgres:17-alpine`)과 한계는 `deployment.md` "동시 실행 교착"이다. 앱의 worker·intake 트랜잭션은 원인이 아니다.
+- 이 이미지의 `migrate-cli`는 advisory lock을 `pg_try_advisory_lock` 폴링으로 기다려 서로 교착하지 않는다. `40P01`은 이전 이미지의 `migrate-cli`와 겹쳤을 때만 난다. 겹침 조건, 측정(2026-11-24, 로컬 compose `postgres:17-alpine`)과 한계는 `deployment.md` "동시 실행 교착"이다. 앱의 worker·intake 트랜잭션은 원인이 아니다.
 - 첫 행은 인덱스 이름 오류가 없으면 `INVALID` 인덱스도 없다. 다른 `migrate-cli`가 끝나기를 기다린 뒤 다시 실행하면 바로 통과한다(로컬 측정). 아래 1~5는 `INVALID` 인덱스가 있을 때만 한다.
+- 잠금 대기 줄이 반복될 때는 다른 `migrate-cli`가 진행 중인 것이므로 1단계의 두 쿼리로 보유자와 CIC를 확인하고 기다린다. 보유자 호스트가 사라졌는데 잠금이 남으면(RST 없이 사라진 경우) 1단계 조회의 `pid`를 `SELECT pg_terminate_backend(<pid>)`로 끊는다. 보유자가 살아 있는 프로세스이면 끊지 않는다. CIC 도중에 끊으면 `INVALID` 인덱스가 남는다.
 
 복구. 순서대로 한다.
 
-1. 진행 중인 마이그레이션이 없는지 본다. 행이 나오면 끝나기를 기다린다. 진행 중인 CIC가 만드는 인덱스도 `INVALID`로 보이므로 이 단계 전에 지우지 않는다.
-   ```sql
-   SELECT pid, state, wait_event_type, wait_event, left(query, 80) AS query
-     FROM pg_stat_activity
-    WHERE datname = current_database() AND pid <> pg_backend_pid()
-      AND (query ILIKE 'CREATE INDEX CONCURRENTLY%' OR query ILIKE '%pg_advisory_lock(%');
-   ```
+1. 진행 중인 마이그레이션이 없는지 본다. 행이 나오면 끝나기를 기다린다. 진행 중인 CIC가 만드는 인덱스도 `INVALID`로 보이므로 이 단계 전에 지우지 않는다. 마이그레이션 파일의 첫 줄이 `-- mailo:no-transaction` 주석이라 실행 중인 문장은 `CREATE`로 시작하지 않는다. 그래서 `%`로 앞을 연다.
+   - 실행기의 advisory lock 보유자(키 `7364221001`은 `classid = 1`, `objid = 3069253705`). 대기자의 폴링 문장은 대부분 `idle`이라 `pg_stat_activity`에서 문장으로는 찾지 못한다.
+     ```sql
+     SELECT l.pid, a.state, a.query_start, left(a.query, 80) AS query
+       FROM pg_locks l
+       JOIN pg_stat_activity a ON a.pid = l.pid
+      WHERE l.locktype = 'advisory' AND l.classid = 1 AND l.objid = 3069253705 AND l.granted
+        AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database());
+     ```
+   - 실행 중인 CIC.
+     ```sql
+     SELECT pid, state, wait_event_type, wait_event, left(query, 80) AS query
+       FROM pg_stat_activity
+      WHERE datname = current_database() AND pid <> pg_backend_pid()
+        AND query ILIKE '%CREATE INDEX CONCURRENTLY%';
+     ```
 2. `INVALID` 인덱스를 찾는다. 실행기가 보는 것과 같은 조건(현재 schema)이다. `migrate-cli` 오류 메시지의 인덱스 이름과 같아야 한다.
    ```sql
    SELECT c.relname AS index_name, t.relname AS table_name
@@ -703,5 +715,5 @@ Worker가 `MAILO_MAINTENANCE_INTERVAL_SECONDS`(기본 60초)마다 돌리는 작
 - "지표 해석"은 지표 이름과 라벨을 코드의 카탈로그와 대조했고 `/metrics` 통합 테스트(`test/http/metrics-*.integration-spec.ts`, `test/e2e/metrics-counters.integration-spec.ts`)가 값을 확인한다. 위 증상 표의 원인 후보와 조치는 부하나 실제 장애에서 확인하지 않았다.
 - "기동 시 비밀값 해석 실패"의 종류별 메시지는 단위·통합 테스트(`test/secrets/`, `test/e2e/secret-sources.integration-spec.ts`, `test/e2e/secret-startup.integration-spec.ts`)가 가짜 어댑터로 확인한다. 닫힌 코드의 뜻은 어댑터가 정한다. 실제 저장소(AWS Secrets Manager 등)의 오류가 어떤 코드로 오는지는 확인하지 않았다.
 - 긴 트랜잭션의 원인 목록(`pg_dump`, prepared transaction)은 일반 지식이며 Mailo 피드로 재현하지 않았다.
-- "마이그레이션 동시 실행과 INVALID 인덱스": 교착(`40P01`)·`55P03`·복구 재실행은 로컬 compose `postgres:17-alpine`에서 `migrate-cli`를 겹치거나 스냅샷을 잡아 측정한 결과다(2026-11-24). 이 절의 두 조회 SQL은 같은 서버(17.11)에서 실행해 문법과 열을 확인했고 결과는 0행이었다. 다른 버전, 운영 크기·쓰기 부하 중, 운영 환경은 확인하지 않았다.
+- "마이그레이션 동시 실행과 INVALID 인덱스": 교착(`40P01`)·`55P03`·복구 재실행은 로컬 compose `postgres:17-alpine`에서 `migrate-cli`를 겹치거나 스냅샷을 잡아 측정한 결과다(2026-11-24). 1단계의 advisory lock 보유자 조회는 보유 세션을 두고 같은 서버(17.11)에서 실행해 보유자 한 행과 대기자의 폴링 문장이 `idle`인 것을 확인했다. 2단계 조회 SQL은 문법과 열을 확인했고 결과는 0행이었다. `pg_terminate_backend`로 보유자를 끊는 복구는 통합 테스트(`test/db/migrator.integration-spec.ts`)가 대기자가 잠금을 얻는 것까지 확인한다. 1단계의 CIC 조회 SQL도 같은 서버에서 실행해 문법을 확인했다. 다른 버전, 운영 크기·쓰기 부하 중, 운영 환경은 확인하지 않았다.
 - "SMTP 계정 구성"의 기동 오류와 로그 이벤트는 단위·통합 테스트(`test/config/smtp-accounts.spec.ts`, `test/callers/account-id.spec.ts`, `test/e2e/multi-account.integration-spec.ts`, `test/worker/account-startup.spec.ts`)가 확인한다. 운영 환경에서 실행하지 않았고 실제 Gmail·Workspace 계정 둘 이상으로 확인하지 않았다.
