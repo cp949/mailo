@@ -225,6 +225,33 @@ async function deleteByIds(
 }
 
 /**
+ * `redactEventRecipients`가 보내는 SQL. 매개변수는 `$1` 유예(초), `$2` 배치 크기다.
+ * 대상 조건(`type IN (...)`, `recipients_redacted_at IS NULL`)은 0018의 부분 인덱스 정의와 글자 그대로 맞춘다.
+ * 테스트가 같은 SQL로 `EXPLAIN`을 하고 이벤트 종류 목록을 `mail_events_type_check`·인덱스 정의와 대조한다.
+ */
+export const REDACT_EVENT_RECIPIENTS_SQL = `WITH due AS (
+         SELECT e.id, e.job_id
+           FROM mail_events e
+           JOIN mail_jobs j ON j.id = e.job_id
+          WHERE e.type IN ('JOB_SENT', 'JOB_FAILED', 'JOB_EXPIRED', 'JOB_CANCELED')
+            AND e.recipients_redacted_at IS NULL
+            AND e.created_at <= now() - make_interval(secs => $1::double precision)
+          ORDER BY e.created_at, e.id
+          LIMIT $2
+          FOR KEY SHARE OF j SKIP LOCKED
+       ), redacted_events AS (
+         UPDATE mail_events SET
+           recipients = '{}'::jsonb, rejected_recipients = NULL, recipients_redacted_at = now()
+         FROM due WHERE mail_events.id = due.id
+         RETURNING mail_events.id
+       ), redacted_attempts AS (
+         UPDATE mail_attempts SET rejected_recipients = NULL
+          WHERE job_id IN (SELECT job_id FROM due) AND rejected_recipients IS NOT NULL
+         RETURNING id
+       )
+       SELECT count(*)::int AS n FROM redacted_events`;
+
+/**
  * 유예가 지난 `JOB_*` 이벤트의 수신자와 그 작업의 시도 기록 거부 수신자를 비운다(RQ-072, ADR-0015 결정 3).
  * 한 SQL 문장(한 트랜잭션)에서 다음을 같이 바꾼다.
  * - `mail_events.recipients`를 `'{}'`, `rejected_recipients`를 NULL, `recipients_redacted_at`을 `now()`로.
@@ -251,27 +278,7 @@ export async function redactEventRecipients(
   return withTransaction(pool, async (client) => {
     if (!(await tryMaintenanceLock(client, "recipients"))) return 0;
     const { rows } = await client.query<{ n: number }>(
-      `WITH due AS (
-         SELECT e.id, e.job_id
-           FROM mail_events e
-           JOIN mail_jobs j ON j.id = e.job_id
-          WHERE e.type IN ('JOB_SENT', 'JOB_FAILED', 'JOB_EXPIRED', 'JOB_CANCELED')
-            AND e.recipients_redacted_at IS NULL
-            AND e.created_at <= now() - make_interval(secs => $1::double precision)
-          ORDER BY e.created_at, e.id
-          LIMIT $2
-          FOR KEY SHARE OF j SKIP LOCKED
-       ), redacted_events AS (
-         UPDATE mail_events SET
-           recipients = '{}'::jsonb, rejected_recipients = NULL, recipients_redacted_at = now()
-         FROM due WHERE mail_events.id = due.id
-         RETURNING mail_events.id
-       ), redacted_attempts AS (
-         UPDATE mail_attempts SET rejected_recipients = NULL
-          WHERE job_id IN (SELECT job_id FROM due) AND rejected_recipients IS NOT NULL
-         RETURNING id
-       )
-       SELECT count(*)::int AS n FROM redacted_events`,
+      REDACT_EVENT_RECIPIENTS_SQL,
       [graceSeconds, batchSize],
     );
     return rows[0]?.n ?? 0;

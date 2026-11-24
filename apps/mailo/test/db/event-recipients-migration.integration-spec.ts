@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runMigrations } from "../../src/db/migrator.js";
+import { REDACT_EVENT_RECIPIENTS_SQL } from "../../src/queue/maintenance.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
 
 const SOURCE = fileURLToPath(new URL("../../migrations", import.meta.url));
@@ -147,23 +148,49 @@ describe("PostgreSQL 통합: 0017~0018 이벤트 수신자 비움 표지와 부�
     expect((await indexInfo(db, INDEX_NAME))?.valid).toBe(true);
   });
 
-  it("비움 대상 조회가 부분 인덱스를 쓸 수 있다", async () => {
-    await db.pool.query("ANALYZE mail_events");
-    const client = await db.pool.connect();
-    try {
-      await client.query("SET enable_seqscan = off");
-      await client.query("SET enable_bitmapscan = off");
-      const { rows } = await client.query<{ "QUERY PLAN": string }>(
-        `EXPLAIN SELECT e.id FROM mail_events e
-          WHERE e.type IN ('JOB_SENT', 'JOB_FAILED', 'JOB_EXPIRED', 'JOB_CANCELED')
-            AND e.recipients_redacted_at IS NULL
-            AND e.created_at <= now() - interval '7 days'
-          ORDER BY e.created_at, e.id LIMIT 1000`,
-      );
-      expect(rows.map((r) => r["QUERY PLAN"]).join("\n")).toContain(INDEX_NAME);
-    } finally {
-      client.release();
-    }
+  it("실제 비움 SQL(REDACT_EVENT_RECIPIENTS_SQL)의 계획이 힌트 없이 부분 인덱스를 쓴다(이벤트 3만 건, 대부분 유예 밖)", async () => {
+    // 쿼리 사본이 아니라 앱이 보내는 SQL을 그대로 쓴다. 조인과 FOR KEY SHARE까지 포함한다.
+    // 대상(유예 지남)은 소수이고 나머지는 최근 이벤트인 분포다. 통계에 좌우되는 계획이므로 데이터를 넣고 ANALYZE한 뒤 본다.
+    await db.pool.query(
+      `INSERT INTO mail_jobs
+         (id, caller_id, idempotency_key, fingerprint, fingerprint_key_version, recipients, expires_at, status, finished_at)
+       SELECT gen_random_uuid(), 'caller-b', 'bulk-' || g, '\\x00', 1, '{}', now() + interval '1 day', 'SENT', now()
+         FROM generate_series(1, 30000) g`,
+    );
+    await db.pool.query(
+      `INSERT INTO mail_events (caller_id, type, job_id, idempotency_key, attempt_count, recipients, created_at)
+       SELECT caller_id, 'JOB_SENT', id, idempotency_key, 1, '{"to":["x@example.invalid"]}',
+              CASE WHEN row_number() OVER () <= 300 THEN now() - interval '10 days' ELSE now() END
+         FROM mail_jobs WHERE caller_id = 'caller-b'`,
+    );
+    await db.pool.query("ANALYZE mail_jobs, mail_events");
+    const { rows } = await db.pool.query<{ "QUERY PLAN": string }>(
+      `EXPLAIN ${REDACT_EVENT_RECIPIENTS_SQL}`,
+      [604_800, 1000],
+    );
+    expect(rows.map((r) => r["QUERY PLAN"]).join("\n")).toContain(INDEX_NAME);
+  });
+
+  it("비움 대상 이벤트 종류 목록이 mail_events_type_check, 0018 인덱스 정의, 비움 SQL에서 같다(새 종류가 생기면 어긋남을 잡는다)", async () => {
+    const quoted = (text: string) =>
+      [...text.matchAll(/'(JOB_[A-Z_]+)'/g)].map((m) => m[1]!).sort();
+    const constraint = (
+      await db.pool.query<{ def: string }>(
+        `SELECT pg_get_constraintdef(c.oid) AS def FROM pg_constraint c
+          WHERE c.conname = 'mail_events_type_check' AND c.conrelid = 'mail_events'::regclass`,
+      )
+    ).rows[0]!.def;
+    const index = (await indexInfo(db, INDEX_NAME))!.def;
+    const sqlList = /e\.type IN \(([^)]*)\)/.exec(
+      REDACT_EVENT_RECIPIENTS_SQL,
+    )![1]!;
+    // 제약의 JOB_* 종류가 곧 수신자를 가진 이벤트 종류다. INTAKE_REJECTED는 수신자가 없어 대상이 아니다.
+    const jobTypes = quoted(constraint);
+
+    expect(jobTypes.length).toBeGreaterThan(0);
+    expect(quoted(index)).toEqual(jobTypes);
+    expect(quoted(sqlList)).toEqual(jobTypes);
+    expect(constraint).toContain("INTAKE_REJECTED");
   });
 });
 
