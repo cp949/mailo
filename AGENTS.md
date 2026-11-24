@@ -51,7 +51,7 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 | 어댑터 테스트 | `cd adapters/secret-source-aws && pnpm install --frozen-lockfile && pnpm test`(`node --test`, 루트 `pnpm test`에 포함되지 않음). 변형 이미지 빌드·스모크는 `docs/operations/ci.md`의 "어댑터 잡"                                                               |
 | CI·릴리스     | `.github/workflows/ci.yml`(CI, `adapter` 잡 포함), `release.yml`(`vX.Y.Z` 태그 push 때 GHCR 발행, `variants` 잡이 `-aws` 변형 발행). 잡 구성·로컬 재현·릴리스 절차는 `docs/operations/ci.md`. 워크플로를 바꾸면 이 문서와 함께 갱신한다. 액션은 SHA로 고정한다 |
 
-- 통합 테스트는 실제 PostgreSQL을 쓴다. 접속 URL은 `MAILO_TEST_DATABASE_URL`이고 기본값은 compose 개발 값이다. 서버가 없으면 skip하지 않고 실패한다.
+- 통합 테스트는 실제 PostgreSQL을 쓴다. 접속 URL은 `MAILO_TEST_DATABASE_URL`이고 기본값은 compose 개발 값이다. 서버가 없으면 skip하지 않고 실패한다. 작업 폴더·에이전트별 database 분리는 `scripts/test-db.sh`(`docs/agents/verification.md`의 "통합 테스트 동시 실행").
 - 테스트 파일마다 `test/support/database.ts`의 전용 schema를 쓴다.
 
 ## 문서와 요구사항 갱신

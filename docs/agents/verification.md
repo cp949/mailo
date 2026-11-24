@@ -69,6 +69,27 @@ DELTA 중간에 통합 테스트를 실행해야 하면 계획서나 DELTA에 �
 
 L3처럼 Docker·NFS 자원을 띄우는 검증은 리뷰로 코드가 바뀔 수 있는 동안 실행하지 않는다. 리뷰 지적 처리까지 마친 뒤 한 번 실행한다.
 
+## 통합 테스트 동시 실행
+
+여러 작업 폴더(worktree)나 에이전트가 통합 테스트를 같은 시각에 돌릴 때 적용한다. 같은 compose PostgreSQL 서버를 쓰되 database를 나눈다.
+
+```bash
+export MAILO_TEST_DATABASE_URL=$(scripts/test-db.sh create)   # 작업 폴더 이름에서 만든 mailo_test_* database
+pnpm test:integration
+scripts/test-db.sh drop                                       # 작업을 끝내고 정리한다
+```
+
+- 다른 jest가 돌고 있어도 database 이름이 다르면 기다리지 않고 실행한다. 같은 database를 쓰는 jest가 돌고 있으면(같은 `MAILO_TEST_DATABASE_URL`) 기다린다.
+- 같은 database를 동시에 쓰면 안 되는 이유는 DB 전체에 걸리는 잠금이다. schema 격리로는 막지 못한다.
+  - 마이그레이터 `pg_advisory_lock(7364221001)`. 한쪽이 `-- mailo:no-transaction` 마이그레이션(`CREATE INDEX CONCURRENTLY`)을 돌리면 그 database의 모든 트랜잭션이 끝나기를 기다린다. 잠금을 기다리는 다른 쪽이 거기에 걸려 `deadlock detected`가 난다.
+  - 호출처 할당 잠금(`7364222`, `hashtext(caller_id)`)과 정리 단계 잠금(`7364223`, 단계 1~4). `pg_try_advisory_xact_lock`이라 다른 jest가 쥐고 있으면 기다리지 않고 건너뛴다. 같은 호출처 ID를 쓰는 다른 jest와 겹치면 그 회차의 점유·sweep이 비어 `waitFor` 시간 초과나 개수 불일치가 날 수 있다.
+- database를 나눠도 PostgreSQL 서버는 하나다. 이벤트 피드는 `pg_snapshot_xmin(pg_current_snapshot()) > txid`인 행만 읽는다(`events/event-store.ts`). xmin은 서버 전체의 진행 중 트랜잭션에서 정해지므로 다른 database의 열린 트랜잭션이 이벤트를 잠시 가린다. 이벤트 피드·피드 지연 지표를 읽는 spec(`events.integration-spec.ts`, `metrics-reads`, `metrics-gauges` 등)이 동시 실행 중 이 이유로 실패할 수 있다.
+  - 동시 실행 중 이런 spec이 실패하면 다른 jest가 끝난 뒤 그 spec만 L1로 다시 실행해 간섭인지 확인한다. 같은 소스 재실행이므로 `FORCE_RETEST=1`과 이유를 보고에 적는다.
+  - 서버까지 나누려면(별도 컨테이너) 사용자 결정이 필요하다. 지금 규칙은 compose의 PostgreSQL 하나다.
+- `scripts/test-db.sh`는 `mailo_test_` 접두사 database만 만들고 지운다. 개발 DB(`mailo`)는 건드리지 않는다.
+- env 지문은 database 이름을 포함한다. database가 다른 실행의 결과를 재사용할 때는 같은 서버·같은 마이그레이션이라는 근거를 적는다("결과 재사용").
+- 로드가 높을 때(여러 jest·build가 동시에 도는 상태) `waitFor` 시간 초과가 날 수 있다. 같은 소스에서 실패한 spec만 다시 돌려 통과해도 "부하 때문"이라는 근거는 아니다. 실패 로그의 첫 오류와 `uptime`을 함께 기록한다.
+
 ## 문서만 바꾼 경우
 
 문서만 바꾸면 L0~L2를 실행하지 않는다. 다음을 실행한다.
@@ -148,7 +169,7 @@ turbo의 캐시 적중(`cache hit, replaying logs`)은 이전 실행 로그의 �
 
 - 최종 검증 담당자를 한 명 지정한다. 기본은 구현자이고 계획서에서 달리 지정할 수 있다.
 - 실행하기 전에 기록에 담당자, 상태(`실행 중`), 대상 범위(명령·경로 패턴), 시작 시각을 적는다.
-- 다른 에이전트는 같거나 겹치는 검증을 동시에 실행하지 않는다. 같은 PostgreSQL을 쓰는 통합 테스트와 같은 Docker 자원을 쓰는 L3도 겹치는 검증이다.
+- 다른 에이전트는 같거나 겹치는 검증을 동시에 실행하지 않는다. 같은 database를 쓰는 통합 테스트와 같은 Docker 자원을 쓰는 L3도 겹치는 검증이다. 통합 테스트는 에이전트마다 다른 database를 쓰면 겹치지 않는다("통합 테스트 동시 실행").
 - 검증하는 동안 대상 입력(추적 파일과 untracked 파일)을 바꾸지 않는다.
 - 검증이 끝나면 같은 행에 두 지문, 명령, 범위, 환경, 종료 코드, 통과·실패 수, 로그 경로를 적는다.
 - 리뷰어와 다른 에이전트는 기록을 인용한다. 지문이 같으면 다시 실행하지 않는다.
