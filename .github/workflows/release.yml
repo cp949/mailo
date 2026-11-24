@@ -1,4 +1,5 @@
 # Mailo 릴리스. vX.Y.Z 태그 push 때 이미지를 ghcr.io/cp949/mailo에 발행하고 GitHub Release를 만든다(docs/operations/ci.md "릴리스 워크플로").
+# release 잡 뒤의 variants 잡이 AWS 어댑터 변형 이미지(vX.Y.Z-aws)를 발행한다(ADR-0016 결정 4).
 # 시크릿은 GITHUB_TOKEN만 쓴다. 이미지에는 시크릿을 넣지 않는다(RQ-025).
 name: Release
 
@@ -16,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # ci.yml의 NODE_VERSION과 같은 값(Dockerfile의 node:24.20.0-alpine). 올릴 때 세 곳을 함께 바꾼다.
+  # ci.yml의 NODE_VERSION과 같은 값(Dockerfile의 node:24.20.0-alpine). 올릴 때 네 곳(두 Dockerfile, ci.yml, release.yml)을 함께 바꾼다.
   NODE_VERSION: "24.20.0"
   IMAGE: ghcr.io/cp949/mailo
 
@@ -83,6 +84,11 @@ jobs:
     permissions:
       contents: write # GitHub Release 생성과 릴리스 노트 생성 API
       packages: write # GHCR push
+    # variants 잡이 같은 릴리스 커밋의 기준 이미지(digest) 위에 변형을 만든다.
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      tag: ${{ github.ref_name }}
+      commit: ${{ steps.meta.outputs.commit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -237,5 +243,101 @@ jobs:
             echo "- 마이그레이션은 자동으로 되돌리지 않는다(down 마이그레이션 없음). 업그레이드 전에 \`pg_dump\`로 백업한다."
             echo "- 이미지 기본 \`CMD\`는 마이그레이션을 실행하지 않는다. compose 밖에서 실행하면 \`node dist/db/migrate-cli.js\`를 먼저 실행한다."
             echo "- 절차: [docs/operations/deployment.md](${REPO_URL}/blob/${TAG}/docs/operations/deployment.md#기동-순서와-마이그레이션)"
+            echo ""
+            echo "## 변형 이미지"
+            echo ""
+            echo "- AWS Secrets Manager 어댑터 변형: \`${IMAGE}:${TAG}-aws\`. 이 Release를 만든 뒤 \`variants\` 잡이 발행한다. 기본 이미지에는 어댑터와 AWS SDK가 없다."
+            echo "- \`variants\` 잡이 실패하면 \`-aws\` 태그가 없을 수 있다. 기본 이미지와 이 Release는 이미 발행된 상태다. Actions의 \"Re-run failed jobs\"로 변형 잡만 다시 돌린다."
           } >> "$notes"
           gh release create "$TAG" --title "$TAG" --notes-file "$notes" --verify-tag
+
+  # AWS 어댑터 변형 이미지(vX.Y.Z-aws). release 잡이 push한 기준 이미지의 digest 위에 어댑터만 얹는다(ADR-0016 결정 4).
+  # 이 잡이 실패해도 기준 이미지와 GitHub Release는 이미 발행된 상태다. Actions의 "Re-run failed jobs"로 이 잡만 다시 돌린다.
+  # 스모크를 통과한 이미지만 push한다. 이동 태그(latest-aws)는 만들지 않는다.
+  variants:
+    name: variants (AWS 어댑터 변형 이미지, 스모크, GHCR 발행)
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # 저장소에는 쓰지 않는다. GHCR push 권한만 필요하다.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: corepack enable
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # 어댑터 단위 테스트가 실패하면 이미지를 만들지 않는다. pnpm 버전은 어댑터 package.json의 packageManager를 따른다.
+      - name: 어댑터 단위 테스트
+        working-directory: adapters/secret-source-aws
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # docker buildx imagetools(레지스트리 config digest 조회)에 buildx 플러그인을 쓴다.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # 기준 이미지는 release 잡이 push한 digest로 가져온다. 태그는 쓰지 않는다(옮겨질 수 있다).
+      - name: 기준 이미지 가져오기와 어댑터 부재 확인
+        env:
+          BASE_REF: ${{ env.IMAGE }}@${{ needs.release.outputs.digest }}
+          COMMIT: ${{ needs.release.outputs.commit }}
+        run: |
+          docker pull "$BASE_REF"
+          revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$BASE_REF")"
+          if [ "$revision" != "$COMMIT" ]; then
+            echo "::error::기준 이미지 revision 라벨 ${revision}이 태그 커밋 ${COMMIT}과 다르다."
+            exit 1
+          fi
+          adapters/secret-source-aws/image-smoke/verify-base.sh "$BASE_REF"
+      - name: 변형 이미지 빌드
+        env:
+          BASE_REF: ${{ env.IMAGE }}@${{ needs.release.outputs.digest }}
+          REF: ${{ env.IMAGE }}:${{ needs.release.outputs.tag }}-aws
+        run: |
+          docker build --build-arg "MAILO_BASE_IMAGE=${BASE_REF}" --tag "$REF" adapters/secret-source-aws
+      - name: 변형 이미지 스모크
+        env:
+          REF: ${{ env.IMAGE }}:${{ needs.release.outputs.tag }}-aws
+          COMMIT: ${{ needs.release.outputs.commit }}
+        run: |
+          # 라벨은 기준 이미지에서 이어받는다. 같은 릴리스 커밋의 이미지인지 확인한다.
+          revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$REF")"
+          if [ "$revision" != "$COMMIT" ]; then
+            echo "::error::변형 이미지 revision 라벨 ${revision}이 태그 커밋 ${COMMIT}과 다르다."
+            exit 1
+          fi
+          adapters/secret-source-aws/image-smoke/run.sh "$REF"
+      # 스모크한 로컬 이미지를 그대로 push한다. 동일성 기준은 release 잡과 같은 config digest다.
+      - name: GHCR push와 config digest 확인
+        env:
+          REF: ${{ env.IMAGE }}:${{ needs.release.outputs.tag }}-aws
+        run: |
+          set -o pipefail
+          registry_config() {
+            local raw digest
+            raw="$(docker buildx imagetools inspect --raw "$1")"
+            if jq -e 'has("manifests")' >/dev/null <<<"$raw"; then
+              digest="$(jq -r '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")][0].digest' <<<"$raw")"
+              raw="$(docker buildx imagetools inspect --raw "${IMAGE}@${digest}")"
+            fi
+            jq -r '.config.digest' <<<"$raw"
+          }
+          smoked="sha256:$(docker save "$REF" | tar -xO manifest.json | jq -r '.[0].Config' | grep -oE '[0-9a-f]{64}$')"
+          echo "스모크한 변형 이미지 config: ${smoked}"
+          docker push "$REF"
+          pushed="$(registry_config "$REF")"
+          if [ "$pushed" != "$smoked" ]; then
+            echo "::error::GHCR ${REF}의 config ${pushed}가 스모크한 이미지 ${smoked}와 다르다."
+            exit 1
+          fi
+          digest="$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$REF" | jq -r .digest)"
+          echo "발행: ${REF} manifest ${digest} config ${pushed}"
+          echo "발행: \`${REF}\` manifest \`${digest}\`" >> "$GITHUB_STEP_SUMMARY"

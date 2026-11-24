@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Dockerfile의 node:24.20.0-alpine과 같은 버전. .nvmrc는 없고 engines는 범위(>=24.18)라서 고정값을 여기에 둔다.
+  # Dockerfile(과 adapters/secret-source-aws/Dockerfile)의 node:24.20.0-alpine과 같은 버전. .nvmrc는 없고 engines는 범위(>=24.18)라서 고정값을 여기에 둔다.
   NODE_VERSION: "24.20.0"
 
 # 액션은 태그가 가리키는 커밋 SHA로 고정한다(태그는 옮겨질 수 있다). 주석의 버전은 2026-11-23에 확인한 최신 릴리스다.
@@ -147,6 +147,36 @@ jobs:
           path: ci-logs/
           if-no-files-found: warn
           retention-days: 14
+
+  # AWS 어댑터와 변형 이미지(ADR-0016 결정 4·9). 발행하지 않는다. release.yml의 variants 잡이 같은 스크립트로 발행 전에 확인한다.
+  adapter:
+    name: adapter (AWS 어댑터 단위 테스트, 변형 이미지 빌드·스모크)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # 어댑터는 루트 워크스페이스 밖이다. pnpm 버전은 어댑터 package.json의 packageManager를 따른다.
+      - run: corepack enable
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: 어댑터 의존성 설치
+        working-directory: adapters/secret-source-aws
+        run: pnpm install --frozen-lockfile
+      - name: 어댑터 단위 테스트
+        working-directory: adapters/secret-source-aws
+        run: pnpm test
+      - name: 기본 이미지 빌드(로컬)
+        run: docker build --tag mailo:adapter-base .
+      - name: 기본 이미지에 어댑터·SDK 없음 확인
+        run: adapters/secret-source-aws/image-smoke/verify-base.sh mailo:adapter-base
+      - name: 변형 이미지 빌드(로컬)
+        run: docker build --build-arg MAILO_BASE_IMAGE=mailo:adapter-base --tag mailo:adapter-aws adapters/secret-source-aws
+      - name: 변형 이미지 스모크
+        run: adapters/secret-source-aws/image-smoke/run.sh mailo:adapter-aws
 
   nfs:
     name: nfs (선택, 필수 체크 아님)
