@@ -9,8 +9,8 @@ single-context다. 앱은 `apps/mailo` 하나다. 루트 `CONTEXT-MAP.md`가 문
 ```text
 /
 ├── CONTEXT-MAP.md                      ← 문서 위치, 모듈↔근거 표
-├── docs/requirements/mail-sending.md   ← 용어("용어와 진행 상태" 절), RQ-001~032
-├── docs/adr/                           ← ADR-0001~0008
+├── docs/requirements/mail-sending.md   ← 용어("용어와 진행 상태" 절), RQ-001~081
+├── docs/adr/                           ← ADR-0001~0016
 ├── docs/api/                           ← API 계약(OpenAPI)
 ├── docs/operations/                    ← 배포·키·호출처·장애 문서
 └── apps/mailo/src/

@@ -24,6 +24,7 @@ L3을 돌리는 변경:
 | 파일 채널의 권한·원자 rename·마운트 가정               | `scripts/volume/`의 해당 스크립트(`acl`·`group` 모두)                             |
 | NFS 관련 코드(`file-channel/errno.ts` 등), `nfs.md`    | `apps/mailo/scripts/nfs/run.sh`                                                   |
 | `samples/spring-boot-relay/`, 서명·봉투 형식(ADR-0008) | `samples/spring-boot-relay/verify/run-e2e.sh`                                     |
+| `/metrics` 경로·인증(`metrics/`, `health/metrics-*.ts`, `callers/ops-auth-middleware.ts`), 지표 카탈로그 | `scripts/container/verify-metrics.sh`(`read_only` 컨테이너의 `/metrics` 응답을 관찰한다. `promtool` 이미지를 못 받으면 그 확인만 건너뛴다) |
 | `secrets/`, `adapters/secret-source-aws/`, 변형 이미지, `X_REF` 기동 경로 | `scripts/secrets-localstack/run.sh`(LocalStack 최신 이미지는 Auth Token이 필요해 기본은 4.12 고정 이미지) |
 | `.github/workflows/ci.yml`                             | `docs/operations/ci.md`의 로컬 재현 명령. GitHub 실행 결과가 없으면 없다고 적는다 |
 

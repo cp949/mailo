@@ -6,8 +6,8 @@ Mailo는 단일 컨텍스트다. 도메인 용어와 진행 상태 정의는 `do
 | ------------------------------- | ----------------------------------- |
 | 앱                              | `apps/mailo`                        |
 | 시크릿 어댑터(워크스페이스 밖)  | `adapters/secret-source-aws`        |
-| 요구사항(RQ-001~032, 구현 단계) | `docs/requirements/mail-sending.md` |
-| 결정(ADR-0001~0008)             | `docs/adr/`                         |
+| 요구사항(RQ-001~081, 구현 단계) | `docs/requirements/mail-sending.md` |
+| 결정(ADR-0001~0016)             | `docs/adr/`                         |
 | API 계약(OpenAPI)               | `docs/api/`                         |
 | 운영 문서(배포·키·호출처·장애)  | `docs/operations/`                  |
 
@@ -23,12 +23,15 @@ Mailo는 단일 컨텍스트다. 도메인 용어와 진행 상태 정의는 `do
 | `envelope`               | JWS 서명 검증, JWE 복호화, 수집 공용 파이프라인(`openRequest`), 큐 등록 입력 변환, 개인키 키링            | ADR-0008, RQ-022·024           |
 | `file-channel`           | 파일 채널 폴러(호출처별 `inbox/` 폴링 수집, 거부 기록, 임시 파일 정리), 수명 주기 연결                    | ADR-0004, RQ-002·024           |
 | `events`                 | 종결 이벤트 피드, 수집 거부 기록                                                                          | ADR-0006                       |
-| `callers`                | 호출처 레지스트리, API 키 인증                                                                            | RQ-028                         |
+| `callers`                | 호출처 레지스트리, API 키 인증, 호출처 `accountId`, 운영 토큰 판정과 `/ops`·`/metrics` 인증               | RQ-028, ADR-0011·0012·0013     |
 | `health`                 | 헬스 응답, 차단기 상태 노출                                                                               | ADR-0007 결정 5                |
-| `config`                 | 환경 변수 로딩, Worker 옵션 값                                                                            | RQ-025                         |
+| `config`                 | 환경 변수 로딩, SMTP 계정 파일 로더, Worker 옵션 값                                                       | RQ-025, ADR-0013               |
 | `http`                   | problem+json 오류, 요청 ID, 본문 읽기 공통 처리                                                           | RQ-030, ADR-0006               |
 | `logging`                | 한 줄 JSON 로거(`ts`·`instance`·`level`·`event`), Nest 로거 어댑터. 다른 모듈에 의존하지 않는다           | RQ-027                         |
 | `validation`             | 요청 입력 검증(수신자·제목·본문 상한)                                                                     | RQ-030                         |
+| `ops`                    | `/ops` REST(발송 정지·감사·관리 취소), 감사 테이블 `mail_ops_audit`                                       | ADR-0011, RQ-042~044           |
+| `metrics`                | 지표 카탈로그, counter 저장소, Prometheus 텍스트 직렬화. `/metrics` 컨트롤러와 DB 수집기는 `health/`      | ADR-0012, RQ-049~052           |
+| `cli`                    | 운영 CLI(`node dist/cli.js`). 다른 모듈을 import하지 않는다                                               | ADR-0011, RQ-047               |
 | `secrets`                | `X_REF` 비밀값 해석(기동 전 1회, 환경 복사본), 어댑터 계약과 로더. 다른 모듈에 의존하지 않는다            | RQ-075~078, ADR-0016           |
 | `db`                     | `pg` 풀, SQL 마이그레이션 실행기                                                                          | ADR-0002                       |
 
@@ -38,4 +41,4 @@ Mailo는 단일 컨텍스트다. 도메인 용어와 진행 상태 정의는 `do
 
 ## 구현 단계
 
-1단계(REST, 큐·Worker, ADR-0005·0007, 본문 암호화, API 키 인증), 2단계의 봉투(`envelope`: JWS·JWE, REST JWE), 파일 채널 폴러(`file-channel`, ADR-0004), 호출처별 발송 할당(RQ-032, `queue/claim.ts`)을 구현했다. 3단계로 같은 호스트 Docker named volume(`scripts/volume/`)과 NFS loopback(`pnpm test:nfs`)에서 파일 채널을 검증하고 운영 문서(`docs/operations/`)를 썼다. 실제 NAS 제품, 실제 Gmail, CI는 검증하지 않았다. RQ별 상태 요약은 `docs/requirements/README.md`다.
+구현 단계(1~11단계)의 범위와 진행 상태는 `docs/requirements/mail-sending.md`의 "구현 단계" 절이 소유한다. RQ별 상태 요약은 `docs/requirements/README.md`다. 파일 채널은 같은 호스트 Docker named volume(`scripts/volume/`)과 NFS loopback(`pnpm test:nfs`)에서 검증했다. 실제 NAS 제품, 실제 Gmail·Workspace SMTP, 실제 AWS는 검증하지 않았다.

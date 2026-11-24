@@ -29,7 +29,7 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 - 파일 채널(`file-channel`)은 `MAILO_FILE_CHANNEL_ROOT`가 있을 때만 켜진다(기본 꺼짐). 코드는 폴더를 만들거나 chmod하지 않는다(운영 문서의 몫, ADR-0004 결정 8). 호출처 폴더는 `<root>/inbox/<caller_id>/`이고 레지스트리에서 `fileChannel: true`인 호출처만 읽는다. 파일 열기는 `O_NOFOLLOW|O_NONBLOCK` + `fstat`이고 `lstat` 뒤 `open`을 쓰지 않는다. 원본 삭제는 등록·거부 기록의 DB 커밋 뒤에만 한다. 거부는 `recordIntakeRejection`(거부 기록과 `INTAKE_REJECTED` 이벤트 한 트랜잭션)으로 쓴다. NFS는 같은 호스트 loopback에서만 검증했다(`docs/operations/nfs.md`, ADR-0004 구현 중 확정 20~27). `ESTALE`은 Node가 `code`를 `ESTALE`로 주지 않으므로 `file-channel/errno.ts`의 `isStale`(errno 116)로 판별한다.
 - 요청 수집(REST·파일)은 `envelope`의 `openRequest`를 거친다. 순서는 JWS 구조 파싱 → 서명 검증 → 스키마 검증 → 복호화 → 복호화한 제목·본문 검증 → 지문 계산이고 바꾸지 않는다(ADR-0008 결정 3). 서명 실패 시 복호화하지 않는다. 암호 형식은 직접 만들지 않고 `jose`(버전 고정)를 쓴다.
 - 호출처 JWS 비밀키와 Mailo JWE 개인키는 설정 JSON에 값을 두지 않는다. JSON은 변수 이름(`secretVar`·`privateKeyVar`)만 갖고 값은 `<변수>_FILE`(우선)이나 `<변수>`로 받는다. 모듈은 `APP_ENV`로 같은 환경을 읽는다.
-- 비밀값은 `X_REF=<scheme>://<참조>`로도 받는다(ADR-0016). `main.ts`·`db/migrate-cli.ts`가 `loadConfig` 전에 `resolveSecrets()`를 부르고, 해석값은 `process.env`가 아니라 새 환경 복사본에 두어 `loadConfig(env)`·`createApp({ env })`에 넘긴다. `X_REF`와 `X`·`X_FILE` 동시 지정은 거부하고 값·참조 문자열·어댑터 오류 메시지는 오류와 로그에 싣지 않는다(닫힌 코드 5종만 통과). 새 비밀 변수의 이름 규칙은 값을 읽는 로더가 소유하고 `secret-names.ts`가 허용 목록에 조립한다.
+- 비밀값은 `X_REF=<scheme>://<참조>`로도 받는다(ADR-0016). `main.ts`·`db/migrate-cli.ts`가 `loadConfig` 전에 `resolveSecrets()`를 부르고, 해석값은 `process.env`가 아니라 새 환경 복사본에 두어 `loadConfig(env)`·`createApp({ env })`에 넘긴다. `X_REF`와 `X`·`X_FILE` 동시 지정은 거부하고 값·참조 문자열·어댑터 오류 메시지는 오류와 로그에 싣지 않는다(닫힌 코드 5종만 통과). 새 비밀 변수의 이름 규칙은 값을 읽는 로더가 소유하고 `secret-names.ts`가 허용 목록에 조립한다. 변형 이미지(`-aws`)의 `X_REF` 기동은 `scripts/secrets-localstack/run.sh`(Docker 필요, 수동, 자동 테스트와 CI 아님)로 확인한다.
 - 적합성 벡터(`docs/api/conformance/vectors.json`)의 키는 공개 가짜 키다. JWS 비밀키 셋은 `config/key-loader.ts`의 `PUBLIC_SAMPLE_KEYS`, JWE 개인키 둘은 `envelope/key-file.ts`의 `PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`(공개키 SPKI의 SHA-256, `kid` 이름은 보지 않는다)로 `NODE_ENV`가 development·test가 아니면 거부한다. 벡터는 `apps/mailo/scripts/gen-conformance-vectors.mjs`로만 만들고 서버 코드를 import하지 않으며 기대값을 서버 출력에서 복사하지 않는다. 키를 새로 만들면(`--new-keys`) 상수도 같은 변경에서 고친다. `test/envelope/conformance-vectors.spec.ts`가 서버 판정을 고정하고 케이스 `id`와 기대 판정의 변경은 호출처 계약 변경이다(ADR-0014 결정 2). 벡터에 지문·실제 키·실제 주소를 넣지 않는다.
 - 운영 의존성은 Mailo와 PostgreSQL뿐이다. 브로커·외부 메일 서버·새 상시 서비스를 추가하지 않는다(RQ-029). 예외는 둘뿐이다. 개발용 opt-in compose profile(`mailpit`)은 기본 `docker compose up`에 넣지 않는다. 외부 시크릿 소스 어댑터(ADR-0016)는 변형 이미지(`-aws`)와 `MAILO_SECRET_ADAPTERS`·`X_REF`를 함께 지정한 배포에서만 의존성이고, 기본 이미지·기본 compose·기본 설정에 넣지 않는다. 새 npm 의존성은 필요 이유를 변경 설명에 적는다.
 
@@ -62,7 +62,7 @@ Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 단일 서�
 - 허용하는 ADR 수정: 상태 절의 대체·구현 상태 표기, 결정 옆의 "대체됨" 표기, 날짜를 단 "구현 중 확정" 절 추가. 결정 문구 자체는 바꾸지 않고 확정 내용은 이 절들에만 쓴다.
 - 구현이 ADR·RQ와 충돌하면 코드를 문서에 맞추거나, 문서 변경안을 사용자에게 제시한다. 둘 중 하나를 조용히 어긋나게 두지 않는다.
 - 요구사항 ID(`RQ-NNN`)와 ADR 번호를 코드 주석과 테스트 제목에서 참조한다.
-- 환경 변수, 로그 이벤트 이름, 레지스트리 필드, 키 변수 이름, 마운트 경로를 바꾸면 같은 변경에서 `docs/operations/`의 해당 문서(`deployment.md`, `key-management.md`, `caller-onboarding.md`, `troubleshooting.md`)를 갱신한다.
+- 환경 변수, 로그 이벤트 이름, 레지스트리 필드, 키 변수 이름, 마운트 경로를 바꾸면 같은 변경에서 `docs/operations/`의 해당 문서(`deployment.md`, `key-management.md`, `caller-onboarding.md`, `troubleshooting.md`, `X_REF`·`-aws`는 `aws-secrets-manager.md`)를 갱신한다.
 
 ## 시크릿과 로그
 
