@@ -356,8 +356,8 @@ SELECT c.relname, i.indisvalid AS valid FROM pg_index i JOIN pg_class c ON c.oid
 
 | 증상(`migrate-cli` 로그·종료 코드)                                              | 원인                                                                                                              |
 | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `deadlock detected`(`40P01`), 종료 코드 1, 인덱스 이름을 담은 오류는 없음       | 같은 database에서 이전 이미지의 `migrate-cli`가 대기자로 겹쳤다. 락을 기다리던 쪽이 희생됐다. `INVALID` 인덱스는 남지 않는다 |
-| `deadlock detected`(`40P01`) 또는 `INVALID` 인덱스 이름을 담은 오류. 두 `migrate-cli`가 모두 실패 | 같은 겹침에서 CIC를 실행하던 쪽이 희생됐다. `INVALID` 인덱스가 남는다. 이 이미지의 `migrate-cli`끼리는 이렇게 되지 않는다 |
+| `deadlock detected`(`40P01`), 종료 코드 1, 인덱스 이름을 담은 오류는 없음       | 같은 database에서 이전 이미지의 `migrate-cli`가 대기자로 겹쳤다. 락을 기다리던 쪽이 희생됐다. 로컬 측정에서는 `INVALID` 인덱스가 남지 않았다 |
+| `deadlock detected`(`40P01`) 또는 `INVALID` 인덱스 이름을 담은 오류. 두 `migrate-cli`가 모두 실패 | 같은 겹침에서 CIC를 실행하던 쪽이 희생됐다. `INVALID` 인덱스가 남는다. 이 이미지의 `migrate-cli`끼리는 이렇게 되지 않는다. 전환기(이전 이미지와 겹침)에는 이 경로로 `INVALID`가 남을 수 있다(이론상, 로컬 측정에서는 만나지 않았다). 복구는 아래 2~5단계(`DROP INDEX CONCURRENTLY` 뒤 재실행)다 |
 | `마이그레이션 잠금 대기 중(다른 실행이 진행 중, 경과 N초)`가 10초마다 반복되고 끝나지 않음 | 다른 `migrate-cli`가 advisory lock을 쥐고 있다. 정상이면 끝나기를 기다린다. 오래 계속되면 아래 1단계의 첫 쿼리로 보유자를 찾는다 |
 | `마이그레이션 실패: MigrationLockTimeoutError code=MAILO_MIGRATION_LOCK_TIMEOUT` | `runMigrations`에 `advisoryLockWaitMillis`를 준 호출에서만 나온다. `migrate-cli`는 상한을 두지 않아 이 오류가 나오지 않는다. 아무것도 적용하지 않았다 |
 | `canceling statement due to lock timeout`(`55P03`)과 `INVALID` 인덱스 이름 오류 | `pg_dump` 같은 오래 열린 스냅샷이 CIC를 `lock_timeout`(10초)까지 기다리게 했다. `INVALID` 인덱스가 남을 수 있다 |

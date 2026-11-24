@@ -143,7 +143,8 @@ services:
 
 전환기(이전 이미지와 새 이미지가 한 database에서 겹치는 동안):
 
-- 이전 이미지의 `migrate-cli`는 블로킹 `pg_advisory_lock`으로 기다린다. 이전 쪽이 대기자이고 새 이미지가 CIC를 실행하는 중이면 순환이 그대로 생긴다. 측정(위와 같은 환경): 새 쪽이 먼저 시작하고 이전 쪽이 30~90ms 뒤에 시작한 12회 모두 이전 쪽이 `40P01`로 종료 코드 1이었고 새 쪽은 종료 코드 0이었다. 이 중 6회에서 `INVALID` 인덱스 수는 0이었다. 이전 쪽이 먼저 잠금을 얻고 새 쪽이 기다리는 경우는 새 쪽이 폴링하므로 교착하지 않는다.
+- 이전 이미지의 `migrate-cli`는 블로킹 `pg_advisory_lock`으로 기다린다. 이전 쪽이 대기자이고 새 이미지가 CIC를 실행하는 중이면 순환이 그대로 생긴다. 측정(위와 같은 환경): 새 쪽이 먼저 시작하고 이전 쪽이 30~90ms 뒤에 시작한 24회 모두 이전 쪽이 `40P01`로 종료 코드 1이었고 새 쪽은 종료 코드 0이었다. 이 중 18회에서 `INVALID` 인덱스 수는 0이었고 나머지 6회는 조회하지 않았다. 이전 쪽이 먼저 잠금을 얻고 새 쪽이 기다리는 경우는 새 쪽이 폴링하므로 교착하지 않는다.
+- 전환기에는 `INVALID` 인덱스가 남을 수 있다. 이전 쪽이 `deadlock_timeout`(1초)보다 오래 기다린 뒤에 새 쪽의 CIC가 그 대기를 기다리기 시작하면 CIC 쪽이 희생된다(이전 방식의 두 경로와 같은 순환). 위 측정에서 이 경로로 `INVALID`가 남은 경우는 없었고, 이 경로를 재현하지는 않았다. 남으면 `DROP INDEX CONCURRENTLY` 뒤 재실행한다(`troubleshooting.md`).
 - 롤링 배포 중 이전 이미지 인스턴스가 한 대라도 남아 있으면 아래 "운영 방법"의 "한 번에 하나"를 지킨다.
 
 운영 방법:
@@ -1070,7 +1071,7 @@ docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 - 외부 시크릿 소스(`X_REF`, ADR-0016 묶음 A): 가짜 어댑터로 단위·통합 테스트(실제 PostgreSQL)와 컴파일한 진입점의 실패·성공 경로(프로세스 수준)를 확인했다. 이 절의 compose override 예시(DB 비밀번호 `_REF`)와 `docker-compose.migrate-once.yml`의 실행, 롤링 배포·롤백, 저장소 장애 때 재시작 반복은 확인하지 않았다. 변형 이미지의 compose 기동(독립 compose 파일)과 초기 프로세스 환경(`/proc/1/environ`)의 값 부재는 LocalStack 수동 시나리오가 확인한다(아래 줄).
 - AWS 어댑터와 변형 이미지(ADR-0016 묶음 B, 2026-11-24): 어댑터 단위 테스트(가짜 SDK 클라이언트, 로컬 HTTP fixture를 거치는 실제 SDK), 로컬에서 빌드한 기본 이미지의 어댑터·SDK 부재 확인(`image-smoke/verify-base.sh`), 변형 이미지를 `read_only`·`cap_drop: [ALL]`·`--network none`으로 실행한 해석 스모크(`image-smoke/run.sh`: bare 패키지 이름 로드, 해석, JSON 키, 닫힌 코드, 로드 오류)를 실행했다. 실제 AWS(IAM, KMS, 자격 증명 체인, IMDSv2, throttling), 취약점 스캔, 발행된 `-aws` 이미지의 pull과 compose 기동은 확인하지 않았다. `release.yml` `variants` 잡은 이후 GitHub에서 성공했다(`v0.6.0`, run 45380436731, `ci.md`).
 - LocalStack 수동 시나리오(ADR-0016 묶음 C, 2026-11-24, `scripts/secrets-localstack/run.sh`, LocalStack 4.12): 로컬 빌드한 변형 이미지를 `read_only`·`cap_drop: [ALL]` compose 컨테이너로 띄워 `run.sh`가 통과했다(2026-11-24). 실제 AWS와 LocalStack 최신 이미지(Auth Token 필요)는 실행하지 않았다(`aws-secrets-manager.md`).
-- 마이그레이터 동시 실행의 측정은 로컬 compose `postgres:17-alpine`(17.11)의 빈 database에서 컴파일한 `migrate-cli` 둘을 겹친 것뿐이다(2026-11-24, 이 이미지 5회와 이전 이미지 5회, 전환기 혼합 12회). `mail_jobs` 360만 행 같은 운영 크기와 쓰기 부하 중에서 폴링 방식은 측정하지 않았다. `migrate-once`가 이 겹침을 없애는 것은 compose 파일을 읽어 확인했고 실행하지 않았다. 다른 PostgreSQL 버전 결과는 모른다. 보유자 호스트가 RST 없이 사라지는 경우의 잠금 잔존 시간은 측정하지 않았다.
+- 마이그레이터 동시 실행의 측정은 로컬 compose `postgres:17-alpine`(17.11)의 빈 database에서 컴파일한 `migrate-cli` 둘을 겹친 것뿐이다(2026-11-24, 이 이미지 5회와 이전 이미지 5회, 전환기 혼합 24회). `mail_jobs` 360만 행 같은 운영 크기와 쓰기 부하 중에서 폴링 방식은 측정하지 않았다. `migrate-once`가 이 겹침을 없애는 것은 compose 파일을 읽어 확인했고 실행하지 않았다. 다른 PostgreSQL 버전 결과는 모른다. 보유자 호스트가 RST 없이 사라지는 경우의 잠금 잔존 시간은 측정하지 않았다.
 - `docker-compose.migrate-once.yml`의 실제 기동(문법만 확인했다). `docker-compose.nfs-example.yml`은 같은 호스트 loopback NFS에서만 기동을 확인했다(실제 NAS 미확인).
 - TLS를 켠 PostgreSQL 서버에 대한 `MAILO_DB_SSLMODE` 접속.
 - TLS 종단 프록시 구성, 다중 인스턴스 배포.
