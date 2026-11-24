@@ -153,6 +153,8 @@ export interface AppConfig {
 }
 
 const MIB = 1024 * 1024;
+/** 이벤트·시도 수신자 비움 유예의 기본값(초, 7일). relay 최대 재시도 기간과 JWS 허용 기간과 같은 값이며 추정이다(ADR-0015 결정 3). */
+const DEFAULT_RECIPIENT_RETENTION_SECONDS = 604_800;
 const REASON_WAIT: Record<
   AccountErrorReason,
   { variable: string; fallback: number }
@@ -327,6 +329,19 @@ function loadWorkerConfig(
       max: 31_536_000,
     },
   );
+  // RQ-072: 이벤트·시도 수신자 비움 유예. 기본 7일은 추정이다(ADR-0015 결정 3).
+  // 명시하지 않았고 보존 기간이 7일보다 짧으면 기본값을 보존 기간으로 줄인다. 이 변수를 모르는 기존 설정이 업그레이드 뒤 기동을 거부하지 않게 한다.
+  // 명시한 값은 줄이지 않고 범위를 검사한다.
+  const recipientRetentionSeconds = reader.int(
+    "MAILO_RECIPIENT_RETENTION_SECONDS",
+    Math.min(DEFAULT_RECIPIENT_RETENTION_SECONDS, recordRetentionSeconds),
+    { min: 60, max: 31_536_000 },
+  );
+  if (recipientRetentionSeconds > recordRetentionSeconds) {
+    reader.issue(
+      "MAILO_RECIPIENT_RETENTION_SECONDS는 MAILO_RECORD_RETENTION_SECONDS 이하여야 한다",
+    );
+  }
   // 보존 기간 순서: 본문 삭제 유예 <= 작업·시도·이벤트 보존(ADR-0005 결정 7).
   if (recordRetentionSeconds < bodyGraceSeconds) {
     reader.issue(
@@ -397,6 +412,7 @@ function loadWorkerConfig(
     retention: {
       bodyGraceSeconds,
       recordRetentionSeconds,
+      recipientRetentionSeconds,
       maintenanceIntervalMs:
         reader.int("MAILO_MAINTENANCE_INTERVAL_SECONDS", 60, {
           min: 1,

@@ -845,11 +845,78 @@ describe("PostgreSQL + SMTP 통합: Worker", () => {
     await finish(bodyOld, "200 seconds");
     await finish(rowOld, "2000 seconds");
     await finish(fresh, "1 second");
-    startWorker({ retention: { bodyGraceSeconds: 100, recordSeconds: 1_000 } });
+    startWorker({
+      retention: {
+        bodyGraceSeconds: 100,
+        recordSeconds: 1_000,
+        recipientSeconds: 1_000,
+      },
+    });
 
     await waitFor(async () => (await job(rowOld)) === undefined);
     expect((await job(bodyOld))!.has_body).toBe(false);
     expect((await job(fresh))!.has_body).toBe(true);
+  });
+
+  it("이벤트·시도 수신자 비움이 주기적으로 실행되고 로그에 수신자 주소가 없다 (RQ-072, ADR-0015 결정 3, RQ-027)", async () => {
+    const recipient = "canary-redact-worker@example.com";
+    const rejectedAddress = "canary-redact-rejected@example.com";
+    const make = async (age: string) => {
+      const id = await mailJob({
+        recipients: { to: [recipient], cc: [], bcc: [] },
+      });
+      await pool.query(
+        `UPDATE mail_jobs SET status = 'SENT', finished_at = now() WHERE id = $1`,
+        [id],
+      );
+      await pool.query(
+        `INSERT INTO mail_events (caller_id, type, job_id, idempotency_key, attempt_count, recipients, rejected_recipients, created_at)
+         SELECT caller_id, 'JOB_SENT', id, idempotency_key, 1, recipients, $2::jsonb, now() - $3::interval
+           FROM mail_jobs WHERE id = $1`,
+        [id, JSON.stringify([{ address: rejectedAddress }]), age],
+      );
+      await pool.query(
+        `INSERT INTO mail_attempts (job_id, classification, counted, started_at, rejected_recipients)
+         VALUES ($1, 'SENT', true, now(), $2::jsonb)`,
+        [id, JSON.stringify([{ address: rejectedAddress }])],
+      );
+      return id;
+    };
+    const old = await make("200 seconds");
+    const fresh = await make("1 second");
+    const redacted = async (id: string) =>
+      (
+        await pool.query(
+          "SELECT recipients_redacted_at IS NOT NULL AS done FROM mail_events WHERE job_id = $1",
+          [id],
+        )
+      ).rows[0].done as boolean;
+
+    startWorker({
+      retention: {
+        bodyGraceSeconds: 100,
+        recordSeconds: 10_000,
+        recipientSeconds: 100,
+      },
+    });
+
+    await waitFor(async () => redacted(old));
+    expect(await redacted(fresh)).toBe(false);
+    const attempt = async (id: string) =>
+      (
+        await pool.query(
+          "SELECT rejected_recipients FROM mail_attempts WHERE job_id = $1",
+          [id],
+        )
+      ).rows[0].rejected_recipients;
+    expect(await attempt(old)).toBeNull();
+    expect(await attempt(fresh)).not.toBeNull();
+    const line = logs
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .find((l) => l["event"] === "recipients_redacted");
+    expect(line).toMatchObject({ level: "info", count: 1 });
+    expect(logs.join("\n")).not.toContain(recipient);
+    expect(logs.join("\n")).not.toContain(rejectedAddress);
   });
 
   // --- 시크릿 ---------------------------------------------------------------------

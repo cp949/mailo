@@ -374,6 +374,7 @@ describe("PostgreSQL + SMTP 통합: Worker 계정 단위 점유 (RQ-054·055, AD
               ...options.retention,
               bodyGraceSeconds: 3600,
               recordSeconds: 7200,
+              recipientSeconds: 3600,
             },
           },
         ),

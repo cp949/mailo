@@ -72,9 +72,51 @@ describe("Worker 옵션 검증", () => {
     expect(() =>
       validateWorkerOptions({
         ...o,
-        retention: { bodyGraceSeconds: 100, recordSeconds: 50 },
+        retention: {
+          bodyGraceSeconds: 100,
+          recordSeconds: 50,
+          recipientSeconds: 50,
+        },
       }),
     ).toThrow(WorkerOptionsError);
+  });
+
+  it("수신자 비움 유예가 보존 기간보다 길면 거부한다 (RQ-072, ADR-0015 결정 3)", () => {
+    const o = defaultWorkerOptions(120);
+    const retention = {
+      ...o.retention,
+      bodyGraceSeconds: 100,
+      recordSeconds: 1000,
+    };
+    expect(() =>
+      validateWorkerOptions({
+        ...o,
+        retention: { ...retention, recipientSeconds: 1000 },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateWorkerOptions({
+        ...o,
+        retention: { ...retention, recipientSeconds: 1001 },
+      }),
+    ).toThrow(WorkerOptionsError);
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "수신자 비움 유예가 %s이면 거부한다 (RQ-072)",
+    (value) => {
+      const o = defaultWorkerOptions(120);
+      expect(() =>
+        validateWorkerOptions({
+          ...o,
+          retention: { ...o.retention, recipientSeconds: value },
+        }),
+      ).toThrow(WorkerOptionsError);
+    },
+  );
+
+  it("Worker 옵션의 수신자 비움 유예 기본값은 설정 기본값(7일)이다 (RQ-072)", () => {
+    expect(defaultWorkerOptions(120).retention.recipientSeconds).toBe(604_800);
   });
 
   it.each(["concurrency", "pollMs", "poisonMaxAttempts"] as const)(
@@ -269,7 +311,11 @@ describe("호출처 할당과 보존 기간 (RQ-032)", () => {
       validateWorkerOptions({
         ...o,
         callerQuotas: new Map([["alpha", 10]]),
-        retention: { bodyGraceSeconds: 3600, recordSeconds: 86_399 },
+        retention: {
+          bodyGraceSeconds: 3600,
+          recordSeconds: 86_399,
+          recipientSeconds: 3600,
+        },
       }),
     ).toThrow(WorkerOptionsError);
   });
@@ -280,13 +326,21 @@ describe("호출처 할당과 보존 기간 (RQ-032)", () => {
       validateWorkerOptions({
         ...o,
         callerQuotas: new Map([["alpha", 10]]),
-        retention: { bodyGraceSeconds: 3600, recordSeconds: 86_400 },
+        retention: {
+          bodyGraceSeconds: 3600,
+          recordSeconds: 86_400,
+          recipientSeconds: 3600,
+        },
       }),
     ).not.toThrow();
     expect(() =>
       validateWorkerOptions({
         ...o,
-        retention: { bodyGraceSeconds: 3600, recordSeconds: 7200 },
+        retention: {
+          bodyGraceSeconds: 3600,
+          recordSeconds: 7200,
+          recipientSeconds: 3600,
+        },
       }),
     ).not.toThrow();
   });

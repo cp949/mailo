@@ -37,6 +37,11 @@ export interface WorkerRetentionOptions {
   bodyGraceSeconds: number;
   /** 종결 후 작업 행·시도·이벤트 보존 초, 거부 기록은 생성 후 초(ADR-0005 결정 7, 기본 30일). */
   recordRetentionSeconds: number;
+  /**
+   * 이벤트·시도의 수신자를 비우기까지의 유예 초(RQ-072, ADR-0015 결정 3, 기본 7일, 추정).
+   * 60 이상 `recordRetentionSeconds` 이하다. 같으면 비움이 삭제와 같은 시점이라 끄는 것과 같다.
+   */
+  recipientRetentionSeconds: number;
   /** sweep·보존 삭제를 도는 간격(ms). */
   maintenanceIntervalMs: number;
 }

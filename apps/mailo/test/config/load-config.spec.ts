@@ -87,6 +87,7 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
       retention: {
         bodyGraceSeconds: 86_400,
         recordRetentionSeconds: 2_592_000,
+        recipientRetentionSeconds: 604_800,
         maintenanceIntervalMs: 60_000,
       },
     } satisfies WorkerConfig);
@@ -281,6 +282,59 @@ describe("설정 로딩 (RQ-025, RQ-008, RQ-005)", () => {
         MAILO_RECORD_RETENTION_SECONDS: "100",
       }),
     ).toContain("MAILO_RECORD_RETENTION_SECONDS");
+  });
+
+  describe("수신자 비움 유예 MAILO_RECIPIENT_RETENTION_SECONDS (RQ-072, ADR-0015 결정 3)", () => {
+    const recipientOf = (extra: NodeJS.ProcessEnv = {}) =>
+      loadConfig(env(extra)).worker.retention.recipientRetentionSeconds;
+
+    it("생략하면 7일이다(추정 기본값)", () => {
+      expect(recipientOf()).toBe(604_800);
+    });
+
+    it("60 이상 작업 행 보존 기간 이하의 값을 받는다(경계 포함)", () => {
+      expect(recipientOf({ MAILO_RECIPIENT_RETENTION_SECONDS: "60" })).toBe(60);
+      expect(
+        recipientOf({
+          MAILO_RECIPIENT_RETENTION_SECONDS: "2592000",
+          MAILO_RECORD_RETENTION_SECONDS: "2592000",
+        }),
+      ).toBe(2_592_000);
+    });
+
+    it("60 미만, 정수가 아닌 값, 작업 행 보존 기간 초과는 기동을 거부한다", () => {
+      for (const value of ["59", "0", "-1", "1.5", "abc", "7d"])
+        expect(
+          issuesOf({ MAILO_RECIPIENT_RETENTION_SECONDS: value }),
+        ).toContain("MAILO_RECIPIENT_RETENTION_SECONDS");
+      expect(
+        issuesOf({
+          MAILO_RECIPIENT_RETENTION_SECONDS: "2592001",
+          MAILO_RECORD_RETENTION_SECONDS: "2592000",
+        }),
+      ).toContain(
+        "MAILO_RECIPIENT_RETENTION_SECONDS는 MAILO_RECORD_RETENTION_SECONDS 이하여야 한다",
+      );
+    });
+
+    it("명시하지 않았고 작업 행 보존 기간이 7일보다 짧으면 기본값을 그 보존 기간으로 줄인다(기존 설정의 기동을 거부하지 않는다)", () => {
+      expect(
+        recipientOf({
+          MAILO_RECORD_RETENTION_SECONDS: "259200",
+          MAILO_JWS_IAT_MAX_AGE_SECONDS: "258900",
+        }),
+      ).toBe(259_200);
+    });
+
+    it("명시한 값이 7일보다 짧은 보존 기간과 맞지 않으면 줄이지 않고 거부한다", () => {
+      expect(
+        issuesOf({
+          MAILO_RECIPIENT_RETENTION_SECONDS: "604800",
+          MAILO_RECORD_RETENTION_SECONDS: "259200",
+          MAILO_JWS_IAT_MAX_AGE_SECONDS: "258900",
+        }),
+      ).toContain("MAILO_RECIPIENT_RETENTION_SECONDS");
+    });
   });
 
   describe("봉투 설정 (ADR-0008 결정 4, RQ-024)", () => {

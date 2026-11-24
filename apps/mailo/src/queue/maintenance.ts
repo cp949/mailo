@@ -20,12 +20,18 @@ const DEFAULT_BATCH = MAINTENANCE_BATCH_SIZE;
 const MAINTENANCE_LOCK_CLASS = 7_364_223;
 
 /** 정리 단계. 단계마다 잠금이 달라 서로 다른 인스턴스가 다른 단계를 동시에 돌 수 있다. */
-export type MaintenanceStep = "sweep" | "lease" | "bodies" | "records";
+export type MaintenanceStep =
+  | "sweep"
+  | "lease"
+  | "bodies"
+  | "records"
+  | "recipients";
 const STEP_LOCK_KEY: Record<MaintenanceStep, number> = {
   sweep: 1,
   lease: 2,
   bodies: 3,
   records: 4,
+  recipients: 5,
 };
 
 /**
@@ -216,4 +222,58 @@ async function deleteByIds(
     [ids],
   );
   return result.rowCount ?? 0;
+}
+
+/**
+ * 유예가 지난 `JOB_*` 이벤트의 수신자와 그 작업의 시도 기록 거부 수신자를 비운다(RQ-072, ADR-0015 결정 3).
+ * 한 SQL 문장(한 트랜잭션)에서 다음을 같이 바꾼다.
+ * - `mail_events.recipients`를 `'{}'`, `rejected_recipients`를 NULL, `recipients_redacted_at`을 `now()`로.
+ * - 같은 작업의 `mail_attempts.rejected_recipients`를 NULL로. 시도 기록의 나머지 열(응답 코드, 마스킹한 응답 텍스트)은 남긴다.
+ * 이벤트 행은 지우지 않고 `id`·`txid`·`created_at`을 바꾸지 않는다. 그래서 피드 순서·cursor는 그대로이고
+ * 삭제 표지(`mail_event_purges`)도 쓰지 않으므로 공백 감지에 영향이 없다. 비운 값은 복원하지 못한다.
+ * 대상은 `created_at`이 유예를 넘고 `recipients_redacted_at`이 NULL인 이벤트다(멱등). `INTAKE_REJECTED`는 수신자가 없어 대상이 아니다.
+ * 조건과 정렬은 부분 인덱스 `mail_events_recipients_redact_idx`(0018) 정의와 같다. 오래된 이벤트부터 처리한다.
+ *
+ * 잠금: 정리 단계 잠금(`recipients`) 다음에 이벤트의 작업 행을 `FOR KEY SHARE ... SKIP LOCKED`로 잡는다.
+ * 보존 삭제(`deleteExpiredRecords`)도 작업 행을 먼저 잡고 지워서, 두 단계가 같은 작업을 겹쳐 잡지 못한다.
+ * 그렇지 않으면 이쪽은 이벤트 → 시도, 삭제의 cascade는 시도 → 이벤트 순으로 행을 잠가 교착이 날 수 있다.
+ * 차단기 행은 건드리지 않으므로 잠금 순서(작업 행 → 차단기 행)를 어기지 않는다.
+ * 정리 잠금을 못 잡으면 0을 돌려준다. 시각은 DB `now()`다(ADR-0002 결정 10).
+ * 로그·반환값에 수신자 값을 넣지 않는다(RQ-027).
+ * @param graceSeconds 이벤트 생성 후 유예(`MAILO_RECIPIENT_RETENTION_SECONDS`)
+ * @returns 이번 호출에서 비운 이벤트 수. 배치 크기와 같으면 남은 대상이 있을 수 있다.
+ */
+export async function redactEventRecipients(
+  pool: pg.Pool,
+  graceSeconds: number,
+  batchSize = DEFAULT_BATCH,
+): Promise<number> {
+  return withTransaction(pool, async (client) => {
+    if (!(await tryMaintenanceLock(client, "recipients"))) return 0;
+    const { rows } = await client.query<{ n: number }>(
+      `WITH due AS (
+         SELECT e.id, e.job_id
+           FROM mail_events e
+           JOIN mail_jobs j ON j.id = e.job_id
+          WHERE e.type IN ('JOB_SENT', 'JOB_FAILED', 'JOB_EXPIRED', 'JOB_CANCELED')
+            AND e.recipients_redacted_at IS NULL
+            AND e.created_at <= now() - make_interval(secs => $1::double precision)
+          ORDER BY e.created_at, e.id
+          LIMIT $2
+          FOR KEY SHARE OF j SKIP LOCKED
+       ), redacted_events AS (
+         UPDATE mail_events SET
+           recipients = '{}'::jsonb, rejected_recipients = NULL, recipients_redacted_at = now()
+         FROM due WHERE mail_events.id = due.id
+         RETURNING mail_events.id
+       ), redacted_attempts AS (
+         UPDATE mail_attempts SET rejected_recipients = NULL
+          WHERE job_id IN (SELECT job_id FROM due) AND rejected_recipients IS NOT NULL
+         RETURNING id
+       )
+       SELECT count(*)::int AS n FROM redacted_events`,
+      [graceSeconds, batchSize],
+    );
+    return rows[0]?.n ?? 0;
+  });
 }

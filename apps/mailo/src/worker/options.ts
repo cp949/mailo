@@ -10,6 +10,8 @@ export interface RetentionOptions {
   bodyGraceSeconds: number;
   /** 종결 후 작업 행·시도 기록·이벤트를 지우기까지의 보존(초). 기본 30일(ADR-0005 결정 7). */
   recordSeconds: number;
+  /** 이벤트·시도의 수신자를 비우기까지의 유예(초). 기본 7일(추정). 보존 기간 이하여야 한다(RQ-072, ADR-0015 결정 3). */
+  recipientSeconds: number;
 }
 
 export interface WorkerOptions {
@@ -28,7 +30,7 @@ export interface WorkerOptions {
   claimFifoRatio: number;
   /** 만료·lease 복구 sweep 주기(ms). 상태 조회 정확도를 정한다. */
   sweepIntervalMs: number;
-  /** 본문 삭제·보존 삭제 주기(ms). */
+  /** 본문 삭제·보존 삭제·수신자 비움 주기(ms). */
   cleanupIntervalMs: number;
   retention: RetentionOptions;
   /** SIGTERM 뒤 진행 중 전송을 기다리는 시간 상한(ms). 컨테이너 `stop_grace_period`보다 짧아야 한다. */
@@ -67,7 +69,7 @@ export const POISON_MAX_ATTEMPTS = 3;
 
 /**
  * 설정의 Worker 값(`AppConfig.worker`)을 Worker 옵션으로 바꾼다. 재시도 정책에는 `random: Math.random`을 붙인다.
- * - 만료 sweep과 보존 삭제는 같은 주기(`MAILO_MAINTENANCE_INTERVAL_SECONDS`)로 돈다.
+ * - 만료 sweep, 보존 삭제, 수신자 비움은 같은 주기(`MAILO_MAINTENANCE_INTERVAL_SECONDS`)로 돈다.
  * - drain 상한은 lease보다 10초 짧다. `stop_grace_period`(lease 이상)가 끝나기 전에 스스로 포기하고,
  *   포기한 작업은 lease 복구가 다룬다.
  */
@@ -87,6 +89,7 @@ export function workerOptionsFromConfig(
     retention: {
       bodyGraceSeconds: w.retention.bodyGraceSeconds,
       recordSeconds: w.retention.recordRetentionSeconds,
+      recipientSeconds: w.retention.recipientRetentionSeconds,
     },
     drainTimeoutMs: workerDrainTimeoutMs(w.lease.seconds),
     poisonMaxAttempts: POISON_MAX_ATTEMPTS,
@@ -113,6 +116,7 @@ export function validateWorkerOptions(options: WorkerOptions): void {
     ["poisonMaxAttempts", options.poisonMaxAttempts],
     ["retention.bodyGraceSeconds", options.retention.bodyGraceSeconds],
     ["retention.recordSeconds", options.retention.recordSeconds],
+    ["retention.recipientSeconds", options.retention.recipientSeconds],
   ];
   for (const [field, value] of positive) {
     if (!Number.isFinite(value) || value <= 0)
@@ -149,6 +153,10 @@ export function validateWorkerOptions(options: WorkerOptions): void {
   // ADR-0005 결정 7: 본문 유예 <= 작업 행 보존. 순서가 어긋나면 본문보다 행이 먼저 사라진다.
   if (options.retention.bodyGraceSeconds > options.retention.recordSeconds) {
     throw new WorkerOptionsError("retention");
+  }
+  // ADR-0015 결정 3: 수신자 비움 유예 <= 작업 행·이벤트 보존. 어긋나면 비우기 전에 이벤트가 삭제된다.
+  if (options.retention.recipientSeconds > options.retention.recordSeconds) {
+    throw new WorkerOptionsError("retention.recipientSeconds");
   }
   if (options.drainTimeoutMs >= options.leaseSeconds * 1000)
     throw new WorkerOptionsError("drainTimeoutMs");

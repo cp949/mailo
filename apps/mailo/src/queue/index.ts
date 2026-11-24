@@ -52,6 +52,7 @@ export {
   MAINTENANCE_BATCH_SIZE,
   deleteExpiredBodies,
   deleteExpiredRecords,
+  redactEventRecipients,
   sweepExpired,
   type RetentionResult,
 } from "./maintenance.js";

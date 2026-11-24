@@ -25,6 +25,7 @@ import {
   MAINTENANCE_BATCH_SIZE,
   deleteExpiredBodies,
   deleteExpiredRecords,
+  redactEventRecipients,
   recoverExpiredLeases,
   sweepExpired,
   type AccountErrorReason,
@@ -726,6 +727,14 @@ export function createWorker(
           );
           return Math.max(r.jobs, r.rejections);
         });
+        // 삭제 뒤에 돌려 이미 지울 행을 비우는 낭비를 줄인다. 로그에는 건수만 남긴다(RQ-027).
+        await drainBatches("recipients_redacted", () =>
+          redactEventRecipients(
+            pool,
+            options.retention.recipientSeconds,
+            SWEEP_BATCH,
+          ),
+        );
       }
       await clock.sleep(options.sweepIntervalMs, stopController.signal);
     }
