@@ -284,6 +284,14 @@ const CATALOG = [
     },
   },
   {
+    name: "mailo_jobs_outcome_unknown_total",
+    type: "counter",
+    scope: "instance",
+    help: "인스턴스. 이 프로세스가 커밋한 OUTCOME_UNKNOWN 종결 수. 요청이 onUncertainOutcome fail을 골라 결과 불명 시도 뒤 재시도 없이 끝난 작업이다. mailo_jobs_finished_total의 status failed에도 함께 센다.",
+    seed: true,
+    labels: { caller_id: caller, account_id: account },
+  },
+  {
     name: "mailo_claim_polls_total",
     type: "counter",
     scope: "instance",

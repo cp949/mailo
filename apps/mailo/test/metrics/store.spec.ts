@@ -218,6 +218,7 @@ describe("counter 저장소(RQ-049, ADR-0012 결정 6)", () => {
         expect(count("mailo_jobs_finished_total", caller)).toBe(4);
         expect(count("mailo_claimed_jobs_total", caller)).toBe(1);
         expect(count("mailo_event_cursor_gap_total", caller)).toBe(1);
+        expect(count("mailo_jobs_outcome_unknown_total", caller)).toBe(1);
       }
     });
 

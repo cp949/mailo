@@ -51,18 +51,27 @@ function finishedLabel(status: JobStatus): string | undefined {
   }
 }
 
-/** 종결 전이 하나를 센다(종결이 아니면 무시한다). */
+/**
+ * 종결 전이 하나를 센다(종결이 아니면 무시한다).
+ * `outcomeUnknown`이면 `OUTCOME_UNKNOWN` 종결 counter도 올린다(RQ-074, ADR-0015 결정 10). 라벨은 종결 counter와 같은 호출처·계정이다.
+ */
 export function countFinished(
   metrics: AppMetrics,
   job: { callerId: string; accountId: string },
   status: JobStatus,
+  outcomeUnknown = false,
 ): void {
   const label = finishedLabel(status);
-  if (label !== undefined)
-    metrics.inc("mailo_jobs_finished_total", {
+  if (label === undefined) return;
+  metrics.inc("mailo_jobs_finished_total", {
+    caller_id: job.callerId,
+    account_id: job.accountId,
+    status: label,
+  });
+  if (outcomeUnknown)
+    metrics.inc("mailo_jobs_outcome_unknown_total", {
       caller_id: job.callerId,
       account_id: job.accountId,
-      status: label,
     });
 }
 
@@ -75,6 +84,7 @@ export function countAttempt(
   job: { callerId: string; accountId: string },
   outcome: AttemptOutcome,
   status: JobStatus,
+  outcomeUnknown = false,
 ): void {
   const result = attemptResultLabel(outcome);
   metrics.inc("mailo_attempts_total", {
@@ -92,7 +102,7 @@ export function countAttempt(
           ? (ACCOUNT_REASON[outcome.reason] ?? "other")
           : "none",
     });
-  countFinished(metrics, job, status);
+  countFinished(metrics, job, status, outcomeUnknown);
 }
 
 /** 만료 sweep이 커밋한 전이를 센다. */
@@ -110,6 +120,6 @@ export function countRecovered(
 ): void {
   for (const t of transitions) {
     metrics.inc("mailo_lease_recovered_total", { account_id: t.accountId });
-    countFinished(metrics, t, t.status);
+    countFinished(metrics, t, t.status, t.outcomeUnknown === true);
   }
 }

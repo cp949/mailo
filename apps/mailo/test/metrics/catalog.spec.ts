@@ -25,6 +25,7 @@ const PREFIXES = {
     "mailo_attempts_total",
     "mailo_attempt_errors_total",
     "mailo_jobs_finished_total",
+    "mailo_jobs_outcome_unknown_total",
     "mailo_claim_polls_total",
     "mailo_claimed_jobs_total",
     "mailo_lease_recovered_total",
@@ -158,6 +159,7 @@ describe("지표 카탈로그 규칙(RQ-049, ADR-0012 결정 3·6)", () => {
       "mailo_attempts_total",
       "mailo_attempt_errors_total",
       "mailo_jobs_finished_total",
+      "mailo_jobs_outcome_unknown_total",
       "mailo_claim_polls_total",
       "mailo_claimed_jobs_total",
       "mailo_lease_recovered_total",
@@ -207,5 +209,20 @@ describe("지표 카탈로그 규칙(RQ-049, ADR-0012 결정 3·6)", () => {
     expect(Object.keys(byName.get("mailo_worker_in_flight")!.labels)).toEqual([
       "account_id",
     ]);
+  });
+
+  it("mailo_jobs_outcome_unknown_total은 인스턴스 counter이고 라벨은 caller_id·account_id뿐이며 미리 낸다(RQ-074, ADR-0015 결정 10)", () => {
+    const def = METRICS.find(
+      (m) => m.name === "mailo_jobs_outcome_unknown_total",
+    );
+
+    expect(def).toMatchObject({
+      type: "counter",
+      scope: "instance",
+      seed: true,
+    });
+    // 라벨에 수신자·Key·작업 ID·응답 값을 넣지 않는다. 열린 값은 레지스트리·구성의 ID뿐이다.
+    expect(Object.keys(def!.labels)).toEqual(["caller_id", "account_id"]);
+    expect(def!.help).toContain("OUTCOME_UNKNOWN");
   });
 });

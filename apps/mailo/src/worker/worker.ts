@@ -640,7 +640,13 @@ export function createWorker(
           classification: outcome.classification,
           probe: job.isProbe,
         });
-        countAttempt(metrics, job, outcome, result.status);
+        countAttempt(
+          metrics,
+          job,
+          outcome,
+          result.status,
+          result.outcomeUnknown === true,
+        );
         const breaker = result.breaker;
         if (
           outcome.classification === "ACCOUNT" &&

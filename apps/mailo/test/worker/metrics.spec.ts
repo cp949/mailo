@@ -153,6 +153,88 @@ describe("Worker counter 라벨(RQ-049, ADR-0012 결정 4)", () => {
     ]);
   });
 
+  describe("결과 불명 종결 counter(RQ-074, ADR-0015 결정 10)", () => {
+    it("OUTCOME_UNKNOWN 종결은 failed 종결과 함께 outcome_unknown을 센다", () => {
+      const { metrics, series } = metricsFor();
+
+      countAttempt(
+        metrics,
+        { callerId: "alpha", accountId: "default" },
+        { classification: "TRANSIENT", stage: "DATA" },
+        "FAILED",
+        true,
+      );
+
+      expect(series("mailo_jobs_outcome_unknown_total")).toEqual([
+        [{ caller_id: "alpha", account_id: "default" }, 1],
+      ]);
+      expect(series("mailo_jobs_finished_total")).toEqual([
+        [{ caller_id: "alpha", account_id: "default", status: "failed" }, 1],
+      ]);
+    });
+
+    it("다른 사유의 failed 종결과 재시도 대기는 outcome_unknown을 올리지 않는다", () => {
+      const { metrics, series } = metricsFor();
+      const job = { callerId: "alpha", accountId: "default" };
+
+      countAttempt(
+        metrics,
+        job,
+        { classification: "PERMANENT", stage: "DATA", responseCode: 550 },
+        "FAILED",
+      );
+      countAttempt(
+        metrics,
+        job,
+        { classification: "TRANSIENT", stage: "DATA" },
+        "RETRY_WAIT",
+      );
+
+      expect(series("mailo_jobs_outcome_unknown_total")).toEqual([]);
+    });
+
+    it("레지스트리에 없는 호출처는 unregistered로 센다", () => {
+      const { metrics, series } = metricsFor();
+
+      countAttempt(
+        metrics,
+        { callerId: "gone", accountId: "default" },
+        { classification: "TRANSIENT", stage: "DATA" },
+        "FAILED",
+        true,
+      );
+
+      expect(series("mailo_jobs_outcome_unknown_total")).toEqual([
+        [{ caller_id: "unregistered", account_id: "default" }, 1],
+      ]);
+    });
+
+    it("lease 회수가 OUTCOME_UNKNOWN으로 종결한 전이도 센다", () => {
+      const { metrics, series } = metricsFor();
+
+      countRecovered(metrics, [
+        {
+          callerId: "alpha",
+          accountId: "default",
+          status: "FAILED",
+          outcomeUnknown: true,
+        },
+        { callerId: "alpha", accountId: "default", status: "RETRY_WAIT" },
+        { callerId: "alpha", accountId: "default", status: "FAILED" },
+      ]);
+
+      expect(series("mailo_lease_recovered_total")).toEqual([
+        [{ account_id: "default" }, 3],
+      ]);
+      expect(series("mailo_jobs_finished_total")).toEqual([
+        [{ caller_id: "alpha", account_id: "default", status: "failed" }, 2],
+      ]);
+      expect(series("mailo_jobs_outcome_unknown_total")).toEqual([
+        [{ caller_id: "alpha", account_id: "default" }, 1],
+      ]);
+    });
+  });
+
   it("lease 회수는 회수 수를 세고 종결로 끝난 것만 종결로 센다", () => {
     const { metrics, series } = metricsFor();
 
