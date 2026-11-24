@@ -1,0 +1,130 @@
+# AWS Secrets Manager 어댑터의 수동 시나리오용 compose(ADR-0016 결정 9, RQ-081). 수동 검증이고 CI가 아니다.
+# `run.sh`가 환경 변수를 채워 실행한다. 직접 실행하지 않는다. 기본 compose와 합치지 않는 독립 파일이다.
+# 값은 모두 `run.sh`가 실행마다 만드는 가짜 값이다. 실제 AWS 계정과 자격 증명을 쓰지 않는다.
+services:
+  localstack:
+    # 기본 이미지는 Auth Token 없이 시작하는 마지막 계열의 고정 태그다(docs/operations/aws-secrets-manager.md "LocalStack 수동 시나리오").
+    # 2026.03.0 이후 이미지는 LOCALSTACK_AUTH_TOKEN이 있어야 시작한다. 그 이미지를 쓰려면 LOCALSTACK_IMAGE와 토큰을 환경에 준다.
+    image: ${LOCALSTACK_IMAGE:?run.sh가 정한다}
+    environment:
+      SERVICES: secretsmanager
+      AWS_DEFAULT_REGION: us-east-1
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c "import urllib.request; urllib.request.urlopen(''http://localhost:4566/_localstack/health'', timeout=2).read()"',
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  # 비밀을 만드는 일회성 컨테이너. 값은 환경으로 받고 비밀 ID만 출력한다.
+  secret-init:
+    image: ${AWS_CLI_IMAGE:?run.sh가 정한다}
+    entrypoint: ["/bin/sh", "/usr/local/bin/init-secrets.sh"]
+    environment:
+      LS_DB_PASSWORD: ${LS_DB_PASSWORD:?run.sh가 정한다}
+      LS_SMTP_PASSWORD: ${LS_SMTP_PASSWORD:?run.sh가 정한다}
+      LS_DB_KEY: ${LS_DB_KEY:?run.sh가 정한다}
+      LS_FINGERPRINT_KEY: ${LS_FINGERPRINT_KEY:?run.sh가 정한다}
+      LS_OPS_TOKEN: ${LS_OPS_TOKEN:?run.sh가 정한다}
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+    volumes:
+      - ./init-secrets.sh:/usr/local/bin/init-secrets.sh:ro
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: mailo
+      POSTGRES_PASSWORD: ${LS_DB_PASSWORD:?run.sh가 정한다}
+      POSTGRES_DB: mailo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailo -d mailo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.34.0@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e
+    environment:
+      # 아무 값이나 받지 않고 SMTP 사용자·비밀번호를 검사한다. _REF로 받은 비밀번호가 맞아야 발송이 통과한다.
+      MP_SMTP_AUTH: fake-user@example.invalid:${LS_SMTP_PASSWORD:?run.sh가 정한다}
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    user: "65534:65534"
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # 변형 이미지(-aws)로 뜨는 Mailo. 비밀은 모두 _REF다. 평문 값과 _FILE은 주지 않는다.
+  mailo:
+    image: ${MAILO_AWS_IMAGE:?run.sh가 정한다}
+    environment:
+      NODE_ENV: production
+      MAILO_PORT: "3000"
+      MAILO_DB_HOST: postgres
+      MAILO_DB_PORT: "5432"
+      MAILO_DB_USER: mailo
+      MAILO_DB_NAME: mailo
+      MAILO_DB_PASSWORD_REF: aws-sm://mailo/localstack/bundle#db-password
+      MAILO_DB_ENCRYPTION_KEY_VERSION: "1"
+      MAILO_DB_ENCRYPTION_KEY_V1_REF: aws-sm://mailo/localstack/bundle#db-key
+      MAILO_FINGERPRINT_KEY_VERSION: "1"
+      MAILO_FINGERPRINT_KEY_V1_REF: aws-sm://mailo/localstack/bundle#fingerprint-key
+      MAILO_SMTP_HOST: mailpit
+      MAILO_SMTP_PORT: "1025"
+      MAILO_SMTP_SECURITY: none
+      MAILO_SMTP_USER: fake-user@example.invalid
+      MAILO_SMTP_FROM: no-reply@example.com
+      MAILO_SMTP_PASSWORD_REF: aws-sm://mailo/localstack/bundle#smtp-password
+      # 운영 토큰은 키 없는 참조(SecretString 전체)를 ARN으로 가리킨다.
+      MAILO_OPS_TOKEN_REF: ${LS_OPS_TOKEN_REF:?run.sh가 정한다}
+      MAILO_CALLERS_FILE: /run/mailo/callers.json
+      MAILO_SECRET_ADAPTERS: "@cp949/mailo-secret-source-aws"
+      MAILO_SECRET_RESOLVE_TIMEOUT_MS: ${LS_RESOLVE_TIMEOUT_MS:-10000}
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL_SECRETS_MANAGER: http://localstack:4566
+      # LocalStack은 값을 검사하지 않는 가짜 자격 증명을 받는다. 실제 키가 아니다.
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_EC2_METADATA_DISABLED: "true"
+    volumes:
+      - ${LS_CALLERS_FILE:?run.sh가 정한다}:/run/mailo/callers.json:ro
+    ports:
+      - "127.0.0.1::3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    command:
+      ["sh", "-c", "node dist/db/migrate-cli.js && exec node dist/main.js"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/live').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

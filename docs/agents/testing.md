@@ -10,6 +10,7 @@
 | PostgreSQL 통합 | `*.integration-spec.ts`, e2e는 `test/e2e/`   | `pnpm test:integration`                              | PostgreSQL 13 이상, `--runInBand`   |
 | NFS            | `test/nfs/*.nfs-spec.ts`                     | `apps/mailo/scripts/nfs/run.sh` 또는 `pnpm test:nfs` | 커널 NFS, 비밀번호 없는 sudo        |
 | 컨테이너·볼륨  | `scripts/container/`, `scripts/volume/`      | 각 스크립트 직접 실행                                | Docker, 자동 테스트 아님            |
+| 시크릿 소스    | `scripts/secrets-localstack/`                | `run.sh` 직접 실행(LocalStack 4.12, 가짜 값)         | Docker, 자동 테스트 아님            |
 | 샘플 e2e       | `samples/spring-boot-relay/verify/run-e2e.sh` | 스크립트 직접 실행                                   | Docker, JDK 21, 자동 테스트 아님    |
 
 SMTP는 `test/support/fake-smtp.ts`로 대체한다. 테스트와 검증 스크립트는 실제 Gmail·Workspace SMTP에 접속하지 않는다.
@@ -23,7 +24,7 @@ SMTP는 `test/support/fake-smtp.ts`로 대체한다. 테스트와 검증 스크�
 | L0   | `pnpm format:check`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm test`                                 | 소스·테스트를 바꾼 모든 변경. 문서만 바꾸면 L0을 생략하고 아래 문서 점검만 한다 |
 | L1   | 변경 영역의 통합 spec만 실행: `pnpm --filter @cp949/mailo test:integration <경로 패턴>`                       | DB를 쓰는 영역(`queue`, `db`, `intake`, `worker`, `file-channel` 등)을 바꿨을 때 |
 | L2   | `pnpm test:integration` 전체                                                                                  | 마무리 때 1회. 변경 묶음마다 돌리지 않는다                            |
-| L3   | `scripts/container/`, `scripts/volume/`, `apps/mailo/scripts/nfs/run.sh`, `samples/spring-boot-relay/verify/run-e2e.sh` | 아래 표의 영역을 실제로 바꿨을 때만                                   |
+| L3   | `scripts/container/`, `scripts/volume/`, `scripts/secrets-localstack/`, `apps/mailo/scripts/nfs/run.sh`, `samples/spring-boot-relay/verify/run-e2e.sh` | 아래 표의 영역을 실제로 바꿨을 때만                                   |
 
 - L1·L2 전에 `.env.example`을 `.env`로 복사하고 `docker compose up -d postgres`를 실행한다. compose는 `POSTGRES_PASSWORD`가 없으면 중단한다.
 - 서버가 없으면 통합 테스트는 skip하지 않고 실패한다. 이 실패는 코드 결함이 아니라 환경 문제다. PostgreSQL부터 확인한다.
@@ -38,6 +39,7 @@ L3을 돌리는 변경:
 | 파일 채널의 권한·원자 rename·마운트 가정               | `scripts/volume/`의 해당 스크립트(`acl`·`group` 모두)                      |
 | NFS 관련 코드(`file-channel/errno.ts` 등), `nfs.md`    | `apps/mailo/scripts/nfs/run.sh`                                            |
 | `samples/spring-boot-relay/`, 서명·봉투 형식(ADR-0008) | `samples/spring-boot-relay/verify/run-e2e.sh`                              |
+| `secrets/`, `adapters/secret-source-aws/`, 변형 이미지, `X_REF` 기동 경로 | `scripts/secrets-localstack/run.sh`(LocalStack 최신 이미지는 Auth Token이 필요해 기본은 4.12 고정 이미지) |
 | `.github/workflows/ci.yml`                             | `docs/operations/ci.md`의 로컬 재현 명령. GitHub 실행 결과가 없으면 없다고 적는다 |
 
 ## 테스트 작성 규칙
