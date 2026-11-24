@@ -6,7 +6,10 @@
 
 2026-11-24에 초안을 쓰고 같은 날 사용자가 승인했다. 열린 질문이던 10건은 이 문서가 적은 권고대로 승인했다. 승인된 값은 "미결정·확인하지 않은 것"의 "승인된 결정" 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 9. 호출처 도구와 문서"다.
 
-구현 상태(2026-11-24): 구현 전. 구현은 묶음 B(적합성 벡터) → C(샘플 연동, 선택) → A(문서) 순서다.
+구현 상태(2026-11-24): 묶음 B(적합성 벡터) 구현 완료(미검증 항목 있음). 묶음 C(샘플 연동, 선택)와 묶음 A(문서)는 구현 전이다. 순서는 B → C → A다.
+
+- 묶음 B의 범위: 결정 1~5(벡터 범위, `vectors.json`·`README.md`, 공개 가짜 키와 production 거부, 생성 스크립트, 서버 단위 테스트와 `presentOpenFailure` 공개). 요구사항은 RQ-064·065다.
+- 묶음 B에서 구현하지 않은 것: 결정 6(Java 샘플 연동), 결정 7~9(문서). 이 문서의 "구현 중 확정" 절이 묶음 B에서 정한 값을 적는다.
 
 검증 범위는 코드·문서 읽기다(2026-11-24). 테스트, 스크립트, 쿼리, 측정을 실행하지 않았다. 아래 "배경"의 "확인한 사실"은 코드와 문서에서 읽은 것이고 "가정"은 읽지 않았거나 실행으로 확인하지 못한 것이다.
 
@@ -308,3 +311,25 @@
 - 파티셔닝 제약(파티션 키와 유니크 제약)은 PostgreSQL 문서 지식이다. 서버로 확인하지 않았다.
 - 실제 Gmail·Workspace, 운영 크기, 다중 인스턴스에서의 모든 항목.
 - `AGENTS.md`가 가리키는 `docs/agents/verification.md`, `qq-workflow.md`, `rubber-workflow.md`는 이 브랜치(`dev` 분기)에 없고 다른 브랜치(`docs/agent-workflow`)에만 있다. 이 초안은 `verification.md`와 `rubber-workflow.md`의 앞부분만 읽었고 `dev`에 병합되기 전에는 링크가 끊긴다.
+
+## 구현 중 확정
+
+### 2026-11-24 묶음 B
+
+결정 문구는 바꾸지 않는다. 구현하면서 정한 값과 결정의 해석을 적는다. 구현 순서 표와 어긋난 곳은 없다.
+
+1. **키 구성.** Mailo JWE 키 쌍은 `conformance-1`(`role` `previous`, 키 교체 중 이전 키)과 `conformance-2`(`current`)다. 호출처 JWS 비밀키는 `alpha`(`kid` `alpha-1`·`alpha-2`)와 `beta`(`beta-1`)이고 값은 32바이트 ASCII 텍스트(`conformance-jws-<호출처>-<번호>-key-…`)다. 서명을 쓰지 않는 호출처 `gamma`는 키가 없다. 같은 바이트가 반복된 값이 아니므로 `isPublicOrWeakKey`는 `PUBLIC_SAMPLE_KEYS`의 목록으로 거부한다.
+2. **결정 2의 필드에 더한 것.** 최상위 `description`·`notice`·`generator`, `keys.jwe[].role`, 서명 케이스의 `jws.hmacKid`다. `hmacKid`는 `jws.signature`를 만든 키의 `kid`이고 어느 벡터 키로도 만들 수 없는 서명(변조, `alg` `none`, `HS512`)은 `null`이다. 기대 `signature`와 함께 서명 변조 케이스를 한 형식으로 적으려고 더했다.
+3. **JWE 시나리오 공유.** 같은 JWE 시나리오(현재 키·이전 키 수락, 암호 실패, 복호화한 평문 검증 실패)를 파일(서명 포함)과 REST가 각각 쓴다. 암호문은 채널마다 따로 만든다. 서명을 쓰지 않는 호출처의 JWE 파일은 수락 1건만 둔다.
+4. **기대값 두 건을 입력 쪽에서 고쳤다.** 기대값을 ADR·계약에서 먼저 적고 서버 판정과 비교했을 때 두 케이스가 어긋났다. 서버 코드를 바꾸지 않았다.
+   - 서명을 쓰지 않는 호출처에 JWS 봉투를 보내는 케이스: 서버는 `IDEMPOTENCY_KEY_MISSING`을 낸다. `request-schema.ts`의 사유 우선순위(Key 오류 > 첨부 > 그 밖)에 따른 것이다. 사유 우선순위까지 호출처 계약으로 굳히지 않으려고 이 케이스를 뺐다.
+   - REST에서 `content`와 `subject`를 함께 보내는 케이스: `text`가 없으면 `CONFLICTING_FIELDS` 말고 `/text REQUIRED`가 더 나온다. 부수 오류에 기대가 묶이지 않도록 `text`까지 넣어 오류가 하나만 나게 했다.
+5. **테스트 위치.** 결정 5와 검증 계획은 `key-file.spec.ts`·`signature-keys.spec.ts`를 따로 적었다. 벡터 파일을 읽는 테스트를 한 곳에 두려고 `test/envelope/conformance-vectors.spec.ts` 한 파일이 벡터 키 거부를 확인한다. JWE 개인키는 `parseEnvelopeKeys`, JWS 비밀키는 `parseCallerRegistry`로 확인하고 production(`NODE_ENV` 없음 포함)에서 거부, `development`·`test`에서 허용, 오류에 키 값·`kid`가 없음을 본다. DB 본문 키·지문 키 로더(`loadKeyRing`)는 같은 `isPublicOrWeakKey`를 쓰지만 벡터 키를 그 로더에 넣는 테스트는 없다(코드 읽기).
+6. **오류 메시지.** `envelope keys[<i>]: 저장소에 공개된 샘플 JWE 키라 production에서 쓸 수 없다(...)`다. 변수 이름·`kid`·키 값은 담지 않는다.
+7. **README 목록.** `docs/api/conformance/README.md`의 케이스 표는 생성 스크립트가 아니라 사람이 옮긴다. 단위 테스트가 모든 케이스 `id`가 표에 있음을 확인한다.
+8. **변이 확인(2026-11-24).** 서버 판정 규칙을 일부러 바꿔 테스트가 실패하는지 두 번 확인하고 되돌렸다.
+   - `openJws`의 `iat` 상한 비교 `>`를 `>=`로 바꿨다: `file-jws-accepted-iat-max-age`가 `IAT_OUT_OF_RANGE`로 실패했다.
+   - `toRejectionReason`의 `KID_UNKNOWN` 매핑(`DECRYPTION_FAILED`)을 바꿨다: `file-jws-jwe-kid-unknown`과 "reasonCode 9종" 테스트가 실패했다.
+9. **독립 확인(수동, 2026-11-24).** `file-jws-accepted-plain`(`alpha-1`)과 `file-jws-accepted-rotated-kid`(`alpha-2`)의 `signingInput`을 `openssl dgst -sha256 -hmac`으로 계산한 값이 `signature`와 같았다. 단위 테스트도 같은 계산을 `node:crypto`로 모든 서명 케이스에 한다.
+10. **생성 스크립트.** 처음에는 `--new-keys`로 JWE 키를 만들었고 이후 기본 경로(기존 키 재사용)로 다시 만들어 공개키 해시가 `PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`와 같음을 확인했다.
+11. **검증하지 않은 것(묶음 B).** GitHub push protection이 저장소의 개인키 PEM을 막는지(push 때 확인한다), 벡터 키로 컨테이너·`main.ts`를 실제로 기동해 거부되는지(단위 테스트는 설정 로더까지 본다), JWE 쪽의 독립 구현 확인(묶음 C), 호출처가 쓰는 라이브러리와의 상호 운용.

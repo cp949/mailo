@@ -263,7 +263,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <migrator> IN SCHEMA public GRANT SELECT, INSE
 
 | 변수 | 기본값 | 범위·형식 | 설명 |
 | ---- | ------ | --------- | ---- |
-| `NODE_ENV` | `production`(없을 때) | `development`, `test`, `production` | `development`·`test`가 아니면(값이 없어도) 공개 샘플 키와 같은 바이트의 DB 본문 키·지문 키, 같은 바이트가 반복된 키, 샘플 DB 비밀번호 `mailo-dev-password`를 거부한다(`key-management.md`). 이전에는 값이 없으면 `development`였다 |
+| `NODE_ENV` | `production`(없을 때) | `development`, `test`, `production` | `development`·`test`가 아니면(값이 없어도) 공개 샘플 키와 같은 바이트의 DB 본문 키·지문 키·호출처 JWS 비밀키, 적합성 벡터의 Mailo JWE 개인키, 같은 바이트가 반복된 키, 샘플 DB 비밀번호 `mailo-dev-password`를 거부한다(`key-management.md`). 이전에는 값이 없으면 `development`였다 |
 | `MAILO_PORT` | 3000 | 1~65535 | listen 포트. 컨테이너 안은 3000 고정 |
 | `MAILO_DATABASE_URL` | 없음(`MAILO_DB_HOST`가 없으면 필수) | `postgres://` 또는 `postgresql://` URL | 시크릿(`_FILE` 지원). 비밀번호는 호출자가 URL 인코딩해야 한다. compose 컨테이너는 비운다 |
 | `MAILO_DB_HOST`, `MAILO_DB_PORT`, `MAILO_DB_USER`, `MAILO_DB_PASSWORD`, `MAILO_DB_NAME` | 포트 5432, 나머지 없음 | `MAILO_DB_HOST`를 주면 사용자·DB 이름 필수, 비밀번호 선택 | `MAILO_DATABASE_URL`의 대안. 앱이 URL 인코딩해 조립한다. `MAILO_DB_HOST`는 호스트 이름, IPv4, 대괄호 IPv6(`[::1]`)만 받는다. 포트·경로·공백이 있으면 기동 거부(포트는 `MAILO_DB_PORT`). `MAILO_DB_PASSWORD`는 `_FILE` 지원. `MAILO_DATABASE_URL`과 함께 주면 기동 거부 |

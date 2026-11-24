@@ -76,7 +76,7 @@
 | `allowedRecipientDomains` | 아니오 | 호출처가 `to`·`cc`·`bcc`로 보낼 수 있는 수신 도메인 배열, 1~50개, 생략하면 제한 없음. 소문자 ASCII 도메인만 받는다(아래). 빈 배열·`null`은 기동하지 않는다 |
 | `jwe` | 아니오 | 코드가 읽기만 하고 쓰지 않는다. JWE는 호출처 항목이 아니라 Mailo 키 목록(`key-management.md`)으로 정한다 |
 
-- 서명 키(`signature.keys`)의 값은 호출처 사이·`kid` 사이·DB 본문 키·지문 키와 달라야 한다. 같은 바이트이면 기동하지 않는다(표기가 base64와 hex로 달라도 같다). `NODE_ENV`가 `development`·`test`가 아니면 같은 바이트가 반복된 키와 공개 샘플 키도 거부한다(ADR-0008 구현 중 확정 13). 오류에는 위치만 나오고 값은 나오지 않는다.
+- 서명 키(`signature.keys`)의 값은 호출처 사이·`kid` 사이·DB 본문 키·지문 키와 달라야 한다. 같은 바이트이면 기동하지 않는다(표기가 base64와 hex로 달라도 같다). `NODE_ENV`가 `development`·`test`가 아니면 같은 바이트가 반복된 키와 공개 샘플 키(적합성 벡터의 JWS 비밀키 포함)도 거부한다(ADR-0008 구현 중 확정 13, ADR-0014 결정 3). 오류에는 위치만 나오고 값은 나오지 않는다.
 - 알 수 없는 필드가 있으면 기동하지 않는다. 오류 메시지는 위치(`callers[0]`)와 고정 사유만 담는다.
 - SMTP 계정(`accountId`, RQ-054, ADR-0013 결정 2·6): 호출처 하나는 계정 하나를 쓴다. 호출처는 계정을 고르지도 알지도 못한다. 요청에 계정 필드를 보내면 `UNKNOWN_FIELD`로 거부되고, `Job`·`Event`·거부 기록·검증 오류에는 계정 필드와 계정 주소가 없다.
   - 작업은 등록 때 계정을 고정한다. 이후 `accountId`를 바꿔도 이미 등록한 작업은 처음 계정으로 나간다. 계정 전환은 새 요청에만 적용된다. 같은 Key의 재전송은 기존 작업의 계정을 그대로 두고 200이나 409를 돌려받는다(계정은 지문에 들어가지 않는다).
@@ -203,6 +203,7 @@ REST 본문과 같은 필드에 `version`(정수 1)과 `idempotencyKey`가 더�
 - `payload`는 요청 JSON의 UTF-8 바이트를 base64url(패딩 없음)로 인코딩한 값이고, 서명 입력은 `protected + "." + payload`다(RFC 7515).
 - `iat`가 서명 허용 기간(기본 7일)보다 오래됐거나 허용 오차(기본 5분)를 넘어 미래이면 `IAT_OUT_OF_RANGE`다. 호출처 호스트 시계를 NTP로 맞춘다.
 - 재시도 때는 같은 요청이라도 서명을 다시 만들어 새 `iat`를 쓴다.
+- 서명·암호화 구현은 서버 없이 `docs/api/conformance/vectors.json`의 골든 벡터로 확인한다. 읽는 방법은 `docs/api/conformance/README.md`다. 벡터의 키는 공개 가짜 키이고 운영에 쓰지 않는다.
 
 JWE 사용 시 `subject`·`text`·`html` 대신 `content`(JWE compact, 점으로 구분한 5부분)를 넣는다. 평문과 암호문을 한 요청에 섞으면 `CONFLICTING_FIELDS`(REST) 또는 `VALIDATION_FAILED`(파일)다. 복호화 평문은 UTF-8 JSON `{"subject","text","html"}`뿐이다. `alg`는 `RSA-OAEP-256`, `enc`는 `A256GCM`, protected header에 `kid`(Mailo가 알려 준 값)와 `caller`(호출처 `id`)를 넣는다. 수신자와 `Idempotency-Key`는 평문이다.
 

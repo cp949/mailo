@@ -149,6 +149,15 @@
 
 `openapi.yaml`의 enum과 `additionalProperties`는 서버가 값을 더하는 변경과 같은 변경에서 바꾼다. Java 샘플(`samples/spring-boot-relay/`)이 이 규칙을 구현한다.
 
+## 프로토콜 적합성 벡터
+
+JWS 서명과 JWE 암호화 구현은 [conformance/vectors.json](./conformance/vectors.json)으로 서버 없이 확인한다(ADR-0014, RQ-064). 읽는 방법과 케이스 목록은 [conformance/README.md](./conformance/README.md)다.
+
+- 벡터는 파일 채널(JWS, JWE)과 REST(JWE)의 수락·거부 판정을 호출처가 관측하는 값(파일 `reasonCode`, REST `errors`)으로 적는다.
+- 벡터의 키는 공개 가짜 키다. 실제 운영 키가 아니고 운영에 쓰면 Mailo가 기동하지 않는다.
+- 지문은 서버 비밀키로 계산하므로 벡터에 없다.
+- 서버 단위 테스트가 같은 벡터를 통과해야 하므로, 서버 판정이 바뀌면 벡터도 같은 변경에서 바뀐다. 기대 판정을 바꾸는 변경은 호출처 계약 변경이다.
+
 ## 계약에서 새로 정한 것
 
 ADR과 RQ에 없던 결정이다. 모두 추정이며 구현 전에 검토한다. ADR과 RQ는 고치지 않았다.

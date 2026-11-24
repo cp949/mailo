@@ -24,7 +24,8 @@ Mailo가 쓰는 키의 발급, 교체, 이전 키 보관, 기동 시 검증 오�
 
 - DB 본문 키와 지문 키는 서로 다른 값이어야 한다. 모든 버전 쌍에서 같은 바이트가 있으면 기동하지 않는다.
 - 키 형식(DB·지문·JWS): 32바이트를 base64(표준 또는 URL-safe, 패딩 유무 무관) 또는 64자 hex로 쓴다.
-- `NODE_ENV`가 `development`·`test`로 명시되지 않으면(`production`이거나 값이 없거나 알 수 없는 값) 저장소에 공개된 샘플 키와 같은 바이트의 DB 본문 키·지문 키를 거부한다. 같은 조건에서 공개 샘플 DB 비밀번호(`mailo-dev-password`)도 거부한다. 거부 대상: `.env.example`·`docker-compose.volume-example.yml`의 `MAILO_DB_ENCRYPTION_KEY_V1`(`fake-db-key-for-dev-only-0000000`의 base64)과 `MAILO_FINGERPRINT_KEY_V1`(`fake-fingerprint-key-dev-only-00`의 base64), 그리고 32바이트가 모두 같은 값인 키(테스트 픽스처가 `Buffer.alloc(32, n)`으로 만드는 형태). base64·hex 어느 표기로 줘도 같은 바이트로 비교한다. 이전 버전 변수(`_V1` 등)도 검사한다. 오류에는 변수 이름과 사유만 나오고 키 값은 나오지 않는다. `development`·`test`는 허용한다.
+- `NODE_ENV`가 `development`·`test`로 명시되지 않으면(`production`이거나 값이 없거나 알 수 없는 값) 저장소에 공개된 샘플 키와 같은 바이트의 DB 본문 키·지문 키를 거부한다. 같은 조건에서 공개 샘플 DB 비밀번호(`mailo-dev-password`)도 거부한다. 거부 대상: `.env.example`·`docker-compose.volume-example.yml`의 `MAILO_DB_ENCRYPTION_KEY_V1`(`fake-db-key-for-dev-only-0000000`의 base64)과 `MAILO_FINGERPRINT_KEY_V1`(`fake-fingerprint-key-dev-only-00`의 base64), 적합성 벡터(`docs/api/conformance/vectors.json`)의 호출처 JWS 비밀키 셋(32바이트 텍스트 `conformance-jws-alpha-1-key-0000`, `conformance-jws-alpha-2-key-0000`, `conformance-jws-beta-1-key-00000`), 그리고 32바이트가 모두 같은 값인 키(테스트 픽스처가 `Buffer.alloc(32, n)`으로 만드는 형태). base64·hex 어느 표기로 줘도 같은 바이트로 비교한다. 이전 버전 변수(`_V1` 등)도 검사한다. 오류에는 변수 이름과 사유만 나오고 키 값은 나오지 않는다. `development`·`test`는 허용한다.
+- 같은 조건에서 Mailo JWE 개인키도 거부한다. 대상은 적합성 벡터의 JWE 키 쌍 둘(`kid` `conformance-1`·`conformance-2`)이다. 판정은 공개키(SPKI DER)의 SHA-256을 `envelope/key-file.ts`의 `PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`와 비교한다. `kid` 이름은 보지 않는다. 운영자가 같은 이름으로 다른 키를 쓸 수 있다. 오류에는 `envelope keys[i]` 위치만 나온다(RQ-065, ADR-0014 결정 3).
 - 이 키들은 시크릿 파일 마운트(`<변수>_FILE`)로 주는 것을 권장한다(`deployment.md` "시크릿 주입").
 - 모든 키 값은 로그·오류·이벤트에 나오지 않는다(RQ-027). 키를 코드·이미지·`.env.example`에 넣지 않는다.
 
@@ -123,6 +124,7 @@ openssl rsa -in mailo-2026-12.private.pem -pubout -out mailo-2026-12.public.pem
 - 이전 키를 보관하는 이유: 이전 `kid`로 암호화한 REST 요청이 relay 재시도 기간(7일 이하) 동안 사용처 outbox에 남을 수 있고, 입력 폴더의 파일은 Mailo가 내려가 있는 동안 쌓일 수 있다. 30일은 이 기간보다 보수적인 값이다.
 - `retiredAt`이 없는 항목이 하나 이상 있어야 한다. `retiredAt`이 있어도 Mailo는 그 키로 복호화한다.
 - 개발용 키 생성기 `pnpm --filter @cp949/mailo dev:keys`는 개발·테스트 전용이다. 운영 키에 쓰지 않는다.
+- `docs/api/conformance/vectors.json`의 JWE 개인키 PEM은 공개 가짜 키다. 실제 운영 키가 아니다. 운영에 쓰면 모든 호출처의 JWE를 누구나 풀 수 있다. 위 규칙이 `NODE_ENV`가 `development`·`test`가 아닐 때 기동을 거부한다.
 
 ## 호출처 JWS 비밀키
 
@@ -134,7 +136,7 @@ openssl rsa -in mailo-2026-12.private.pem -pubout -out mailo-2026-12.public.pem
 umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 ```
 
-- 호출처마다 다른 키를 쓴다. 한 호출처의 키로 다른 호출처 이름의 서명은 통과하지 못한다. 같은 키를 두 호출처·두 `kid`에 쓰거나 DB 본문 키·지문 키와 같은 키를 쓰면 Mailo가 기동하지 않는다. `NODE_ENV`가 `development`·`test`가 아니면 같은 바이트가 반복된 키와 공개 샘플 키도 거부한다(ADR-0008 구현 중 확정 13).
+- 호출처마다 다른 키를 쓴다. 한 호출처의 키로 다른 호출처 이름의 서명은 통과하지 못한다. 같은 키를 두 호출처·두 `kid`에 쓰거나 DB 본문 키·지문 키와 같은 키를 쓰면 Mailo가 기동하지 않는다. `NODE_ENV`가 `development`·`test`가 아니면 같은 바이트가 반복된 키와 공개 샘플 키(적합성 벡터의 JWS 비밀키 셋 포함)도 거부한다(ADR-0008 구현 중 확정 13, ADR-0014 결정 3).
 - `signature.mode=none` 호출처는 inbox 쓰기 권한자의 수신자 바꿔치기를 막지 못한다. JWE 본문 유출을 막아야 하면 `required`로 두고 이 키를 발급한다(`caller-onboarding.md` "`none`의 한계", ADR-0008 구현 중 확정 9).
 - `callers.json`의 `signature.keys[]`는 `kid`와 변수 이름(`secretVar`, `MAILO_JWS_SECRET_`로 시작하는 대문자)만 가진다. 호출처당 1~2개다.
 
@@ -232,13 +234,14 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 | `<변수>은 32바이트 키(base64 또는 64자 hex)여야 한다` | 키 길이·형식이 틀리다 | `openssl rand -base64 32`로 다시 만든다. base64 한 줄인지 본다(앞뒤 공백과 끝 개행은 무시된다) |
 | `<변수>_FILE이 가리키는 파일을 읽지 못했다(ENOENT)` | 경로가 없거나(`ENOENT`) 권한이 없다(`EACCES`) | 마운트 경로와 UID 1000의 읽기 권한을 확인한다 |
 | `<변수>_FILE이 가리키는 파일이 비어 있다` | 빈 파일 | 키를 채운다 |
-| `<변수>은 저장소에 공개된 샘플 키이거나 같은 바이트가 반복된 키라 production에서 쓸 수 없다(...)` | `NODE_ENV`가 `development`·`test`가 아닌데(없는 경우 포함) `.env.example`의 샘플 키나 반복 바이트 키를 썼다 | `openssl rand -base64 32`로 새로 만든다. 로컬 시험이면 `NODE_ENV=development`로 둔다 |
+| `<변수>은 저장소에 공개된 샘플 키이거나 같은 바이트가 반복된 키라 production에서 쓸 수 없다(...)` | `NODE_ENV`가 `development`·`test`가 아닌데(없는 경우 포함) `.env.example`의 샘플 키, 적합성 벡터의 JWS 비밀키, 반복 바이트 키를 썼다 | `openssl rand -base64 32`로 새로 만든다. 로컬 시험이면 `NODE_ENV=development`로 둔다 |
 | `DB 비밀번호가 저장소에 공개된 샘플 값이라 production(...)에서 쓸 수 없다(...)` | 같은 조건에서 DB 비밀번호가 `mailo-dev-password`다 | `.env`의 `POSTGRES_PASSWORD`와 접속 설정(`MAILO_DB_PASSWORD` 또는 `MAILO_DATABASE_URL`)을 새 값으로 바꾼다. 이미 만든 DB는 `ALTER USER`로 비밀번호도 바꾼다 |
 | `<변수>의 버전 번호에 앞자리 0을 쓸 수 없다(..._V1처럼 쓴다)` | `..._V01`처럼 앞자리 0이 있는 변수 이름이다(`_V1`과 다른 변수) | 변수 이름을 `_V1`로 고친다 |
 | `DB 본문 암호화 키링와 지문 키링가 같은 키를 쓴다. 두 키는 서로 달라야 한다` | 두 키링이 같은 바이트를 가진다 | 한쪽을 새로 발급한다 |
 | `MAILO_JWS_IAT_MAX_AGE_SECONDS는 MAILO_RECORD_RETENTION_SECONDS에서 MAILO_JWS_IAT_SKEW_SECONDS를 뺀 값 이하여야 한다` | 허용 기간 + 오차가 Key 보존 기간을 넘는다 | 허용 기간을 줄이거나 보존 기간을 늘린다 |
 | `MAILO_ENVELOPE_KEYS_FILE을 읽지 못했다(<code>)`, `...이 올바른 JSON이 아니다` | 키 목록 파일 경로·형식 오류 | 경로, JSON 구문을 확인한다 |
 | `envelope keys: ... keys 배열이 하나 이상 필요하다` | `keys`가 비었다 | 항목을 추가한다. JWE를 쓰지 않으려면 `MAILO_ENVELOPE_KEYS_FILE`을 비운다 |
+| `envelope keys[<i>]: 저장소에 공개된 샘플 JWE 키라 production에서 쓸 수 없다(...)` | `NODE_ENV`가 `development`·`test`가 아닌데(없는 경우 포함) 적합성 벡터의 JWE 개인키를 항목에 썼다 | `openssl genpkey`로 새 키를 발급해 바꾼다. 로컬 시험이면 `NODE_ENV=development`로 둔다 |
 | `<변수> 또는 <변수>_FILE이 필요하다(envelope keys[<i>])` | 항목의 `privateKeyVar`가 가리키는 변수가 없다 | 개인키 변수를 마운트한다 |
 | `<변수>은 PEM 형식의 RSA 개인키여야 한다` | PEM이 아니거나 공개키를 넣었다 | PKCS#8 개인키 PEM을 넣는다 |
 | `<변수>은 RSA 3072비트 키여야 한다` | 다른 길이의 RSA 키 | 3072비트로 다시 발급한다 |
@@ -266,3 +269,4 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 - 다중 인스턴스에서 키 버전이 어긋났을 때의 동작(위 3단계 이유)은 코드 읽기 결과다.
 - nimbus-jose-jwt 10.10은 JWE(`RSA-OAEP-256`+`A256GCM`)와 JWS(`HS256`, flattened)를 한 조합씩 확인했다(`samples/spring-boot-relay/README.md`). 다른 버전·알고리즘, 키 교체 중 이전 `kid`로 암호화한 요청은 확인하지 않았다.
 - 유출 대응 절차를 정하지 않았다.
+- 적합성 벡터의 JWE 개인키·JWS 비밀키로 production 환경에서 Mailo를 실제로 기동해 거부되는지는 실행하지 않았다. 단위 테스트(`test/envelope/conformance-vectors.spec.ts`)가 설정 로더(`parseEnvelopeKeys`, `parseCallerRegistry`)까지 확인한다.

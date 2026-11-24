@@ -16,6 +16,7 @@ Mailo를 배포·운영하고 호출처를 연동하는 문서다. 요구사항�
 
 - 새로 배포한다: `deployment.md` → `key-management.md` → `caller-onboarding.md`.
 - 호출처를 추가한다: `caller-onboarding.md`. 파일 채널이 NAS/NFS면 `nfs.md`.
+- 호출처의 서명·암호화 구현을 서버 없이 확인한다: `../api/conformance/README.md`(공개 가짜 키로 만든 골든 벡터). 키 규칙은 `key-management.md`.
 - 장애를 본다: `troubleshooting.md`. 기동 실패는 `key-management.md`의 오류 표와 `deployment.md`의 제약 표.
 
 ## 갱신 규칙

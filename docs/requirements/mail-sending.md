@@ -39,7 +39,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 결과 불명 표시(`outcomeUncertain`), 배포·롤백 순서. 구현 묶음 A(작업 취소, RQ-040·041), 묶음 B(토큰 분리, 발송 정지, 감사, `/ops` REST, 관리 취소, RQ-042~044), 묶음 C(피드 공백, 수신 도메인 허용 목록, CLI, RQ-045~047), 묶음 D(`outcomeUncertain`, RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다.
 - [ADR-0012](../adr/0012-metrics-endpoint.md): `GET /metrics`(읽기 토큰만, 관리 토큰 403), 전역 gauge와 인스턴스 counter 구분, 라벨 규칙과 시리즈 상한, TTL 캐시·단일 비행, 수동 텍스트 직렬화, 감사 행 수 지표. 구현했다(RQ-049~052).
 - [ADR-0013](../adr/0013-multiple-smtp-accounts.md): 다중 SMTP 계정(`MAILO_SMTP_ACCOUNTS_FILE`, `default` 출처 규칙), 호출처의 `accountId`와 작업의 등록 때 계정 고정, 계정 단위 점유·차단기·정지·24시간 할당, 마이그레이션 `0010`~`0016`, 관측과 운영 표면, 발신 주소 허용 집합. 구현 묶음 A(RQ-053~056)와 B(RQ-057~059)를 구현했고 C·D는 구현 전이다.
-- [ADR-0014](../adr/0014-caller-tools-and-docs.md): 호출처 도구와 문서. 프로토콜 적합성 벡터(`docs/api/conformance/vectors.json`, 공개 가짜 키와 production 거부), Java 샘플 연동(선택), 키 분실·유출 대응 절차, DB 유지보수 안내, 레지스트리 변경 반영 절차. 레지스트리 재로드와 파티셔닝은 구현하지 않는다. 구현 전이다(RQ-064~069).
+- [ADR-0014](../adr/0014-caller-tools-and-docs.md): 호출처 도구와 문서. 프로토콜 적합성 벡터(`docs/api/conformance/vectors.json`, 공개 가짜 키와 production 거부), Java 샘플 연동(선택), 키 분실·유출 대응 절차, DB 유지보수 안내, 레지스트리 변경 반영 절차. 레지스트리 재로드와 파티셔닝은 구현하지 않는다. 구현 묶음 B(RQ-064·065)를 구현했고 C(RQ-066)·A(RQ-067~069)는 구현 전이다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
@@ -67,6 +67,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 9단계 묶음 B 적합성 벡터 반영 뒤): `pnpm test` 단위 1018건(50개 파일, 새 파일 `envelope/conformance-vectors.spec.ts` 128건), `pnpm test:integration` 통합 819건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 기존 테스트 파일은 바꾸지 않았다. 벡터 테스트의 RED는 구현 전 모듈 export 누락(`PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`)으로 확인했다. 변이 확인 2건(`iat` 상한 비교, `KID_UNKNOWN` 매핑)에서 테스트가 케이스 `id`로 실패했고 되돌렸다. 컨테이너·NFS·샘플 스크립트(`scripts/container/`, `verify/run-e2e.sh`, `pnpm test:nfs`)는 실행하지 않았다(해당 영역 변경 없음). 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다.
 - 검증 수치(2026-11-24 7단계 묶음 C 운영 표면 반영 뒤): `pnpm test` 단위 890건(49개 파일), `pnpm test:integration` 통합 816건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 최종 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 3건이 실패했다(`queue/cancel.integration-spec.ts` 2건: 취소 결과에 `accountId`가 더해졌고, `cli/cli.integration-spec.ts` 1건: `sendControls`에 `pausedAccountCount`가 더해졌다). 둘 다 새 필드를 기대값에 더한 뒤 그 파일 2개(25건)만 다시 실행해 통과했다. 기존 테스트의 변경은 모두 새 필드·인자를 반영한 것이고 단언을 약화하지 않았다. (1) `test/queue/send-controls.integration-spec.ts`: `listPauses`가 `account` 행을 내므로 기대 목록에 `{ type: "account", id: "default" }`를 더했고(제목에서 "account 행은 REST 목록에 없다"를 뺐다), `getCallerPauseSummary`가 계정 ID를 세 번째 인자로 받아 호출에 `"default"`를 더했으며 `getSendControlsSummary` 기대값에 `pausedAccountCount`를 더했다. (2) `http/ops.integration-spec.ts`·`cli/cli.integration-spec.ts`의 `sendControls` 기대값에 `pausedAccountCount: 0`을 더했다. (3) `worker/metrics.spec.ts`·`queue/metrics-reads.integration-spec.ts`·`queue/cancel.integration-spec.ts`의 입력·기대값에 `accountId`를 더했다(`JobTransition`·취소 결과가 계정을 가진다). (4) `metrics/catalog.spec.ts`의 전역 접두 목록에 `mailo_account_`를 더했다. 컨테이너: `scripts/container/verify-metrics.sh`(읽기 전용 루트, 응답·토큰 행렬·`promtool check metrics` 통과, 비밀 값 노출 0건)와 `verify-sigterm-file.sh`(1000건, 재기동 뒤 중복·유실 없음)를 각 1회 실행했다. 이 스크립트는 단일 계정(`default`) 구성이다. 다중 계정 컨테이너, 롤링 배포·롤백, 실제 Gmail·Workspace, 외부 호출처의 `/health/ready` 처리, 실제 Prometheus의 새 알림 규칙 평가는 실행하지 않았다. 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다(최종 전체 실행은 한 번이다).
 - 검증 수치(2026-11-24 7단계 묶음 B 계정 단위 점유 반영 뒤): `pnpm test` 단위 873건(48개 파일), `pnpm test:integration` 통합 774건(53개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint`(oxlint) 경고·오류 없음(종료 코드 0). 기존 테스트의 변경은 다섯 가지다. (1) `getQueueBacklog`·`getQueueDepth`가 구성 계정 목록을 필수 인자로 받아 `http/health-ops.integration-spec.ts`·`queue/metrics-reads.integration-spec.ts`의 호출에 `["default"]`를 더했다(단언은 그대로). (2) `queue/claim-priority.integration-spec.ts`의 우선순위 점유 인덱스 존재 단언이 0015가 지운 `mail_jobs_priority_claim_idx`에서 새 `mail_jobs_account_priority_claim_idx`로 바뀌었다. (3) `queue/account-id.integration-spec.ts`는 `accountIds` 옵션이 `accountId`로 바뀌어 호출을 고쳤고, 비`default` 계정의 claim이 차단기 행을 요구해 세 테스트에 `ensureBreakerRows`를 더했으며, "`accountIds`를 생략하면 계정으로 거르지 않는다"(점유 2건)는 "`accountId`를 생략하면 `default` 계정만 점유한다"(점유 1건)로 바뀌었다. (4) `worker/account-startup.spec.ts`의 `account_limits_not_enforced` 경고를 단언하던 테스트가 "더는 남기지 않는다"로 바뀌었다. (5) `e2e/multi-account.integration-spec.ts`의 "묶음 B 전의 방어" 기동 거부 단언이 "비`default` 계정 구성의 기동" 성공 단언으로 바뀌고 `support/rest-app.ts`의 `allowNonDefaultAccounts` 옵션을 지웠다. 나머지 기존 단언은 바꾸지 않았다. 컨테이너 스크립트 `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`를 실행했다(`Dockerfile`·`docker-compose.yml`은 바꾸지 않았고 Worker 조립과 점유 경로를 지나므로 회귀 확인이다. 스크립트 검증이라 `[x]` 근거에 쓰지 않았다): `verify-sigterm-file.sh`는 SIGTERM 종료 코드 0, 재기동 뒤 작업 1000건이 모두 `SENT`이고 SMTP 수신 1000통(유일 `Message-ID` 1000), 남은 파일 0이었다. `verify-sigkill-duplicate.sh`는 관찰 스크립트이며 같은 `Message-ID`로 2통이 SMTP에 도착했다(`attempts=2`, RQ-013의 기존 한계와 같다). 두 스크립트 모두 단일 계정(`default`) 구성이다. 다중 계정 구성의 컨테이너 검증, `verify-metrics.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다.
 - 검증 수치(2026-11-24 7단계 묶음 A 다중 SMTP 계정 모델 반영 뒤): `pnpm test` 단위 858건(47개 파일), `pnpm test:integration` 통합 711건(48개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 기존 테스트의 변경은 네 가지다. (1) `config.smtp`가 `config.smtpAccounts`로 바뀌어 `config/load-config.spec.ts`·`http/rest-intake.integration-spec.ts`·`support/file-channel.ts`의 접근 경로와 필드 이름(`defaultFrom`→`from`)을 고쳤다. (2) `RegisterInput.accountId`가 필수가 되어 `support/queue-fixtures.ts`의 입력과 `envelope/open-request.spec.ts`의 인자에 `accountId`를 더했다. (3) `db/ops-controls.integration-spec.ts`·`db/event-purges.integration-spec.ts`는 0001~0007·0001~0008만 적용한 schema에 작업 행을 넣는데 `register`가 `account_id`를 쓰므로 컬럼 없는 옛 형태의 `INSERT`(`createLegacyJob`)로 바꿨다(단언은 그대로). (4) `db/event-purges.integration-spec.ts`의 "전체 적용 시 0009가 마지막"은 0010·0011이 이어지므로 "0008 바로 뒤에 0009"로 고쳤다. 나머지 기존 단언은 바꾸지 않았다. 컨테이너 스크립트 `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`를 실행했다(`docker-compose.yml`에 주석만 더했고 코드 경로가 Worker 조립을 지나므로, 스크립트 검증이라 `[x]` 근거에 쓰지 않았다): `verify-sigterm-file.sh`는 SIGTERM 뒤 재기동에서 작업 1000건이 모두 `SENT`이고 SMTP 수신 1000통(유일 `Message-ID` 1000), 남은 파일 0이었다. `verify-sigkill-duplicate.sh`는 관찰 스크립트이며 같은 `Message-ID`로 2통이 SMTP에 도착했다(`attempts=2`, 중복 발송 재현, RQ-013의 기존 한계와 같다). 두 스크립트 모두 단일 계정(`default`) 구성이다. `verify-metrics.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다(해당 영역 변경 없음. 샘플은 호출처 API 계약이 바뀌지 않았다). 읽기 전용 컨테이너의 계정 파일 마운트와 `_FILE` 비밀 읽기, 실제 Gmail 계정 둘은 실행하지 않았다(RQ-053~056 판정 근거).
@@ -99,7 +100,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 | 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041), 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044), 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI(RQ-045~047), 묶음 D 결과 불명 표시(RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다 |
 | 8단계 | 관측성(ADR-0012). `GET /metrics`(RQ-049), 이름·라벨 규칙(RQ-050), 전역 gauge(RQ-051), 인스턴스 counter·gauge(RQ-052). 마이그레이션 없음 |
 | 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-070 이후를 해당 묶음에서 추가한다 |
-| 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음), C Java 샘플 연동(선택, RQ-066), A 문서(RQ-067~069). 구현 전 |
+| 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했다. C Java 샘플 연동(선택, RQ-066)과 A 문서(RQ-067~069)는 구현 전이다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -2177,11 +2178,11 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
 ## 17. 호출처 도구와 문서
 
-결정은 [ADR-0014](../adr/0014-caller-tools-and-docs.md)이고 구현은 묶음 B(적합성 벡터)·C(Java 샘플 연동, 선택)·A(문서) 순서다. RQ-064·065는 묶음 B, RQ-066은 묶음 C, RQ-067~069는 묶음 A의 범위다. 코드를 바꾸는 것은 RQ-064·065뿐이고(공개 샘플 키 규칙 확장, `presentOpenFailure` 공개, 생성 스크립트, 테스트) 마이그레이션과 새 npm 의존성은 없다. 레지스트리 재로드와 파티셔닝은 구현하지 않는다.
+결정은 [ADR-0014](../adr/0014-caller-tools-and-docs.md)이고 구현은 묶음 B(적합성 벡터)·C(Java 샘플 연동, 선택)·A(문서) 순서다. RQ-064·065는 묶음 B, RQ-066은 묶음 C, RQ-067~069는 묶음 A의 범위다. 코드를 바꾸는 것은 RQ-064·065뿐이고(공개 샘플 키 규칙 확장, `presentOpenFailure` 공개, 생성 스크립트, 테스트) 마이그레이션과 새 npm 의존성은 없다. RQ-064·065는 구현했고(묶음 B) 나머지는 구현 전이다. 레지스트리 재로드와 파티셔닝은 구현하지 않는다.
 
 ### RQ-064 프로토콜 적합성 벡터와 서버 고정
 
-- [ ] **진행 상태:** 미착수 (9단계 묶음 B)
+- [ ] **진행 상태:** 진행 중 (9단계 묶음 B)
 
 **요구사항:**
 
@@ -2194,22 +2195,27 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
 **수용 조건:**
 
-- [ ] `vectors.json`이 `schemaVersion`(1), `profile`, `settings`, `keys`, `cases`를 갖고 케이스가 `id`·`title`·`channel`·`callerId`·`signatureMode`·`nowEpochSeconds`·`input`·`expect`를 갖는다. 파일 케이스의 `input`은 `fileText`, REST 케이스는 `body`다. JWS 케이스는 `signingInput`과 기대 `signature`를 `jws`에 적는다.
-- [ ] 케이스가 `OPEN_REQUEST_REASONS` 11종을 모두 `internalReason`으로 한 번 이상 낸다. 파일 `reasonCode` 9종도 모두 나온다. 수락 케이스는 평문 필드를 기대값으로 갖는다.
-- [ ] 케이스 `id`가 겹치지 않고 벡터 JSON에 `fingerprint` 키가 없다.
-- [ ] 단위 테스트 `test/envelope/conformance-vectors.spec.ts`가 파일 케이스는 `toRejectionReason`, REST 케이스는 `presentOpenFailure`로 기대와 비교하고 모두 통과한다. 서버가 케이스를 틀리게 판정하면 실패 메시지는 케이스 `id`와 기대·실제 사유 코드만 낸다(RQ-027).
-- [ ] `presentOpenFailure`가 `intake/index.ts`로 공개된다.
-- [ ] 서버 판정 규칙 하나를 바꾸면 테스트가 해당 케이스 `id`로 실패한다(변이 확인).
-- [ ] 벡터 JWS의 `signingInput`이 `openssl dgst -sha256 -hmac`과 같은 서명을 낸다(수동 확인, 결과를 ADR-0014 "구현 중 확정"에 적는다).
-- [ ] `docs/api/README.md`와 `openapi.yaml`이 벡터를 가리키고, 벡터 `README.md`가 케이스 목록·읽는 방법·호출처 확인 절차를 쓴다.
+- [x] `vectors.json`이 `schemaVersion`(1), `profile`, `settings`, `keys`, `cases`를 갖고 케이스가 `id`·`title`·`channel`·`callerId`·`signatureMode`·`nowEpochSeconds`·`input`·`expect`를 갖는다. 파일 케이스의 `input`은 `fileText`, REST 케이스는 `body`다. 서명 케이스는 `signingInput`과 기대 `signature`를 `jws`에 적는다.
+- [x] 케이스가 `OPEN_REQUEST_REASONS` 11종을 모두 `internalReason`으로 한 번 이상 낸다. 파일 `reasonCode` 9종도 모두 나온다. 수락 케이스는 평문 필드를 기대값으로 갖는다.
+- [x] 케이스 `id`가 겹치지 않고 벡터 JSON에 `fingerprint` 키가 없다.
+- [x] 단위 테스트 `test/envelope/conformance-vectors.spec.ts`가 파일 케이스는 `toRejectionReason`, REST 케이스는 `presentOpenFailure`로 기대와 비교하고 모두 통과한다. 서버가 케이스를 틀리게 판정하면 실패 메시지는 케이스 `id`와 기대·실제 사유 코드·위치만 낸다(RQ-027).
+- [x] `presentOpenFailure`가 `intake/index.ts`로 공개된다.
+- [x] 서버 판정 규칙 하나를 바꾸면 테스트가 해당 케이스 `id`로 실패한다(변이 확인 2건을 수동으로 실행하고 되돌렸다, 2026-11-24).
+- [x] 벡터 JWS의 `signature`가 `signingInput`의 HMAC-SHA256과 같다(단위 테스트가 모든 서명 케이스를 `node:crypto`로 계산한다. `openssl dgst -sha256 -hmac`으로 두 케이스를 수동 대조했다, 2026-11-24).
+- [x] 벡터 `README.md`의 케이스 표가 모든 케이스 `id`를 갖는다(단위 테스트).
+- [ ] `docs/api/README.md`와 `openapi.yaml`이 벡터를 가리키고, 벡터 `README.md`가 읽는 방법·호출처 확인 절차를 쓴다(문서 검토로만 확인했다. 자동 검증 없음).
 
 **판정 근거:**
 
-- 구현 전이다.
+- `envelope/conformance-vectors.spec.ts`(DB 없음, `pnpm test`).
+- RED 확인(2026-11-24): 구현 전 이 파일은 `The requested module '../../src/envelope/index.js' does not provide an export named 'PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256'`로 실행되지 않았다(벡터 파일도 없었다).
+- 처음 기대값(ADR·계약에서 적음)과 서버 판정이 다른 케이스가 둘 있었다. 서버를 바꾸지 않고 입력을 고쳤다(ADR-0014 구현 중 확정 4).
+- 구현: `scripts/gen-conformance-vectors.mjs`, `docs/api/conformance/`, `intake/index.ts`.
+- 남은 미검증: 위 한 항목, 호출처가 쓰는 라이브러리(nimbus-jose-jwt 등)와의 상호 운용(RQ-066), 큰 본문·`RSA-OAEP-256` 외 알고리즘.
 
 ### RQ-065 벡터 키의 production 거부
 
-- [ ] **진행 상태:** 미착수 (9단계 묶음 B)
+- [ ] **진행 상태:** 진행 중 (9단계 묶음 B)
 
 **요구사항:**
 
@@ -2220,15 +2226,17 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
 **수용 조건:**
 
-- [ ] production(`NODE_ENV` 없음 포함)에서 벡터의 JWE 개인키를 `parseEnvelopeKeys`가 거부하고, `development`·`test`에서는 허용한다. 오류에 키 값과 `kid`가 없다.
-- [ ] production에서 벡터의 JWS 비밀키 셋을 호출처 레지스트리가 거부하고 `development`·`test`에서는 허용한다. DB 본문 키·지문 키 로더도 같은 값을 거부한다.
-- [ ] 벡터의 공개키 SHA-256이 상수와 같음을 테스트가 확인한다(벡터를 다시 만들면 상수가 어긋나 실패한다).
-- [ ] 벡터 파일과 README에 "공개 가짜 키, 운영 사용 금지"가 명시돼 있고 실제 운영 키·SMTP 자격증명·실제 주소가 없다.
-- [ ] `docs/operations/key-management.md`의 공개 샘플 키 설명이 벡터 키를 포함한다.
+- [x] production(`NODE_ENV` 없음·`production`·알 수 없는 값)에서 벡터의 JWE 개인키를 `parseEnvelopeKeys`가 거부하고 `development`·`test`에서는 허용한다. 오류에 키 값과 `kid`가 없다. `kid`만 같고 키가 다른 항목은 거부하지 않는다.
+- [x] production에서 벡터의 JWS 비밀키 셋을 호출처 레지스트리가 거부하고 `development`에서는 허용한다. 오류에 키 값이 없다. DB 본문 키·지문 키 로더가 쓰는 `isPublicOrWeakKey`도 같은 값을 공개 샘플로 판정한다.
+- [x] 벡터의 공개키 SHA-256이 상수 `PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`와 같다(벡터를 다시 만들면 상수가 어긋나 테스트가 실패한다).
+- [x] 벡터 README에 "공개 가짜 키, 실제 운영 키가 아니다"가 있고 벡터에 예약 도메인 밖의 주소가 없으며 PEM 개인키는 선언한 쌍 둘뿐이다(단위 테스트). SMTP 인증 정보가 없다는 것은 검토로 확인했다.
+- [ ] `docs/operations/key-management.md`의 공개 샘플 키 설명이 벡터 키를 포함한다(문서 검토로만 확인했다. 자동 검증 없음).
 
 **판정 근거:**
 
-- 구현 전이다.
+- `envelope/conformance-vectors.spec.ts`의 "벡터 키는 공개 가짜 키다" 절. 규칙 구현은 `config/key-loader.ts`(`PUBLIC_SAMPLE_KEYS`)와 `envelope/key-file.ts`다.
+- RED 확인: RQ-064와 같은 실행이다.
+- 남은 미검증: 위 한 항목, 벡터 키로 컨테이너·`main.ts`를 실제로 기동한 거부(설정 로더까지만 단위 테스트), GitHub push protection이 저장소의 개인키 PEM을 막는지(push 때 확인한다).
 
 ### RQ-066 Java 샘플의 벡터 연동(선택)
 
