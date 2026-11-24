@@ -6,7 +6,7 @@
 
 2026-11-24에 초안을 쓰고 같은 날 사용자가 결정 1~10의 권고안 전체를 승인했다. 열린 질문이던 8건도 모두 권고대로 승인했다. 확정한 답은 "구현 중 확정"의 2026-11-24 승인 절에 모았다. 입력은 `docs/requirements/roadmap.md`의 "단계 10. 개인정보 최소화와 결과 불명 정책"이다. 범위는 그 표의 두 항목(수신자 주소 보존 단축, 결과 불명 처리 opt-in)이고 넓히지 않았다.
 
-구현 상태(2026-11-24): 묶음 A(문서, 결정 1, RQ-070)를 작성했다(문서 검토 남음). 묶음 B(결정 2, RQ-071)를 구현했다(미검증 항목 있음). 묶음 C·D는 시작하지 않았다.
+구현 상태(2026-11-24): 묶음 A(문서, 결정 1, RQ-070)를 작성했다(문서 검토 남음). 묶음 B(결정 2, RQ-071)를 구현했다(미검증 항목 있음). 묶음 C(결정 3, RQ-072)를 구현했다(미검증 항목 있음). 묶음 D는 시작하지 않았다.
 
 검증 범위는 코드·문서 읽기다(2026-11-24). 테스트, 스크립트, 쿼리, 측정을 실행하지 않았다. "배경"의 "확인한 사실"은 코드와 문서에서 읽은 것이고 그 밖의 것은 "미결정·확인하지 않은 것"에 모았다. 문서에는 줄 번호 대신 파일·함수 이름으로 근거를 적었다(`docs/agents/writing-styles.md`).
 
@@ -418,3 +418,17 @@
 - `docs/operations/data-retention.md`(새 문서)에 개인정보 항목 정의, 위치별 보존 현황 표, 보존 설정과 기동 검사, Mailo 밖에 남는 것, 호출처 안내, 위험 작업(개인정보 삭제 요청은 지원하지 않음, 보존 기간 단축, 수동 삭제, 덤프와 복원)을 썼다. 표의 근거는 코드·마이그레이션 읽기와 기존 통합 테스트다. 이 문서는 실행하지 않은 것을 "확인하지 않은 것"에 적었다.
 - `caller-onboarding.md`에 Key와 파일 이름에 사람을 식별하는 값을 넣지 말라는 안내를 더했다. `operations/README.md`, `deployment.md` "백업과 복구", `db-maintenance.md`가 새 문서를 가리킨다.
 - 표는 묶음 B(종결 때 비움)가 들어간 코드(`queue/complete.ts`, `queue/maintenance.ts`, `queue/cancel.ts`)로 대조했다. 이전 버전이 종결한 행과 배포 전에 이미 종결된 행은 수신자·봉투가 보존 삭제까지 30일 남는다고 적고 `db-maintenance.md`의 백필 절과 연결했다. 이벤트·시도 수신자의 유예 뒤 비움(묶음 C)이 들어가면 같은 변경에서 표를 고친다.
+
+### 2026-11-24 묶음 C(결정 3)
+
+결정 문구는 바꾸지 않는다. 코드는 `queue/maintenance.ts`(`redactEventRecipients`), `worker/worker.ts`(정리 루프), `events/event-store.ts`·`intake/presenters.ts`(응답), `config/load-config.ts`(설정), 마이그레이션 `0017`·`0018`이다.
+
+- 마이그레이션: `0017_event_recipients_redacted_at.sql`은 `mail_events.recipients_redacted_at timestamptz`(NULL 허용, 기본값 없음)를 `ADD COLUMN IF NOT EXISTS`로 더한다. `0018_event_recipients_redact_idx.sql`(`-- mailo:no-transaction`, 문장 하나, `IF NOT EXISTS`)은 `mail_events_recipients_redact_idx ON mail_events (created_at, id) WHERE type IN ('JOB_SENT','JOB_FAILED','JOB_EXPIRED','JOB_CANCELED') AND recipients_redacted_at IS NULL`을 만든다. 비운 이벤트는 인덱스에서 빠진다. 비움 쿼리의 조건은 이 정의와 글자 그대로 같다. 번호는 결정 9가 말한 "결정 3의 마이그레이션이 먼저"에 따라 `0017`·`0018`이고 결과 불명 컬럼은 그 뒤 번호다.
+- 설정 이름은 `MAILO_RECIPIENT_RETENTION_SECONDS`로 확정했다(가칭 해제). 기본 7일, 범위 60 이상 `MAILO_RECORD_RETENTION_SECONDS` 이하, 기동 때 검사한다. 한 가지를 정했다. 이 변수를 주지 않았고 `MAILO_RECORD_RETENTION_SECONDS`가 7일보다 짧으면 기본값을 보존 기간으로 줄인다. 그렇지 않으면 이 변수를 모르는 기존 설정(예: 보존 1일)이 업그레이드만으로 기동을 거부한다. 명시한 값은 줄이지 않고 범위 밖이면 거부한다. 결정 문구의 검사 규칙과 충돌하지 않는다.
+- 비움은 한 SQL 문장(CTE 셋)이다. 대상 선택, `mail_events` 갱신(`recipients = '{}'`, `rejected_recipients = NULL`, `recipients_redacted_at = now()`), 같은 작업의 `mail_attempts.rejected_recipients` NULL 갱신이 한 트랜잭션이다. 시도 행의 나머지 열(응답 코드, 마스킹한 응답 텍스트)은 남긴다. 오래된 이벤트부터(`created_at`, `id`) 처리하고 멱등이다(`recipients_redacted_at IS NULL`).
+- 잠금: 정리 단계 `recipients`(advisory lock 키 5) 뒤에 이벤트의 작업 행을 `FOR KEY SHARE OF j SKIP LOCKED`로 잡는다. 결정 3은 잠금을 정하지 않았다. 이 잠금이 없으면 비움(이벤트 → 시도 순으로 행 잠금)과 보존 삭제의 cascade(시도 → 이벤트 순)가 같은 작업에서 교착한다. 작업 400건·배치 100건으로 겹쳐 돌렸을 때 3번 모두 `deadlock detected`였다(PostgreSQL 17.11). 보존 삭제도 작업 행을 `FOR UPDATE SKIP LOCKED`로 먼저 잡으므로 두 단계가 같은 작업을 겹쳐 잡지 못한다. 차단기 행은 건드리지 않아 잠금 순서(작업 행 → 차단기 행)는 그대로다.
+- 단계 순서: 정리 루프의 정리 블록에서 본문 삭제, 보존 삭제 뒤에 돈다. 보존 삭제가 지울 행을 먼저 지워 비움이 그 행을 건드리는 낭비를 줄인다. 한 단계 처리 상한은 보존 삭제와 같다(배치 1000건, 사이클당 20배치). 로그 이벤트는 `recipients_redacted`(info, `count`)와 `recipients_redacted_failed`(error)이고 주소는 없다.
+- 피드: 비움은 `id`·`txid`·`created_at`을 바꾸지 않고 삭제 표지(`mail_event_purges`)를 쓰지 않는다. 같은 cursor로 읽으면 같은 이벤트가 같은 순서로 오고 공백 감지는 바뀌지 않는다.
+- 응답: `JOB_SENT`·`JOB_FAILED`·`JOB_EXPIRED`·`JOB_CANCELED`에 `recipientsRedacted`를 항상 낸다. 비운 이벤트의 `recipients`는 `to`·`cc`·`bcc` 빈 배열이고 `rejectedRecipients`는 빈 배열이다. `Job.rejectedRecipients`는 시도 기록에서 읽으므로 비운 뒤 빈 배열이고 `Job`에 새 필드는 없다. `INTAKE_REJECTED`에는 이 필드가 없다. `openapi.yaml`, `docs/api/README.md`, `caller-onboarding.md`를 같은 변경에서 고쳤다.
+- 측정(로컬 PostgreSQL 17.11 임시 schema, 이벤트·시도 20만 건, 한 번): 비움 201배치 9.3초, 배치 중앙값 37ms, 최대 1.9초. `mail_events` 갱신은 HOT 0%(갱신 열이 부분 인덱스 조건에 들어간다는 결정 3의 예상과 같다), `mail_attempts`는 97.8%였다. 값과 한계는 `docs/operations/db-maintenance.md` "수신자 비움 측정"이다.
+- 설계에서 ADR과 어긋난 점은 없다. 실행하지 않은 것: 롤링 배포(구·신 인스턴스 혼용)와 롤백, 운영 크기·다중 인스턴스에서의 백필 비용, `ADD COLUMN` 잠금 대기, 저장소 밖 호출처가 유예 뒤 빈 수신자와 `recipientsRedacted`를 처리하는지.

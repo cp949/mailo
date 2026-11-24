@@ -40,7 +40,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0012](../adr/0012-metrics-endpoint.md): `GET /metrics`(읽기 토큰만, 관리 토큰 403), 전역 gauge와 인스턴스 counter 구분, 라벨 규칙과 시리즈 상한, TTL 캐시·단일 비행, 수동 텍스트 직렬화, 감사 행 수 지표. 구현했다(RQ-049~052).
 - [ADR-0013](../adr/0013-multiple-smtp-accounts.md): 다중 SMTP 계정(`MAILO_SMTP_ACCOUNTS_FILE`, `default` 출처 규칙), 호출처의 `accountId`와 작업의 등록 때 계정 고정, 계정 단위 점유·차단기·정지·24시간 할당, 마이그레이션 `0010`~`0016`, 관측과 운영 표면, 발신 주소 허용 집합. 구현 묶음 A(RQ-053~056)와 B(RQ-057~059)를 구현했고 C·D는 구현 전이다.
 - [ADR-0014](../adr/0014-caller-tools-and-docs.md): 호출처 도구와 문서. 프로토콜 적합성 벡터(`docs/api/conformance/vectors.json`, 공개 가짜 키와 production 거부), Java 샘플 연동(선택), 키 분실·유출 대응 절차, DB 유지보수 안내, 레지스트리 변경 반영 절차. 레지스트리 재로드와 파티셔닝은 구현하지 않는다. 구현 묶음 B(RQ-064·065)를 구현했고 A(RQ-067~069) 문서를 작성했다(문서 검토 남음). C(RQ-066)는 구현 전이다.
-- [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md): 개인정보 최소화와 결과 불명 정책. 종결 때 본문·수신자·봉투 즉시 비움, 이벤트·시도 수신자의 유예(기본 7일) 뒤 비움과 `recipientsRedacted`, 요청별 `onUncertainOutcome`(`retry`·`fail`)과 `OUTCOME_UNKNOWN` 종결, 호출처 보존 현황 문서. 승인됐고(2026-11-24) 묶음 A(RQ-070)는 문서를 작성했고(검토 남음) 묶음 B(RQ-071)를 구현했다. 나머지(RQ-072~074)는 구현 전이다.
+- [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md): 개인정보 최소화와 결과 불명 정책. 종결 때 본문·수신자·봉투 즉시 비움, 이벤트·시도 수신자의 유예(기본 7일) 뒤 비움과 `recipientsRedacted`, 요청별 `onUncertainOutcome`(`retry`·`fail`)과 `OUTCOME_UNKNOWN` 종결, 호출처 보존 현황 문서. 승인됐고(2026-11-24) 묶음 A(RQ-070)는 문서를 작성했고(검토 남음) 묶음 B(RQ-071)와 묶음 C(RQ-072)를 구현했다. 나머지(RQ-073·074)는 구현 전이다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
@@ -68,6 +68,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 10단계 묶음 C 이벤트·시도 수신자 비움 반영 뒤): `pnpm test` 단위 1038건(51개 파일), `pnpm test:integration` 통합 868건(62개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 최종 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 새 파일은 `queue/redact-event-recipients.integration-spec.ts`(12건), `db/event-recipients-migration.integration-spec.ts`(9건), `http/rest-recipients-redacted.integration-spec.ts`(4건), `intake/event-presenter.spec.ts`(9건)이고 기존 파일에 단위 11건(`config/load-config.spec.ts` 5건, `worker/worker.spec.ts` 6건)과 통합 1건(`worker/worker.integration-spec.ts`)을 더했다. 전체 통합 첫 실행에서 1건이 실패했다: `http/rest-cancel.integration-spec.ts`의 `JOB_CANCELED` 이벤트 키 목록 단언이 새 필드 `recipientsRedacted`를 몰랐다. 계약 변경의 결과이고 기대 키 목록에 `recipientsRedacted`를 더했다(assertion을 지우거나 약화하지 않았다). 해당 파일만 다시 돌려 22건 통과했다. 그 밖의 기존 테스트 변경은 `retention` 옵션 리터럴에 필수 필드 `recipientSeconds`를 더한 것(`worker/worker.spec.ts`, `worker/worker.integration-spec.ts`, `worker/worker-accounts.integration-spec.ts`)과 기본 설정 기대값에 `recipientRetentionSeconds: 604800`을 더한 것(`config/load-config.spec.ts`)이다. 모두 필수 필드 추가이고 시험 목적은 그대로다. 컨테이너·볼륨·NFS·샘플 스크립트는 실행하지 않았다(해당 영역 변경 없음).
 - 검증 수치(2026-11-24 10단계 묶음 B 종결 때 비움 반영 뒤): `pnpm test` 단위 1018건(50개 파일), `pnpm test:integration` 통합 835건(59개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 새 파일은 `queue/redact-on-terminal.integration-spec.ts`(13건)와 `http/rest-redacted-terminal.integration-spec.ts`(3건)다. 구현 뒤 전체 통합 첫 실행에서 3건이 실패했다: `queue/maintenance.integration-spec.ts` 2건(종결 행을 `sendOne`으로 만들어 본문 삭제를 시험했는데 새 버전의 종결 행은 이미 비어 있다)과 `worker/worker.integration-spec.ts`의 RQ-027 canary 테스트 1건(종결한 작업의 본문 컬럼이 이제 NULL이라 `includes` 호출이 실패했다). 기존 테스트의 변경은 둘이다. (1) maintenance 2건은 본문이 남은 종결 행을 `terminateLikeLegacyVersion`(새 helper, 이전 버전의 종결 UPDATE를 흉내 낸다)으로 만든다. 시험 목적(안전망 `deleteExpiredBodies`가 유예가 지난 행만 비우고 단계 잠금을 건너뛴다)은 그대로이고 한 테스트의 제목에 "이전 버전이 종결한 행"을 더했다. (2) worker canary 테스트는 종결 작업의 본문 컬럼이 NULL임을 확인하고, 평문 부재 검사는 종결 전(재시도 대기) 작업의 암호문으로 옮겼다. assertion을 지우거나 약화하지 않았고 검사를 더했다. 수정 뒤 해당 2개 파일만 다시 돌려 통과했고 마지막에 전체 통합을 한 번 더 돌렸다. 저장소 밖 훅이 worktree의 소스 변경을 구분하지 못해 `FORCE_RETEST=1`을 썼다. 컨테이너·볼륨·NFS·샘플 스크립트는 실행하지 않았다(해당 영역 변경 없음). 리뷰 반영(같은 날) 뒤: 단위 1018건(50개 파일), 통합 842건(59개 파일), 실패 0건, `pnpm format:check`·`pnpm typecheck`·`pnpm lint`·`pnpm build` 통과. 통합은 7건 늘었다(계정 상태 오류·내부 오류 종결 5건, REST canary 1건, worker canary 1건). 취소 경합 테스트에는 assertion만 더했다. 더한 테스트가 실제로 잡는지 `applyOutcome`의 `envelope` 비움을 지워 확인했다(12건 실패, 되돌림).
 - 검증 수치(2026-11-24 9단계 묶음 A 문서 반영 뒤): 코드 변경이 없어 `pnpm test`·`pnpm test:integration`을 실행하지 않았고 앞 줄의 수치(단위 1018건, 통합 819건)가 그대로 유효하다. 실행한 것은 `pnpm format:check` 1회(docs는 oxfmt 대상이 아니라 문서 변경을 검사하지 못한다), 문서 링크·앵커 존재 검사 스크립트, 로컬 compose PostgreSQL 17.11의 임시 schema 측정(`db-maintenance.md` "로컬 측정", 끝난 뒤 그 schema만 삭제)이다.
 - 검증 수치(2026-11-24 9단계 묶음 B 적합성 벡터 반영 뒤): `pnpm test` 단위 1018건(50개 파일, 새 파일 `envelope/conformance-vectors.spec.ts` 128건), `pnpm test:integration` 통합 819건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 기존 테스트 파일은 바꾸지 않았다. 벡터 테스트의 RED는 구현 전 모듈 export 누락(`PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`)으로 스위트가 로드되지 않은 것이다(케이스 단언 실패 RED는 아니다). 변이 확인 2건(`iat` 상한 비교, `KID_UNKNOWN` 매핑)에서 테스트가 케이스 `id`로 실패했고 되돌렸다. 컨테이너·NFS·샘플 스크립트(`scripts/container/`, `verify/run-e2e.sh`, `pnpm test:nfs`)는 실행하지 않았다(해당 영역 변경 없음). 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다.
@@ -104,7 +105,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 | 8단계 | 관측성(ADR-0012). `GET /metrics`(RQ-049), 이름·라벨 규칙(RQ-050), 전역 gauge(RQ-051), 인스턴스 counter·gauge(RQ-052). 마이그레이션 없음 |
 | 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-075 이후를 해당 묶음에서 추가한다(RQ-070~074는 10단계가 쓴다) |
 | 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했고 A 문서(RQ-067~069: 키 사고 대응, DB 유지보수, 레지스트리 변경 반영)를 작성했다(코드 변경 없음, 문서 검토 남음). C Java 샘플 연동(선택, RQ-066)은 구현 전이다 |
-| 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨). 묶음 A 보존 현황 문서(RQ-070, 문서 작성 완료·검토 남음), B 종결 때 비움(RQ-071, 마이그레이션 없음, 구현 완료·미검증 항목 있음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 1개). A·B를 먼저 한다 |
+| 10단계 | 개인정보 최소화와 결과 불명 정책(ADR-0015, 승인됨). 묶음 A 보존 현황 문서(RQ-070, 문서 작성 완료·검토 남음), B 종결 때 비움(RQ-071, 마이그레이션 없음, 구현 완료·미검증 항목 있음), C 이벤트·시도 수신자 비움(RQ-072, 마이그레이션 2개, 구현 완료·미검증 항목 있음), D 결과 불명 opt-in(RQ-073·074, 마이그레이션 1개). A·B를 먼저 한다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -612,6 +613,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 - `SENT`는 SMTP 서버가 메일을 수락했다는 의미로 쓴다.
 - `SENT`는 수신자 받은편지함 도착을 의미하지 않는다.
 - 일부 수신자만 거부돼도 `SENT`일 수 있다. 거부된 수신자는 `rejectedRecipients`로 상태 조회와 `JOB_SENT` 이벤트에 포함한다.
+- 거부된 수신자의 주소는 이벤트 기록 후 유예(`MAILO_RECIPIENT_RETENTION_SECONDS`, 기본 7일) 뒤 비워진다. 비운 뒤 상태 조회와 이벤트의 `rejectedRecipients`는 빈 배열이다(RQ-072, ADR-0015 결정 3).
 
 **수용 조건:**
 
@@ -633,7 +635,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 - 최종 실패한 작업을 사용처가 인지할 수 있어야 한다.
 - 로그 기록만으로 끝나서는 안 된다.
-- 실패 작업 ID, 수신자, 실패 원인, 시도 횟수를 확인할 수 있어야 한다.
+- 실패 작업 ID, 수신자, 실패 원인, 시도 횟수를 확인할 수 있어야 한다. 수신자는 이벤트 기록 후 유예(기본 7일) 안에서만 이벤트에 있다. 유예 뒤에는 `recipientsRedacted: true`와 빈 목록이다(RQ-072, ADR-0015 결정 3). 호출처는 작업 ID·`Idempotency-Key`로 자기 기록과 맞춘다.
 - 알림 방식은 이벤트 피드 pull이다(ADR-0006). webhook과 실패 파일 쓰기는 제공하지 않는다.
   - `GET /events?after=<cursor>&type=<종류>&limit=<개수>`로 조회한다.
   - 이벤트 종류는 `JOB_SENT`, `JOB_FAILED`, `JOB_EXPIRED`, `JOB_CANCELED`, `INTAKE_REJECTED`다. `JOB_CANCELED`는 RQ-040이 정한다.
@@ -2334,7 +2336,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 ## 18. 개인정보 최소화와 결과 불명 정책
 
-결정은 [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md)이고 구현은 묶음 A(문서) → B(종결 때 비움) → C(이벤트 수신자 비움), D(결과 불명 opt-in) 순서다. D는 B 뒤에 시작하고 C와 D는 서로 독립이다. RQ-070은 묶음 A, RQ-071은 묶음 B, RQ-072는 묶음 C, RQ-073·074는 묶음 D의 범위다. 마이그레이션은 묶음 C(컬럼 하나, 부분 인덱스 하나)와 묶음 D(컬럼 하나)에만 있다. 새 npm 의존성은 없다. 묶음 A(RQ-070)는 문서를 작성했고 묶음 B(RQ-071)를 구현했다. 나머지는 구현 전이다.
+결정은 [ADR-0015](../adr/0015-privacy-minimization-and-uncertain-outcome.md)이고 구현은 묶음 A(문서) → B(종결 때 비움) → C(이벤트 수신자 비움), D(결과 불명 opt-in) 순서다. D는 B 뒤에 시작하고 C와 D는 서로 독립이다. RQ-070은 묶음 A, RQ-071은 묶음 B, RQ-072는 묶음 C, RQ-073·074는 묶음 D의 범위다. 마이그레이션은 묶음 C(컬럼 하나, 부분 인덱스 하나)와 묶음 D(컬럼 하나)에만 있다. 새 npm 의존성은 없다. 묶음 A(RQ-070)는 문서를 작성했고 묶음 B(RQ-071)와 묶음 C(RQ-072)를 구현했다. 나머지는 구현 전이다.
 
 ### RQ-070 개인정보 보존 현황 문서와 호출처 안내
 
@@ -2396,26 +2398,38 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0015는 2026-11-24에 승인됐다.
 
 ### RQ-072 이벤트·시도 수신자의 유예 뒤 비움
 
-- [ ] **진행 상태:** 미착수 (10단계 묶음 C)
+- [ ] **진행 상태:** 진행 중 (10단계 묶음 C, 구현 완료, 롤링 배포·운영 크기 측정·문서 검토 남음)
 
 **요구사항:**
 
-- `MAILO_RECIPIENT_RETENTION_SECONDS`(가칭, 기본 7일, 추정, 60 이상 `MAILO_RECORD_RETENTION_SECONDS` 이하, 기동 때 검사) 뒤에 `JOB_*` 이벤트의 `recipients`·`rejected_recipients`와 그 작업의 `mail_attempts.rejected_recipients`를 비운다. 새 정리 단계 `recipients`가 처리하고 표지는 `mail_events.recipients_redacted_at`이다(ADR-0015 결정 3).
-- 이벤트 응답은 `JOB_*` 종류에 `recipientsRedacted`(불리언)를 항상 낸다. 비우면 `true`이고 수신자·거부 수신자는 빈 목록이다. `Job`에는 새 필드를 더하지 않는다.
-- 이벤트 행은 지우지 않는다. 피드 순서와 공백 감지는 바뀌지 않는다.
-- 마이그레이션: 컬럼 하나와 부분 인덱스 하나(`CREATE INDEX CONCURRENTLY`, 별도 파일).
+- `MAILO_RECIPIENT_RETENTION_SECONDS`(기본 7일, 추정, 60 이상 `MAILO_RECORD_RETENTION_SECONDS` 이하, 기동 때 검사) 뒤에 `JOB_*` 이벤트의 `recipients`·`rejected_recipients`와 그 작업의 `mail_attempts.rejected_recipients`를 비운다. 새 정리 단계 `recipients`(advisory lock 키 5)가 처리하고 표지는 `mail_events.recipients_redacted_at`이다(ADR-0015 결정 3). 이 변수를 주지 않았고 보존 기간이 7일보다 짧으면 기본값을 보존 기간으로 줄인다. 명시한 값은 줄이지 않고 검사한다.
+- 이벤트 응답은 `JOB_*` 종류에 `recipientsRedacted`(불리언)를 항상 낸다. 비우면 `true`이고 수신자·거부 수신자는 빈 목록이다. `Job`에는 새 필드를 더하지 않는다. `Job.rejectedRecipients`는 시도 기록에서 읽으므로 비운 뒤 빈 배열이다.
+- 이벤트 행은 지우지 않는다. `id`·`txid`·`created_at`을 바꾸지 않고 삭제 표지를 쓰지 않으므로 피드 순서와 공백 감지는 바뀌지 않는다.
+- 비움은 한 문장(한 트랜잭션)이고 멱등이다. 이벤트의 작업 행을 `FOR KEY SHARE ... SKIP LOCKED`로 잡아 같은 작업을 지우는 보존 삭제와 교착하지 않는다. 로그에는 건수만 남기고 주소는 남기지 않는다(RQ-027).
+- 마이그레이션: `0017`(컬럼 하나)과 `0018`(부분 인덱스 하나, `CREATE INDEX CONCURRENTLY`, 별도 파일).
 
 **수용 조건:**
 
-- [ ] 유예가 지난 이벤트만 비워지고 지나지 않은 이벤트는 그대로다.
-- [ ] 시도의 `rejected_recipients`가 함께 비워진다.
-- [ ] 비운 이벤트가 같은 cursor 위치로 읽히고 `recipientsRedacted`가 `true`다. 공백 감지가 바뀌지 않는다.
-- [ ] 설정이 보존 기간을 넘으면 기동을 거부한다.
-- [ ] `openapi.yaml`과 호출처 문서가 갱신돼 있다.
+- [x] 유예가 지난 이벤트만 비워지고 지나지 않은 이벤트는 그대로다. `JOB_SENT`·`JOB_FAILED`·`JOB_EXPIRED`·`JOB_CANCELED`가 대상이고 `INTAKE_REJECTED`는 아니다.
+- [x] 시도의 `rejected_recipients`가 함께 비워지고 시도 행의 나머지 열은 그대로다.
+- [x] 비운 이벤트가 같은 `eventId`·순서·cursor로 읽히고 `recipientsRedacted`가 `true`다. 공백 감지가 바뀌지 않는다(`mail_event_purges`를 쓰지 않는다).
+- [x] 다시 실행해도 이미 비운 이벤트를 처리하지 않는다. 배치 크기까지만 처리하고 정리 잠금이 걸려 있으면 0을 돌려준다.
+- [x] 설정이 보존 기간을 넘거나 60 미만이면 기동을 거부한다. 생략하고 보존 기간이 7일보다 짧으면 기본값을 보존 기간으로 줄인다.
+- [x] 마이그레이션 `0017`·`0018`이 적용되고 다시 실행해도 멱등이며, 같은 이름의 `INVALID` 인덱스가 남은 경우 기록하지 않고 인덱스 이름으로 실패한다.
+- [x] 보존 삭제와 동시에 돌려도 교착 없이 끝난다. 작업 행 잠금을 건 작업의 이벤트는 건너뛴다.
+- [x] Worker 정리 루프가 비움을 주기로 실행하고 로그에 수신자 주소가 없다. 비운 뒤 응답·앱 로그·이벤트·시도 기록에 수신자 canary가 없다(RQ-027).
+- [ ] `openapi.yaml`과 호출처 문서가 갱신돼 있다. (문서를 고쳤다. 문서 검토로만 확인했고 자동 검증이 없어 체크하지 않았다.)
+- [ ] 롤링 배포(구·신 인스턴스 혼용)와 롤백, 운영 크기에서의 백필 비용을 확인했다. (실행하지 않았다.)
 
 **판정 근거:**
 
-- 구현 전이다.
+- `queue/redact-event-recipients.integration-spec.ts`(PostgreSQL, 12건): 네 종류 비움과 시도 비움, 유예 경계(경과·1초 이상 남음·최근), `INTAKE_REJECTED` 제외, 멱등(표지 시각 불변), 배치 크기, `id`·`txid`·종류·사유·시각과 시도 나머지 열 불변, 피드의 같은 순서·같은 `nextCursor`·비우기 전 cursor 이어 읽기·`recipientsRedacted`, 삭제 표지 없음과 공백 감지 불변, 정리 잠금 키 5(리터럴로 고정)와 다른 단계 잠금의 비간섭, 작업 행 잠금 건너뛰기, 보존 삭제와 동시 실행(작업 400건, 배치 100건).
+- `db/event-recipients-migration.integration-spec.ts`(PostgreSQL, 9건): `0017` 컬럼(NULL 허용 `timestamptz`, 기본값 없음, 기존 행 값 유지), `0018` 부분 인덱스 정의·유효성·파일 형식(표식, 문장 하나, `IF NOT EXISTS`), 직접 재실행 멱등, 비움 쿼리의 인덱스 사용 가능성, `INVALID` 인덱스 실패와 복구 재실행.
+- `http/rest-recipients-redacted.integration-spec.ts`(실제 앱, 4건), `intake/event-presenter.spec.ts`(9건), `config/load-config.spec.ts`(5건 추가), `worker/worker.spec.ts`(6건 추가), `worker/worker.integration-spec.ts`(주기 실행·로그 canary, 1건 추가).
+- RED 확인(2026-11-24): 구현 전 단위 20건이 실패했고(예: `presentEvent`가 `recipientsRedacted`를 내지 않음, `loadConfig`가 `recipientRetentionSeconds`를 내지 않음) 통합 spec은 `redactEventRecipients` export가 없어 로드에 실패했고 마이그레이션 spec은 `0017`·`0018` 파일이 없어 실패했다. 작업 행 잠금이 있는 테스트의 감도는 잠금 절을 지워 확인했다: 건너뛰기 테스트가 실패했고 동시 실행 테스트는 `deadlock detected`로 3번 모두 실패했다(되돌림).
+- 구현: `queue/maintenance.ts`(`redactEventRecipients`), `worker/worker.ts`(정리 루프), `events/event-store.ts`·`events/types.ts`·`intake/presenters.ts`(응답), `config/load-config.ts`(설정), `migrations/0017_event_recipients_redacted_at.sql`, `0018_event_recipients_redact_idx.sql`.
+- 로컬 측정(2026-11-24, PostgreSQL 17.11, 이벤트·시도 20만 건, 한 번): 201배치 9.3초, 배치 중앙값 37ms, `mail_events` 갱신 HOT 0%, `mail_attempts` 97.8%(`db-maintenance.md` "수신자 비움 측정").
+- 한계: 롤링 배포·롤백을 실행하지 않았다. 운영 크기(수백만 행)·다중 인스턴스에서의 비용과 배포 직후 30일치 백필 소요, `ADD COLUMN`·`CREATE INDEX CONCURRENTLY`의 잠금 대기를 확인하지 않았다. 저장소 밖 호출처가 유예 뒤 빈 수신자와 `recipientsRedacted`를 처리하는지 확인하지 못했다. 비운 값은 복원하지 못한다(백업 복원만 가능).
 
 ### RQ-073 `onUncertainOutcome` 요청 필드와 등록 때 고정
 
