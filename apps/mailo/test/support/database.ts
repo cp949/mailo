@@ -1,6 +1,7 @@
 import pg from "pg";
 
-const DEFAULT_URL = "postgres://mailo:mailo-dev-password@localhost:5432/mailo";
+export const DEFAULT_URL =
+  "postgres://mailo:mailo-dev-password@localhost:5432/mailo";
 
 export interface TestDatabase {
   pool: pg.Pool;

@@ -17,7 +17,11 @@ import {
   runMigrations,
   type MigrationProgress,
 } from "../../src/db/migrator.js";
-import { createTestDatabase, type TestDatabase } from "../support/database.js";
+import {
+  createTestDatabase,
+  DEFAULT_URL,
+  type TestDatabase,
+} from "../support/database.js";
 
 describe("PostgreSQL 통합: 마이그레이션", () => {
   let db: TestDatabase;
@@ -343,9 +347,7 @@ describe("PostgreSQL 통합: 마이그레이션 실행기의 잠금 대기(RQ-02
   /** 다른 연결(다른 `migrate-cli`)이 실행기의 advisory lock을 쥔 상태를 만든다. */
   const holdLock = async () => {
     const client = new pg.Client({
-      connectionString:
-        process.env.MAILO_TEST_DATABASE_URL ||
-        "postgres://mailo:mailo-dev-password@localhost:5432/mailo",
+      connectionString: process.env.MAILO_TEST_DATABASE_URL || DEFAULT_URL,
     });
     // pg_terminate_backend로 끊어도 테스트가 처리되지 않은 error 이벤트로 죽지 않게 한다.
     client.on("error", () => undefined);
