@@ -874,6 +874,7 @@ groups:
 - DB 연결 암호화(`MAILO_DB_SSLMODE`)는 DB가 다른 호스트일 때 쓴다. compose의 `postgres`(같은 네트워크)는 필요하지 않다. 서버 쪽 TLS 설정(`ssl=on`)은 이 저장소 범위 밖이다. 실제 TLS를 켠 PostgreSQL에 접속해 확인하지는 않았고, 옵션 매핑과 핸드셰이크 동작은 로컬 TLS 서버로 단위 테스트했다(`test/config/database-ssl.spec.ts`).
 - 사용처용 DB 계정과 접속 경로를 만들지 않는다. compose는 PostgreSQL을 `127.0.0.1`에만 노출한다(RQ-003).
 - 이벤트 피드는 쓰기 트랜잭션(트랜잭션 ID를 받은 트랜잭션)이 오래 열려 있으면 지연된다. 읽기 전용 트랜잭션(`pg_dump` 포함)은 트랜잭션 ID를 받지 않아 피드를 지연시키지 않았다(2026-11-23 PostgreSQL 17에서 `READ ONLY` 반복 읽기 트랜잭션을 연 채 확인. 실제 `pg_dump`를 실행하지는 않았다). 실제 위험은 열린 채 방치된 쓰기 트랜잭션, 끝나지 않은 prepared transaction이다(`troubleshooting.md`).
+- 테이블 팽창·VACUUM 점검, 보존 삭제가 따라가는지 보는 쿼리, 파티셔닝 검토 조건은 [db-maintenance.md](./db-maintenance.md)다. 읽기 전용 긴 트랜잭션은 이벤트 피드를 막지 않지만 VACUUM이 죽은 행을 지우지 못하게 한다(로컬 측정, 같은 문서).
 - 시각은 DB `now()`를 쓴다. 앱 서버 시계와 DB 시계가 달라도 lease·만료·할당은 DB 기준이다. JWS `iat`와 임시 파일 정리는 Mailo 호스트 시계를 쓴다.
 
 ## 백업과 복구
