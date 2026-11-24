@@ -1,19 +1,45 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import type pg from "pg";
 
 const MIGRATION_FILE = /^(\d{4})_[a-z0-9_]+\.sql$/;
-// 동시에 기동한 인스턴스가 같은 마이그레이션을 겹쳐 적용하지 않게 하는 advisory lock 키
-const ADVISORY_LOCK_KEY = 7_364_221_001;
+/** 동시에 기동한 인스턴스가 같은 마이그레이션을 겹쳐 적용하지 않게 하는 advisory lock 키. */
+export const MIGRATION_ADVISORY_LOCK_KEY = 7_364_221_001;
+/** advisory lock을 얻지 못했을 때 다시 시도하는 간격(ms) 기본값. 추정이며 경쟁 때만 평균 절반만큼 늦어진다. */
+export const DEFAULT_ADVISORY_LOCK_POLL_MS = 250;
+/** 잠금을 기다리는 동안 진행 콜백을 다시 부르는 간격(ms). */
+const PROGRESS_INTERVAL_MS = 10_000;
 
 /** 첫 줄이 이 표식이면 BEGIN 없이 실행한다(`CREATE INDEX CONCURRENTLY` 등 트랜잭션 안에서 못 쓰는 문장용). */
 export const NO_TRANSACTION_MARKER = "-- mailo:no-transaction";
 /** 풀에 `lock_timeout`이 없을 때(0) 마이그레이션 문장에 거는 잠금 대기 상한(ms). 풀에 이미 걸려 있으면 그 값을 쓴다. */
 export const DEFAULT_MIGRATION_LOCK_TIMEOUT_MS = 10_000;
 
+/** 잠금 대기의 진행 상황. 값은 숫자뿐이다(RQ-027). */
+export type MigrationProgress =
+  | { type: "lock_wait"; waitedMillis: number }
+  | { type: "lock_acquired"; waitedMillis: number };
+
 export interface MigrationOptions {
   /** 풀에 `lock_timeout`이 없을 때 쓸 값(ms). 생략하면 `DEFAULT_MIGRATION_LOCK_TIMEOUT_MS`. */
   lockTimeoutMillis?: number;
+  /** advisory lock을 얻지 못했을 때 다시 시도하는 간격(ms). 0보다 큰 유한한 수여야 한다. 생략하면 `DEFAULT_ADVISORY_LOCK_POLL_MS`. */
+  advisoryLockPollMillis?: number;
+  /** advisory lock을 기다리는 시간의 상한(ms). 0 이상이어야 한다. 생략하면 무제한이다(다른 인스턴스의 긴 마이그레이션을 기다리는 것은 정상이다). */
+  advisoryLockWaitMillis?: number;
+  /** 잠금을 기다리는 동안(처음 한 번과 10초마다)과 기다린 뒤 얻었을 때 부른다. 처음에 바로 얻으면 부르지 않는다. */
+  onProgress?: (progress: MigrationProgress) => void;
+}
+
+/** advisory lock 대기 상한(`advisoryLockWaitMillis`)을 넘겼다. 잠금은 얻지 못했으므로 아무것도 적용하지 않았다. */
+export class MigrationLockTimeoutError extends Error {
+  readonly code = "MAILO_MIGRATION_LOCK_TIMEOUT";
+  constructor(readonly waitedMillis: number) {
+    // 접속 정보·SQL을 넣지 않는다(RQ-027). 고정 문구와 경과 시간만 담는다.
+    super(`마이그레이션 잠금 대기 상한을 넘었다(대기 ${waitedMillis}ms)`);
+    this.name = "MigrationLockTimeoutError";
+  }
 }
 
 /**
@@ -122,7 +148,7 @@ function parseMigration(name: string, sql: string): PendingMigration {
 
 /**
  * 현재 schema(`current_schema()`)에 INVALID 인덱스가 있으면 이름을 담아 예외를 던진다.
- * 마이그레이션은 advisory lock으로 직렬화되므로 다른 마이그레이션이 만드는 중인 인덱스와 겹치지 않는다.
+ * 호출하는 쪽은 advisory lock을 쥐고 있어서 같은 실행기를 쓰는 다른 인스턴스가 만드는 중인 인덱스와는 겹치지 않는다.
  * 운영자가 같은 schema에서 수동으로 `CREATE INDEX CONCURRENTLY`를 돌리는 중이면 그 인덱스도 걸린다(보수적으로 실패한다).
  */
 async function assertNoInvalidIndexes(
@@ -152,7 +178,11 @@ async function assertNoInvalidIndexes(
  *   실행 뒤 기록 전에 현재 schema의 INVALID 인덱스를 찾아, 있으면 기록하지 않고 인덱스 이름을 담아 실패한다(fail-closed).
  *   `IF NOT EXISTS`는 같은 이름의 INVALID 인덱스가 있으면 아무것도 하지 않고 성공하기 때문이다(ADR-0009 구현 중 확정).
  * - `lock_timeout`: 풀에 이미 걸려 있으면(`SHOW lock_timeout`이 0이 아님) 그 값을 쓰고, 없으면 `options.lockTimeoutMillis`(기본 10초)를 건다.
- *   인스턴스 사이의 advisory lock 대기에는 걸지 않는다.
+ * - advisory lock: `pg_try_advisory_lock`을 트랜잭션 밖에서 `advisoryLockPollMillis`(기본 250ms)마다 시도한다.
+ *   블로킹 `pg_advisory_lock`을 쓰지 않는 이유는 대기 문장이 쥔 스냅샷을 다른 인스턴스의 `CREATE INDEX CONCURRENTLY`가 기다려
+ *   교착(40P01)하기 때문이다(ADR-0002 구현 중 확정 13). 폴링 사이에는 연결에 트랜잭션도 스냅샷도 없다.
+ *   `lock_timeout`과 무관하다. 상한(`advisoryLockWaitMillis`)을 넘으면 `MigrationLockTimeoutError`이고 아무것도 적용하지 않는다.
+ *   잠금은 얻었을 때만 풀고, 모든 종료 경로에서 `release()` 전에 푼다.
  * 적용 기록은 `schema_migrations`에 남기며, 이미 적용한 파일은 건너뛴다.
  * 적용한 파일의 내용 변경은 감지하지 않는다. 적용된 파일을 고치지 말고 새 파일을 추가한다.
  * @returns 이번 실행에서 적용한 파일명
@@ -170,14 +200,29 @@ export async function runMigrations(
   }
   const lockTimeoutMillis =
     options.lockTimeoutMillis ?? DEFAULT_MIGRATION_LOCK_TIMEOUT_MS;
+  const pollMillis =
+    options.advisoryLockPollMillis ?? DEFAULT_ADVISORY_LOCK_POLL_MS;
+  const waitMillis = options.advisoryLockWaitMillis;
+  if (!(pollMillis > 0 && Number.isFinite(pollMillis)))
+    throw new RangeError(
+      "advisoryLockPollMillis는 0보다 큰 유한한 수여야 한다",
+    );
+  if (waitMillis !== undefined && !(waitMillis >= 0))
+    throw new RangeError("advisoryLockWaitMillis는 0 이상이어야 한다");
 
   const client = await pool.connect();
   const applied: string[] = [];
+  // 잠금을 얻은 뒤에만 true다. 얻지 못한 채 끝나면(상한 초과, 질의 오류, 콜백 예외) 풀지 않는다.
+  let locked = false;
   try {
-    // 다른 인스턴스의 마이그레이션이 끝나기를 기다리는 것은 정상이다. 연결 기본 lock_timeout은 이 대기에 적용하지 않는다.
-    await client.query("SET lock_timeout = 0");
-    await client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
-    await client.query("RESET lock_timeout");
+    const wait = await acquireAdvisoryLock(client, {
+      pollMillis,
+      waitMillis,
+      onProgress: options.onProgress,
+    });
+    locked = true;
+    if (wait !== null)
+      options.onProgress?.({ type: "lock_acquired", waitedMillis: wait });
     await client.query(
       `CREATE TABLE IF NOT EXISTS schema_migrations (
          name text PRIMARY KEY,
@@ -238,10 +283,49 @@ export async function runMigrations(
       applied.push(migration.name);
     }
   } finally {
-    await client
-      .query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY])
-      .catch(() => undefined);
+    if (locked)
+      await client
+        .query("SELECT pg_advisory_unlock($1)", [MIGRATION_ADVISORY_LOCK_KEY])
+        .catch(() => undefined);
     client.release();
   }
   return applied;
+}
+
+/**
+ * advisory lock을 얻을 때까지 폴링한다. 폴링 사이에는 sleep만 하고 연결은 트랜잭션 밖의 idle이다.
+ * 경과 시간은 이 프로세스의 단조 시계다(DB 상태나 작업 시각이 아니라 큐 SQL의 `now()` 규칙 대상이 아니다).
+ * @returns 잠금을 기다렸으면 대기 시간(ms), 처음 시도에 얻었으면 null
+ */
+async function acquireAdvisoryLock(
+  client: pg.PoolClient,
+  settings: {
+    pollMillis: number;
+    waitMillis: number | undefined;
+    onProgress: ((progress: MigrationProgress) => void) | undefined;
+  },
+): Promise<number | null> {
+  const started = performance.now();
+  let failedOnce = false;
+  let nextProgressAt = 0;
+  for (;;) {
+    const { rows } = await client.query<{ got: boolean }>(
+      "SELECT pg_try_advisory_lock($1) AS got",
+      [MIGRATION_ADVISORY_LOCK_KEY],
+    );
+    const waited = Math.floor(performance.now() - started);
+    if (rows[0]!.got) return failedOnce ? waited : null;
+    failedOnce = true;
+    if (waited >= nextProgressAt) {
+      settings.onProgress?.({ type: "lock_wait", waitedMillis: waited });
+      nextProgressAt =
+        (Math.floor(waited / PROGRESS_INTERVAL_MS) + 1) * PROGRESS_INTERVAL_MS;
+    }
+    const remaining =
+      settings.waitMillis === undefined
+        ? Infinity
+        : settings.waitMillis - waited;
+    if (remaining <= 0) throw new MigrationLockTimeoutError(waited);
+    await sleep(Math.min(settings.pollMillis, remaining));
+  }
 }

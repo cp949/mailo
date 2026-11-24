@@ -11,7 +11,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pg from "pg";
-import { runMigrations } from "../../src/db/migrator.js";
+import {
+  MIGRATION_ADVISORY_LOCK_KEY,
+  MigrationLockTimeoutError,
+  runMigrations,
+  type MigrationProgress,
+} from "../../src/db/migrator.js";
 import { createTestDatabase, type TestDatabase } from "../support/database.js";
 
 describe("PostgreSQL 통합: 마이그레이션", () => {
@@ -301,13 +306,17 @@ describe("PostgreSQL 통합: 마이그레이션 실행기의 잠금 대기(RQ-02
       await holder.query("INSERT INTO t VALUES (1)");
 
       const a = settle(runMigrations(db.pool, dir));
-      await waitUntil(
-        db,
-        `SELECT 1 FROM pg_stat_activity
-          WHERE datname = current_database()
-            AND pid <> pg_backend_pid()
-            AND query LIKE '%CREATE INDEX CONCURRENTLY%'
-            AND wait_event_type = 'Lock'`,
+      await waitFor(
+        async () =>
+          (
+            await db.pool.query(
+              `SELECT 1 FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                  AND query LIKE '%CREATE INDEX CONCURRENTLY%'
+                  AND wait_event_type = 'Lock'`,
+            )
+          ).rowCount! > 0,
         "보유자의 CIC가 H를 기다리는 상태",
       );
 
@@ -330,18 +339,115 @@ describe("PostgreSQL 통합: 마이그레이션 실행기의 잠금 대기(RQ-02
       holder.release();
     }
   });
+
+  /** 다른 연결(다른 `migrate-cli`)이 실행기의 advisory lock을 쥔 상태를 만든다. */
+  const holdLock = async () => {
+    const client = new pg.Client({
+      connectionString:
+        process.env.MAILO_TEST_DATABASE_URL ||
+        "postgres://mailo:mailo-dev-password@localhost:5432/mailo",
+    });
+    // pg_terminate_backend로 끊어도 테스트가 처리되지 않은 error 이벤트로 죽지 않게 한다.
+    client.on("error", () => undefined);
+    await client.connect();
+    await client.query("SELECT pg_advisory_lock($1)", [
+      MIGRATION_ADVISORY_LOCK_KEY,
+    ]);
+    return client;
+  };
+
+  it("대기 상한을 넘으면 MigrationLockTimeoutError로 끝나고 아무것도 적용하지 않으며, 보유자가 풀리면 같은 호출이 성공한다", async () => {
+    const holder = await holdLock();
+    try {
+      const progress: MigrationProgress[] = [];
+      const started = performance.now();
+      const error: unknown = await runMigrations(db.pool, dir, {
+        advisoryLockPollMillis: 50,
+        advisoryLockWaitMillis: 600,
+        onProgress: (p) => progress.push(p),
+      }).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      const elapsed = performance.now() - started;
+
+      expect(error).toBeInstanceOf(MigrationLockTimeoutError);
+      const timeout = error as MigrationLockTimeoutError;
+      expect(timeout.name).toBe("MigrationLockTimeoutError");
+      expect(timeout.code).toBe("MAILO_MIGRATION_LOCK_TIMEOUT");
+      // 메시지는 고정 문구와 경과 시간뿐이다(RQ-027).
+      expect(timeout.message).toBe(
+        `마이그레이션 잠금 대기 상한을 넘었다(대기 ${timeout.waitedMillis}ms)`,
+      );
+      expect(timeout.waitedMillis).toBeGreaterThanOrEqual(600);
+      expect(elapsed).toBeGreaterThanOrEqual(600);
+      expect(elapsed).toBeLessThan(5000);
+      expect(progress.length).toBeGreaterThan(0);
+      expect(progress.every((p) => p.type === "lock_wait")).toBe(true);
+      // 잠금을 얻지 못했으므로 이력 테이블도 만들지 않고 파일도 적용하지 않는다.
+      expect(
+        (
+          await db.pool.query<{ t: string | null }>(
+            "SELECT to_regclass('schema_migrations')::text AS t",
+          )
+        ).rows[0]!.t,
+      ).toBeNull();
+      expect(await indexValid("t_id_idx")).toBeUndefined();
+
+      // 보유자가 풀기 전에 시작한 호출은 기다리다가 풀린 뒤 얻어 적용한다.
+      const waiting: MigrationProgress[] = [];
+      const run = settle(
+        runMigrations(db.pool, dir, {
+          advisoryLockPollMillis: 50,
+          onProgress: (p) => waiting.push(p),
+        }),
+      );
+      await waitFor(() => waiting.length > 0, "대기자가 잠금을 기다리는 상태");
+      await holder.query("SELECT pg_advisory_unlock($1)", [
+        MIGRATION_ADVISORY_LOCK_KEY,
+      ]);
+
+      expect(await run).toEqual({ applied: ["0001_idx.sql"] });
+      expect(waiting.at(-1)).toMatchObject({ type: "lock_acquired" });
+      expect(await indexValid("t_id_idx")).toBe(true);
+    } finally {
+      await holder.end().catch(() => undefined);
+    }
+  });
+
+  it("보유자 세션이 비정상 종료하면 폴링하던 대기자가 잠금을 얻어 적용한다", async () => {
+    const holder = await holdLock();
+    try {
+      const pid = (
+        await holder.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+      ).rows[0]!.pid;
+      const progress: MigrationProgress[] = [];
+      const run = settle(
+        runMigrations(db.pool, dir, {
+          advisoryLockPollMillis: 50,
+          onProgress: (p) => progress.push(p),
+        }),
+      );
+      await waitFor(() => progress.length > 0, "대기자가 잠금을 기다리는 상태");
+      await db.pool.query("SELECT pg_terminate_backend($1)", [pid]);
+
+      expect(await run).toEqual({ applied: ["0001_idx.sql"] });
+      expect(progress.at(-1)).toMatchObject({ type: "lock_acquired" });
+    } finally {
+      await holder.end().catch(() => undefined);
+    }
+  });
 });
 
-/** 조회가 한 행 이상 나올 때까지 폴링한다(상한 10초). 실패 메시지에 기다린 상태를 담는다. */
-async function waitUntil(
-  db: TestDatabase,
-  sql: string,
+/** 조건이 참이 될 때까지 폴링한다(상한 10초). 실패 메시지에 기다린 상태를 담는다. */
+async function waitFor(
+  check: () => boolean | Promise<boolean>,
   what: string,
 ): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if ((await db.pool.query(sql)).rowCount) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`10초 안에 ${what}가 되지 않았다`);
 }
