@@ -42,6 +42,13 @@ describe("isUncertainOutcome: 불명 판정 단일 정의(RQ-048·074, ADR-0015 
       { classification: "TRANSIENT", internal: true, stage: "WORKER" },
       false,
     ],
+    // 내부 오류는 항상 stage가 WORKER라 실제로는 나오지 않는 모양이다. TS 함수의 방어 조건을 고정한다.
+    // 읽기 SQL은 `internal`을 볼 수 없어 이 전제에 기댄다(`UNCERTAIN_ATTEMPT_SQL`의 주석).
+    [
+      "internal이지만 stage가 DATA인 TRANSIENT(방어 조건)",
+      { classification: "TRANSIENT", internal: true, stage: "DATA" },
+      false,
+    ],
     [
       "계정 상태 오류",
       {
@@ -53,7 +60,7 @@ describe("isUncertainOutcome: 불명 판정 단일 정의(RQ-048·074, ADR-0015 
       false,
     ],
     ["SENT", { classification: "SENT", stage: "DATA" }, false],
-  ])("%s는 %s", (_name, outcome, expected) => {
+  ])("불명 판정: %s", (_name, outcome, expected) => {
     expect(isUncertainOutcome(outcome)).toBe(expected);
   });
 });

@@ -28,6 +28,8 @@ export const OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN";
  * - `LEASE_EXPIRED`: lease 만료 회수는 전송 결과를 모른다. 점유 직후 프로세스가 죽어 전송 전이었던 경우도 포함한다.
  * - DATA 단계에서 응답 없이 끝난 `TRANSIENT`: 타임아웃·연결 끊김이라 서버가 수락했을 수 있다(ADR-0007 결정 3).
  * 응답 코드가 있는 실패, DATA 이전 단계, Mailo 내부 오류(`WORKER`)는 포함하지 않는다.
+ * 이 SQL은 `internal` 여부를 검사하지 않는다. `mail_attempts`에 그 열이 없고, 내부 오류는 항상 `stage = 'WORKER'`로 기록되는 것(`worker`의 `internalFailure`)에 기댄다.
+ * `isUncertainOutcome`은 `internal`을 따로 검사하지만 이 전제가 지켜지면 두 쪽의 결과가 같다.
  * 새 컬럼 없이 기존 컬럼에서 도출하므로 읽기 쪽(`outcomeUncertain`)에 마이그레이션이 필요 없다.
  */
 export const UNCERTAIN_ATTEMPT_SQL = `(a.classification = 'LEASE_EXPIRED'

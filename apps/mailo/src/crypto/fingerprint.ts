@@ -20,6 +20,7 @@
  *   지문 범위에서 빠지지 않게 한다. 기본값인 요청은 키를 넣지 않는다. 그래야 필드 도입 전 지문과 같다.
  *   - `priority`: 우선순위 등급 이름. `NORMAL`(생략 포함)이면 키가 없다(RQ-034, `envelope/open-request.ts`).
  *   - `ttlSeconds`: 요청 만료 TTL 정수. 생략하면 키가 없다. 기본 TTL과 같은 값을 명시해도 넣는다(RQ-039, ADR-0010).
+ *   - `onUncertainOutcome`: `retry`·`fail` 문자열. 생략하면 키가 없다. `retry`를 명시해도 넣는다(RQ-073, ADR-0015 결정 6).
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { KeyRing } from "./key-ring.js";
