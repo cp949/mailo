@@ -180,7 +180,7 @@ export function parseEnvelopeKeys(
     else if (strict && isPublicSampleJweKey(privateKey))
       // 위치만 적는다. 변수 이름·kid·키 값은 담지 않는다(RQ-027).
       reader.issue(
-        `${where}: 저장소에 공개된 샘플 JWE 키라 production에서 쓸 수 없다(scripts/gen-dev-keys.mjs로 새로 만든다)`,
+        `${where}: 저장소에 공개된 샘플 JWE 키라 production에서 쓸 수 없다(openssl genpkey로 새 키 쌍을 만든다)`,
       );
     else if (kidOk) entries.push({ kid: kid as string, privateKey, retiredAt });
   });

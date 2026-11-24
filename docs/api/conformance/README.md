@@ -53,6 +53,8 @@
 | `errors` | REST 거부일 때. 400 응답의 `errors[{pointer, code}]`. `pointer`가 빈 문자열이면 본문 전체다 |
 | `internalReason` | 거부일 때 참고용. 서버 내부 사유 코드 11종 중 하나 |
 
+REST 케이스의 `errors`는 본문 판정만이고 `Idempotency-Key` 헤더는 유효하다고 가정한다. 실제 400 응답은 헤더 오류와 합쳐진다.
+
 내부 사유 코드는 파일 채널에서 두 가지가 합쳐진다. `SIGNATURE_REQUIRED`는 `SIGNATURE_INVALID`로, `KID_UNKNOWN`은 `DECRYPTION_FAILED`로 보인다. REST는 암호 관련 실패를 모두 `/content` 위치로 알린다.
 
 ## 읽는 방법

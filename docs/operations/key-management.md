@@ -269,4 +269,4 @@ umask 077; openssl rand -base64 32 > mailo_jws_billing_2026_12
 - 다중 인스턴스에서 키 버전이 어긋났을 때의 동작(위 3단계 이유)은 코드 읽기 결과다.
 - nimbus-jose-jwt 10.10은 JWE(`RSA-OAEP-256`+`A256GCM`)와 JWS(`HS256`, flattened)를 한 조합씩 확인했다(`samples/spring-boot-relay/README.md`). 다른 버전·알고리즘, 키 교체 중 이전 `kid`로 암호화한 요청은 확인하지 않았다.
 - 유출 대응 절차를 정하지 않았다.
-- 적합성 벡터의 JWE 개인키·JWS 비밀키로 production 환경에서 Mailo를 실제로 기동해 거부되는지는 실행하지 않았다. 단위 테스트(`test/envelope/conformance-vectors.spec.ts`)가 설정 로더(`parseEnvelopeKeys`, `parseCallerRegistry`)까지 확인한다.
+- 적합성 벡터의 JWE 개인키·JWS 비밀키로 production 환경에서 Mailo를 실제로 기동해 거부되는지는 실행하지 않았다. 거부는 `createApp` 안(listen 전)에서 JWE 개인키는 `ENVELOPE_DEPS` DI 팩토리가, JWS 비밀키는 호출처 레지스트리 로더가 던지는 오류다(코드 읽기와 임시 시험). 단위 테스트(`test/envelope/conformance-vectors.spec.ts`)는 `parseEnvelopeKeys`·`parseCallerRegistry`까지 확인하고 `createApp` 수준 테스트는 없다.

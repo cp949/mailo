@@ -27,7 +27,7 @@ compose 구성, 환경 변수, 시크릿 주입, 마이그레이션, 헬스, 종
 
 - `mailo`는 `.env`를 `env_file`로 읽는다. `.env`가 없으면 compose가 실패한다. `.env.example`을 복사해 만든다(`docker compose up -d postgres`만 실행할 때도 같다).
 - `POSTGRES_PASSWORD`에는 compose 기본값이 없다. `.env`나 환경에 없으면 `docker compose`가 변수 이름을 알리고 중단한다(`${POSTGRES_PASSWORD:?...}`). 공개 기본 비밀번호가 운영에 남는 것을 막기 위해서다. 영향: `scripts/container/`는 `POSTGRES_PASSWORD`를 환경으로 주므로 그대로 동작한다. CI의 `integration`·`nfs` 잡은 compose가 아니라 서비스 컨테이너를 쓰므로 영향이 없다(`ci.md`).
-- `NODE_ENV`는 `.env.example`에서 주석 처리돼 있어 복사한 `.env`로는 compose 기본값 `production`이 된다. production은 `.env.example`에 공개된 샘플 키(DB 본문 키·지문 키)와 샘플 DB 비밀번호(`mailo-dev-password`)를 거부하므로 새 값을 만들어 넣어야 기동한다(`key-management.md`). 공개 샘플 값으로 로컬 시험만 할 때는 `.env`에 `NODE_ENV=development`를 준다.
+- `NODE_ENV`는 `.env.example`에서 주석 처리돼 있어 복사한 `.env`로는 compose 기본값 `production`이 된다. production은 `.env.example`에 공개된 샘플 키(DB 본문 키·지문 키), 적합성 벡터의 공개 가짜 키(호출처 JWS 비밀키·Mailo JWE 개인키)와 샘플 DB 비밀번호(`mailo-dev-password`)를 거부하므로 새 값을 만들어 넣어야 기동한다(`key-management.md`). 공개 샘플 값으로 로컬 시험만 할 때는 `.env`에 `NODE_ENV=development`를 준다.
 - 앱은 `NODE_ENV`가 없거나 `development`·`test`가 아니면 production과 같은 검사를 한다(fail closed). 호스트에서 `pnpm --filter @cp949/mailo start`로 실행할 때도 공개 샘플 값을 쓰려면 `NODE_ENV=development`를 명시해야 한다. `NODE_ENV`를 필수 변수로 만들지는 않았다. 값이 없어도 기동은 되고(검사만 엄격해진다) 로컬 개발의 변수 부담을 늘리지 않기 위해서다.
 - HTTP 포트는 기본 `127.0.0.1`에만 연다. TLS 프록시가 다른 호스트에 있거나 같은 호스트의 다른 인터페이스로 접근해야 하면 `.env`에 `MAILO_PUBLISH_HOST`(예: `0.0.0.0`, 인터페이스 주소)를 준다. Mailo는 TLS를 종단하지 않으므로 `0.0.0.0`으로 열 때는 프록시나 방화벽으로 접근을 제한한다.
 - compose의 `environment`가 `.env`보다 우선한다. 컨테이너에서 `NODE_ENV`(기본 `production`), `MAILO_PORT=3000`, `MAILO_DB_*`(아래), `MAILO_CALLERS_FILE=/run/mailo/callers.json`은 compose 값이 쓰인다.

@@ -84,8 +84,8 @@
 | RQ-061 | 계정 정지·해제 REST와 CLI | 진행 중 | 롤링 배포 중 구버전의 계정 정지 미적용(코드 읽기), 읽기 전용 컨테이너에서 새 CLI 명령 실행 |
 | RQ-062 | `/metrics`의 계정 라벨과 계정 지표 | 진행 중 | 실제 Prometheus의 알림 평가, 계정 20개 규모의 시리즈 수·스크레이프 쿼리 비용 |
 | RQ-063 | `/health/ready`의 계정 표면 | 진행 중 | 저장소 밖 호출처의 새 `scope` 값·`circuitBreaker` 의미 처리, 롤링 배포 중 구·신 의미 혼용 |
-| RQ-064 | 프로토콜 적합성 벡터와 서버 고정 | 진행 중 | 호출처 라이브러리(nimbus 등)와의 상호 운용(RQ-066), `docs/api/README.md`·`openapi.yaml` 링크는 문서 검토만 |
-| RQ-065 | 벡터 키의 production 거부 | 진행 중 | 벡터 키로 컨테이너·`main.ts` 실제 기동 거부(설정 로더까지만 단위 테스트), push protection 확인, `key-management.md` 설명은 문서 검토만 |
+| RQ-064 | 프로토콜 적합성 벡터와 서버 고정 | 진행 중 | 호출처 라이브러리(nimbus 등)와의 상호 운용(RQ-066), 변이 확인은 수동, `docs/api/README.md`·`openapi.yaml` 링크는 문서 검토만 |
+| RQ-065 | 벡터 키의 production 거부 | 진행 중 | 벡터 키로 컨테이너·`main.ts` 실제 기동 거부(`createApp` DI 팩토리 시점. 단위 테스트는 `parseEnvelopeKeys`·`parseCallerRegistry`까지), push protection 확인, `key-management.md` 설명은 문서 검토만 |
 | RQ-066 | Java 샘플의 벡터 연동(선택) | 미착수 | 9단계 묶음 C. 구현 전 |
 | RQ-067 | 키 분실·유출 대응 절차 | 미착수 | 9단계 묶음 A. 구현 전 |
 | RQ-068 | DB 유지보수 안내 | 미착수 | 9단계 묶음 A. 구현 전 |

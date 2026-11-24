@@ -327,9 +327,10 @@
 5. **테스트 위치.** 결정 5와 검증 계획은 `key-file.spec.ts`·`signature-keys.spec.ts`를 따로 적었다. 벡터 파일을 읽는 테스트를 한 곳에 두려고 `test/envelope/conformance-vectors.spec.ts` 한 파일이 벡터 키 거부를 확인한다. JWE 개인키는 `parseEnvelopeKeys`, JWS 비밀키는 `parseCallerRegistry`로 확인하고 production(`NODE_ENV` 없음 포함)에서 거부, `development`·`test`에서 허용, 오류에 키 값·`kid`가 없음을 본다. DB 본문 키·지문 키 로더(`loadKeyRing`)는 같은 `isPublicOrWeakKey`를 쓰지만 벡터 키를 그 로더에 넣는 테스트는 없다(코드 읽기).
 6. **오류 메시지.** `envelope keys[<i>]: 저장소에 공개된 샘플 JWE 키라 production에서 쓸 수 없다(...)`다. 변수 이름·`kid`·키 값은 담지 않는다.
 7. **README 목록.** `docs/api/conformance/README.md`의 케이스 표는 생성 스크립트가 아니라 사람이 옮긴다. 단위 테스트가 모든 케이스 `id`가 표에 있음을 확인한다.
-8. **변이 확인(2026-11-24).** 서버 판정 규칙을 일부러 바꿔 테스트가 실패하는지 두 번 확인하고 되돌렸다.
+8. **RED와 변이 확인(2026-11-24).** 구현 전 RED는 모듈 export 누락과 벡터 파일 없음으로 스위트가 로드되지 않은 것이다. 케이스 단언이 실패하는 RED는 확인하지 않았다. 대신 구현 뒤 서버 판정 규칙을 일부러 바꿔 테스트가 실패하는지 두 번 수동으로 확인하고 되돌렸다.
    - `openJws`의 `iat` 상한 비교 `>`를 `>=`로 바꿨다: `file-jws-accepted-iat-max-age`가 `IAT_OUT_OF_RANGE`로 실패했다.
    - `toRejectionReason`의 `KID_UNKNOWN` 매핑(`DECRYPTION_FAILED`)을 바꿨다: `file-jws-jwe-kid-unknown`과 "reasonCode 9종" 테스트가 실패했다.
 9. **독립 확인(수동, 2026-11-24).** `file-jws-accepted-plain`(`alpha-1`)과 `file-jws-accepted-rotated-kid`(`alpha-2`)의 `signingInput`을 `openssl dgst -sha256 -hmac`으로 계산한 값이 `signature`와 같았다. 단위 테스트도 같은 계산을 `node:crypto`로 모든 서명 케이스에 한다.
 10. **생성 스크립트.** 처음에는 `--new-keys`로 JWE 키를 만들었고 이후 기본 경로(기존 키 재사용)로 다시 만들어 공개키 해시가 `PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`와 같음을 확인했다.
-11. **검증하지 않은 것(묶음 B).** GitHub push protection이 저장소의 개인키 PEM을 막는지(push 때 확인한다), 벡터 키로 컨테이너·`main.ts`를 실제로 기동해 거부되는지(단위 테스트는 설정 로더까지 본다), JWE 쪽의 독립 구현 확인(묶음 C), 호출처가 쓰는 라이브러리와의 상호 운용.
+11. **검증하지 않은 것(묶음 B).** GitHub push protection이 저장소의 개인키 PEM을 막는지(push 때 확인한다), 벡터 키로 컨테이너·`main.ts`를 실제로 기동해 거부되는지(거부 시점은 `createApp` 안 DI 팩토리이고 `loadConfig`가 아니다. 코드 읽기와 임시 시험으로 `ConfigError`가 `createApp` reject로 오는 것은 확인했다. 단위 테스트는 `parseEnvelopeKeys`·`parseCallerRegistry`까지 본다), JWE 쪽의 독립 구현 확인(묶음 C), 호출처가 쓰는 라이브러리와의 상호 운용.
+12. **push protection 대응.** push 때 GitHub가 벡터의 개인키 PEM을 막으면 그 결과를 이 절에 기록한다. 막히면 `.github/secret_scanning.yml`의 `paths-ignore`에 `docs/api/conformance/vectors.json`을 두거나 push protection의 허용 절차와 이 폴더 `README.md`의 공개 가짜 키 안내로 대응한다. 대응 방식은 push 결과를 보고 정한다. 아직 확인하지 않았다.
