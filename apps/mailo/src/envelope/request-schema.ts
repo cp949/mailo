@@ -11,12 +11,20 @@
  * - `ttlSeconds`는 선택 필드이고 `MIN_TTL_SECONDS` 이상 `ttl.maxSeconds`(`MAILO_JOB_EXPIRY_MAX_SECONDS`) 이하 정수만 받는다(RQ-039).
  *   생략하면 null이고 큐 등록이 기본 만료 TTL을 쓴다. 위치는 `priority`와 같은 최상위 평문 필드다.
  *   정수가 아닌 값은 `INVALID_FORMAT`, 범위 밖 정수는 `OUT_OF_RANGE`다. JSON `60.0`은 파싱 뒤 60이라 정수로 받는다.
+ * - `onUncertainOutcome`은 선택 필드이고 `retry`·`fail`만 받는다(대소문자 구분). 생략하면 null이고 큐 등록이 `retry`로 고정한다(RQ-073, ADR-0015 결정 6).
+ *   위치는 `priority`와 같은 최상위 평문 필드다. 그 밖의 값은 `INVALID_FORMAT`이다.
  * - 오류는 위치(JSON Pointer)와 고정 코드만 담는다. 요청 값은 담지 않는다(RQ-027).
  *
  * 암호화 모드(`content`)는 여기서 수신자·발신자 규칙까지만 본다. 제목·본문은 복호화한 뒤에 검증한다(ADR-0008 결정 3).
  * 그래서 성공 결과의 `outer`는 암호화 모드에서 제목·본문이 자리표시자다. 그대로 쓰지 않는다.
  */
-import { DEFAULT_PRIORITY, isPriority, type Priority } from "../queue/index.js";
+import {
+  DEFAULT_PRIORITY,
+  isOnUncertain,
+  isPriority,
+  type OnUncertain,
+  type Priority,
+} from "../queue/index.js";
 import {
   validateIdempotencyKey,
   validateMailRequest,
@@ -41,6 +49,7 @@ const COMMON_FIELDS = [
   "content",
   "priority",
   "ttlSeconds",
+  "onUncertainOutcome",
 ] as const;
 const FILE_ONLY_FIELDS = ["version", "idempotencyKey"] as const;
 const PLAIN_CONTENT_FIELDS = ["subject", "text", "html"] as const;
@@ -78,6 +87,8 @@ export type RequestSchemaParse =
       priority: Priority;
       /** 요청한 만료 TTL 초. 생략하면 null이다(RQ-039). */
       ttlSeconds: number | null;
+      /** 요청한 결과 불명 처리. 생략하면 null이다(RQ-073). */
+      onUncertainOutcome: OnUncertain | null;
     }
   | { ok: false; reason: SchemaFailureReason; errors: ValidationErrorItem[] };
 
@@ -198,6 +209,13 @@ export function parseRequestSchema(
     report("/ttlSeconds", "INVALID_FORMAT");
   }
 
+  // null은 위 반복문이 이미 INVALID_FORMAT으로 보고했다. 오류에 값을 넣지 않는다(RQ-027).
+  const rawOnUncertain = body["onUncertainOutcome"];
+  let onUncertainOutcome: OnUncertain | null = null;
+  if (isOnUncertain(rawOnUncertain)) onUncertainOutcome = rawOnUncertain;
+  else if (rawOnUncertain !== undefined && rawOnUncertain !== null)
+    report("/onUncertainOutcome", "INVALID_FORMAT");
+
   const content = body["content"];
   const hasContent = content !== undefined;
   const plainPresent = PLAIN_CONTENT_FIELDS.some((f) => body[f] !== undefined);
@@ -223,6 +241,7 @@ export function parseRequestSchema(
   delete candidate["idempotencyKey"];
   delete candidate["priority"];
   delete candidate["ttlSeconds"];
+  delete candidate["onUncertainOutcome"];
   for (const [name, value] of Object.entries(candidate))
     if (value === null) delete candidate[name];
   if (subjectless) {
@@ -258,5 +277,6 @@ export function parseRequestSchema(
     idempotencyKey,
     priority,
     ttlSeconds,
+    onUncertainOutcome,
   };
 }

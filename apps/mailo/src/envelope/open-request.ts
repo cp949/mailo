@@ -3,7 +3,7 @@
  *
  * 순서(바꾸지 않는다)
  * 1. JWS 구조 파싱 2. 서명 검증(`caller`·`iat` 포함) 3. payload 파싱·스키마 검증 4. 복호화
- * 5. 복호화한 제목·본문 입력 검증(RQ-030) 6. 지문 계산(ADR-0005). 우선순위(RQ-034)와 만료 TTL(RQ-039)은 지문의 `policy`에 넣는다.
+ * 5. 복호화한 제목·본문 입력 검증(RQ-030) 6. 지문 계산(ADR-0005). 우선순위(RQ-034), 만료 TTL(RQ-039), 결과 불명 처리(RQ-073)는 지문의 `policy`에 넣는다.
  * 서명을 복호화보다 먼저 검증한다. 위조 파일의 복호화를 시도하지 않는다.
  * 제목이 암호화돼 있으면 CR/LF 검사를 복호화 전에 할 수 없으므로 5단계에서 한다.
  *
@@ -20,7 +20,11 @@ import {
   type PolicyValue,
   type QueueFingerprinter,
 } from "../crypto/index.js";
-import { DEFAULT_PRIORITY, type Priority } from "../queue/index.js";
+import {
+  DEFAULT_PRIORITY,
+  type OnUncertain,
+  type Priority,
+} from "../queue/index.js";
 import {
   validateMailRequest,
   type MailRequestLimits,
@@ -74,6 +78,8 @@ export interface OpenRequestSuccess {
   priority: Priority;
   /** 요청한 만료 TTL 초(RQ-039). 생략하면 null이고 등록이 기본 만료 TTL을 쓴다. 지정했으면 지문에 들어 있다. */
   ttlSeconds: number | null;
+  /** 요청한 결과 불명 처리(RQ-073). 생략하면 null이고 등록이 `retry`로 고정한다. 지정했으면 지문에 들어 있다. */
+  onUncertainOutcome: OnUncertain | null;
   fingerprint: {
     /** 정규화한 평문 요청. `queue.register`의 `canonicalRequest`로 그대로 넘긴다. 평문을 포함하므로 로그에 남기지 않는다. */
     canonicalRequest: string;
@@ -105,13 +111,18 @@ const CONTENT_FIELDS = new Set([
  * - `priority`(RQ-034): `NORMAL`(생략 포함)은 키가 없다. 그 밖의 등급은 등급 이름이다. DB 순위 숫자는 넣지 않는다.
  * - `ttlSeconds`(RQ-039, ADR-0010): 생략하면 키가 없다. 지정하면 요청 값(정수)이다.
  *   기본 만료 TTL과 같은 값을 명시해도 넣는다. 생략 요청의 만료는 운영 설정에 따라 바뀌므로 같은 요청으로 보지 않는다.
+ * - `onUncertainOutcome`(RQ-073, ADR-0015 결정 6): 생략하면 키가 없다. 지정하면 `retry`·`fail` 문자열이다.
+ *   `retry`를 명시해도 넣는다. 생략과 같은 동작이어도 다른 요청으로 본다(기본값을 명시한 `ttlSeconds`와 같은 방식이다).
+ *   형식 태그(`mailo-fp-v1`)는 올리지 않는다. 생략한 요청의 정규화 문자열은 도입 전과 같다.
  * 키 순서는 `canonicalizeFingerprintInput`이 이름 순으로 정렬한다.
  */
 function requestPolicy(
   priority: Priority,
   ttlSeconds: number | null,
+  onUncertainOutcome: OnUncertain | null,
 ): Readonly<Record<string, PolicyValue>> {
   return {
+    ...(onUncertainOutcome !== null && { onUncertainOutcome }),
     ...(priority !== DEFAULT_PRIORITY && { priority }),
     ...(ttlSeconds !== null && { ttlSeconds }),
   };
@@ -194,7 +205,11 @@ export async function openRequest(
   // 6. 지문 계산
   const canonicalRequest = canonicalizeFingerprintInput({
     ...request,
-    policy: requestPolicy(schema.priority, schema.ttlSeconds),
+    policy: requestPolicy(
+      schema.priority,
+      schema.ttlSeconds,
+      schema.onUncertainOutcome,
+    ),
   });
   const { digest, keyVersion } =
     ctx.fingerprinter.fingerprint(canonicalRequest);
@@ -204,6 +219,7 @@ export async function openRequest(
     idempotencyKey: schema.idempotencyKey,
     priority: schema.priority,
     ttlSeconds: schema.ttlSeconds,
+    onUncertainOutcome: schema.onUncertainOutcome,
     fingerprint: { canonicalRequest, digest, keyVersion },
     signed,
     encrypted,

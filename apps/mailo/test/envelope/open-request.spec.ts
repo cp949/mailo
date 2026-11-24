@@ -1253,3 +1253,216 @@ describe("openRequest: 요청별 만료 시간 (RQ-039, ADR-0010)", () => {
     );
   });
 });
+
+// 결과 불명 처리 정책(RQ-073, ADR-0015 결정 6). 정규화 문자열은 리터럴로 둔다.
+// 정규화 규칙이 바뀌면 도입 전 지문과 달라지므로 이 테스트가 실패해 호환성 파괴를 드러내게 하려는 것이다.
+describe("openRequest: 결과 불명 처리 정책 (RQ-073, ADR-0015 결정 6)", () => {
+  const rest = (extra: Record<string, unknown> = {}): OpenRequestInput => ({
+    kind: "rest",
+    body: { ...MAIL, ...extra },
+  });
+  const opened = async (input: OpenRequestInput) => {
+    const result = await openRequest(input, makeCtx());
+    if (!result.ok) throw new Error(`성공해야 한다: ${result.reason}`);
+    return result;
+  };
+  const hex = (digest: Uint8Array) => Buffer.from(digest).toString("hex");
+  const policyOf = (canonicalRequest: string): unknown =>
+    JSON.parse(canonicalRequest).at(-1);
+  const GOLDEN_DIGEST =
+    "e3bc91ec3b45a14ca49bb3f12fc6bea7091ccf7069683d0e636f899da732297f";
+
+  it("생략하면 null이고 정규화 문자열과 지문이 도입 전 골든 값과 같다", async () => {
+    const omitted = await opened(rest());
+
+    expect(omitted.onUncertainOutcome).toBeNull();
+    expect(omitted.fingerprint.canonicalRequest).toBe(
+      '["mailo-fp-v1","no-reply@example.com",null,["kim@example.com"],[],[],"주문 접수 안내","주문이 접수되었습니다.",null,[]]',
+    );
+    expect(hex(omitted.fingerprint.digest)).toBe(GOLDEN_DIGEST);
+  });
+
+  it.each(["retry", "fail"] as const)(
+    "%s를 명시하면 policy.onUncertainOutcome에 값이 들어가 생략과 다른 지문이다",
+    async (value) => {
+      const omitted = await opened(rest());
+      const explicit = await opened(rest({ onUncertainOutcome: value }));
+
+      expect(explicit.onUncertainOutcome).toBe(value);
+      expect(policyOf(explicit.fingerprint.canonicalRequest)).toEqual([
+        ["onUncertainOutcome", value],
+      ]);
+      // 생략과 `retry` 명시는 같은 동작이어도 다른 요청이다(ADR-0015 결정 6).
+      expect(hex(explicit.fingerprint.digest)).not.toBe(
+        hex(omitted.fingerprint.digest),
+      );
+    },
+  );
+
+  it("retry와 fail은 서로 다른 지문이다", async () => {
+    const retry = await opened(rest({ onUncertainOutcome: "retry" }));
+    const fail = await opened(rest({ onUncertainOutcome: "fail" }));
+    expect(hex(retry.fingerprint.digest)).not.toBe(
+      hex(fail.fingerprint.digest),
+    );
+  });
+
+  it("priority·ttlSeconds와 함께 쓰면 policy 키를 이름 순서로 정규화하고 요청의 필드 순서와 무관하다", async () => {
+    const first = await opened(
+      rest({
+        ttlSeconds: 3600,
+        priority: "URGENT",
+        onUncertainOutcome: "fail",
+      }),
+    );
+    const second = await opened(
+      rest({
+        onUncertainOutcome: "fail",
+        priority: "URGENT",
+        ttlSeconds: 3600,
+      }),
+    );
+
+    expect(first.fingerprint.canonicalRequest).toBe(
+      '["mailo-fp-v1","no-reply@example.com",null,["kim@example.com"],[],[],"주문 접수 안내","주문이 접수되었습니다.",null,[["onUncertainOutcome","fail"],["priority","URGENT"],["ttlSeconds",3600]]]',
+    );
+    expect(second.fingerprint.canonicalRequest).toBe(
+      first.fingerprint.canonicalRequest,
+    );
+  });
+
+  it.each([
+    ["null", null],
+    ["숫자", 1],
+    ["boolean", true],
+    ["빈 문자열", ""],
+    ["대문자", "FAIL"],
+    ["첫 글자 대문자", "Fail"],
+    ["앞뒤 공백", " fail"],
+    ["정의되지 않은 이름", "ignore"],
+    ["배열", ["fail"]],
+    ["객체", { value: "fail" }],
+  ])(
+    "REST·파일 모두 %s 값은 /onUncertainOutcome INVALID_FORMAT 검증 오류다",
+    async (_name, value) => {
+      for (const input of [
+        rest({ onUncertainOutcome: value }),
+        signed(fileRequest({ onUncertainOutcome: value })),
+      ]) {
+        const failure = await failureOf(input);
+        expect(failure.reason).toBe("VALIDATION_FAILED");
+        expect(failure.issues).toEqual([
+          { pointer: "/onUncertainOutcome", code: "INVALID_FORMAT" },
+        ]);
+      }
+    },
+  );
+
+  it("파일 JWS의 값은 보존되고 onUncertainOutcome은 서명 대상이다", async () => {
+    for (const value of ["retry", "fail"] as const) {
+      const result = await opened(
+        signed(fileRequest({ onUncertainOutcome: value })),
+      );
+      expect(result).toMatchObject({
+        signed: true,
+        onUncertainOutcome: value,
+      });
+    }
+
+    const jws = signJws({
+      secret: SECRET_ALPHA,
+      payload: fileRequest({ onUncertainOutcome: "retry" }),
+      nowMs: NOW,
+    });
+    const tampered = {
+      ...jws,
+      payload: b64url(
+        JSON.stringify(fileRequest({ onUncertainOutcome: "fail" })),
+      ),
+    };
+    expect(
+      (await failureOf({ kind: "file", bytes: asBytes(tampered) })).reason,
+    ).toBe("SIGNATURE_INVALID");
+  });
+
+  it("서명 없는 파일(signature none)도 같은 규칙으로 읽는다", async () => {
+    const ctx = makeCtx({ signature: NO_SIGNATURE });
+    const result = await openRequest(
+      {
+        kind: "file",
+        bytes: asBytes(fileRequest({ onUncertainOutcome: "fail" })),
+      },
+      ctx,
+    );
+    expect(result).toMatchObject({ ok: true, onUncertainOutcome: "fail" });
+  });
+
+  it("JWE 요청은 바깥 값을 보존하고 평문과 같은 값이면 같은 지문이다", async () => {
+    const content = await encryptContent(key1, {
+      content: { subject: MAIL.subject, text: MAIL.text },
+    });
+    const viaJwe = await opened({
+      kind: "rest",
+      body: {
+        to: MAIL.to,
+        from: MAIL.from,
+        content,
+        onUncertainOutcome: "fail",
+      },
+    });
+    const plain = await opened(rest({ onUncertainOutcome: "fail" }));
+
+    expect(viaJwe).toMatchObject({
+      encrypted: true,
+      onUncertainOutcome: "fail",
+    });
+    expect(viaJwe.fingerprint.canonicalRequest).toBe(
+      plain.fingerprint.canonicalRequest,
+    );
+  });
+
+  it("JWE 복호화 평문 안의 onUncertainOutcome은 UNKNOWN_FIELD다", async () => {
+    const content = await encryptContent(key1, {
+      content: {
+        subject: MAIL.subject,
+        text: MAIL.text,
+        onUncertainOutcome: "fail",
+      },
+    });
+    const failure = await failureOf({
+      kind: "rest",
+      body: { to: MAIL.to, from: MAIL.from, content },
+    });
+    expect(failure.issues).toEqual([
+      { pointer: "/content", code: "UNKNOWN_FIELD" },
+    ]);
+  });
+
+  it("잘못된 값의 canary가 실패 결과에 나오지 않는다(RQ-027)", async () => {
+    const failure = await failureOf(
+      rest({ onUncertainOutcome: "CANARY-UNCERTAIN-6d1b" }),
+    );
+    expect(JSON.stringify(failure)).not.toContain("CANARY");
+  });
+
+  it("등록 입력은 지정한 값을 onUncertain으로 넘기고 생략하면 필드가 없다(큐가 retry로 고정한다)", async () => {
+    const args = {
+      callerId: "alpha",
+      accountId: "default",
+      idempotencyKey: "k-1",
+      defaultExpiresInSeconds: 86_400,
+    };
+
+    expect(
+      toRegisterInput(await opened(rest({ onUncertainOutcome: "fail" })), args)
+        .onUncertain,
+    ).toBe("fail");
+    expect(
+      toRegisterInput(await opened(rest({ onUncertainOutcome: "retry" })), args)
+        .onUncertain,
+    ).toBe("retry");
+    expect(toRegisterInput(await opened(rest()), args)).not.toHaveProperty(
+      "onUncertain",
+    );
+  });
+});

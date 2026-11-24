@@ -8,6 +8,7 @@
  * - 본문 바이트: UTF-8 JSON `{v:1, subject, text, html}`(`worker/body-content.ts`와 같은 형식). `QueueBodyCipher`가 봉인한다.
  * - 지문 입력: 발송 결과에 영향을 주는 모든 필드(ADR-0005 결정 3). 우선순위 포함(RQ-034).
  * - 우선순위: 요청 등급(RQ-033). 큐가 DB 순위로 바꿔 저장한다.
+ * - 결과 불명 처리: 요청 `onUncertainOutcome`(RQ-073). 생략하면 필드를 넣지 않고 큐가 `retry`로 고정한다. 지문에는 지정했을 때만 들어 있다.
  * - 만료 TTL: 요청 `ttlSeconds`(RQ-039). 생략하면 호출자가 넘긴 기본값(`MAILO_JOB_EXPIRY_SECONDS`)이다.
  *   큐가 등록 때 DB `now()`에 더해 만료 시각을 고정한다(ADR-0002 결정 10).
  */
@@ -46,6 +47,9 @@ export function toRegisterInput(
     canonicalRequest: opened.fingerprint.canonicalRequest,
     expiresInSeconds: opened.ttlSeconds ?? args.defaultExpiresInSeconds,
     priority: opened.priority,
+    ...(opened.onUncertainOutcome !== null && {
+      onUncertain: opened.onUncertainOutcome,
+    }),
     ...(args.denyNew === true && { denyNew: true }),
   };
 }

@@ -1422,6 +1422,169 @@ describe("파일 채널 폴러 (RQ-002, ADR-0004)", () => {
     });
   });
 
+  describe("결과 불명 처리 정책 (RQ-073, ADR-0015 결정 6)", () => {
+    const policies = async (): Promise<Record<string, string>> =>
+      Object.fromEntries(
+        (
+          await pool.query<{ idempotency_key: string; on_uncertain: string }>(
+            "SELECT idempotency_key, on_uncertain FROM mail_jobs",
+          )
+        ).rows.map((r) => [r.idempotency_key, r.on_uncertain]),
+      );
+
+    it("생략은 retry이고 평문 JSON·JWS·JWE 파일의 retry·fail을 등록 때 그대로 고정한다", async () => {
+      const jweOf = async (key: string, value: string) =>
+        json({
+          version: 1,
+          idempotencyKey: key,
+          to: ["kim@example.com"],
+          from: "no-reply@example.com",
+          onUncertainOutcome: value,
+          content: await encryptContent(rsaKey(MAILO_JWE_KID), {
+            caller: "alpha",
+            content: { subject: "제목", text: "본문" },
+          }),
+        });
+      h.drop(
+        "alpha",
+        "omit.json",
+        json(fileRequest({ idempotencyKey: "omit" })),
+      );
+      for (const v of ["retry", "fail"]) {
+        h.drop(
+          "alpha",
+          `plain-${v}.json`,
+          json(
+            fileRequest({
+              idempotencyKey: `plain-${v}`,
+              onUncertainOutcome: v,
+            }),
+          ),
+        );
+        h.drop(
+          "signed",
+          `jws-${v}.json`,
+          signedFile(
+            fileRequest({ idempotencyKey: `jws-${v}`, onUncertainOutcome: v }),
+          ),
+        );
+        h.drop("alpha", `jwe-${v}.json`, await jweOf(`jwe-${v}`, v));
+      }
+
+      const summary = await h.makePoller().pollOnce();
+
+      expect(total(summary, "registered")).toBe(7);
+      expect(await rejections()).toEqual([]);
+      expect(await policies()).toEqual({
+        omit: "retry",
+        "plain-retry": "retry",
+        "plain-fail": "fail",
+        "jws-retry": "retry",
+        "jws-fail": "fail",
+        "jwe-retry": "retry",
+        "jwe-fail": "fail",
+      });
+    });
+
+    it("잘못된 값과 JWE 평문 안의 값은 VALIDATION_FAILED로 거부하고 원본을 지우며 값이 로그·거부 기록에 없다", async () => {
+      const values: unknown[] = [null, 1, "", "FAIL", CANARY.raw];
+      values.forEach((onUncertainOutcome, i) =>
+        h.drop(
+          "alpha",
+          `bad-${i}.json`,
+          json(fileRequest({ idempotencyKey: `bad-${i}`, onUncertainOutcome })),
+        ),
+      );
+      h.drop(
+        "alpha",
+        "inner.json",
+        json({
+          version: 1,
+          idempotencyKey: "inner",
+          to: ["kim@example.com"],
+          from: "no-reply@example.com",
+          content: await encryptContent(rsaKey(MAILO_JWE_KID), {
+            caller: "alpha",
+            content: {
+              subject: "제목",
+              text: "본문",
+              onUncertainOutcome: "fail",
+            },
+          }),
+        }),
+      );
+
+      const summary = await h.makePoller().pollOnce();
+
+      expect(total(summary, "rejected")).toBe(values.length + 1);
+      expect(await jobs()).toEqual([]);
+      const rows = await rejections();
+      expect(new Set(rows.map((r) => r.reason_code))).toEqual(
+        new Set(["VALIDATION_FAILED"]),
+      );
+      expect(files("alpha")).toEqual([]);
+      expect(JSON.stringify(rows)).not.toContain(CANARY.raw);
+      expect(h.logs.join("\n")).not.toContain(CANARY.raw);
+    });
+
+    it("서명한 파일의 값을 바꾸면 SIGNATURE_INVALID로 거부하고 등록하지 않는다", async () => {
+      const signedBytes = signedFile(
+        fileRequest({ idempotencyKey: "sig", onUncertainOutcome: "retry" }),
+      );
+      // payload만 바꿔 서명 범위를 깬다. 서명 없는 값 변경은 서명 대상이 아니면 통과하므로 서명 대상임을 확인한다.
+      const parsed = JSON.parse(signedBytes) as { payload: string };
+      parsed.payload = Buffer.from(
+        json(
+          fileRequest({ idempotencyKey: "sig", onUncertainOutcome: "fail" }),
+        ),
+      ).toString("base64url");
+      h.drop("signed", "tampered.json", json(parsed));
+
+      await h.makePoller().pollOnce();
+
+      expect(await jobs()).toEqual([]);
+      expect(await rejections()).toMatchObject([
+        { file_name: "tampered.json", reason_code: "SIGNATURE_INVALID" },
+      ]);
+    });
+
+    it("같은 Key의 같은 값은 중복이고 값을 바꾸거나 빼거나 retry를 더하면 FINGERPRINT_MISMATCH이며 기존 정책은 그대로다", async () => {
+      const poller = h.makePoller();
+      h.drop(
+        "alpha",
+        "a.json",
+        json(fileRequest({ idempotencyKey: "uk", onUncertainOutcome: "fail" })),
+      );
+      await poller.pollOnce();
+      h.drop(
+        "alpha",
+        "b.json",
+        json(fileRequest({ idempotencyKey: "uk", onUncertainOutcome: "fail" })),
+      );
+      const dup = await poller.pollOnce();
+      expect(total(dup, "duplicates")).toBe(1);
+
+      h.drop(
+        "alpha",
+        "c.json",
+        json(
+          fileRequest({ idempotencyKey: "uk", onUncertainOutcome: "retry" }),
+        ),
+      );
+      h.drop("alpha", "d.json", json(fileRequest({ idempotencyKey: "uk" })));
+      const changed = await poller.pollOnce();
+
+      expect(total(changed, "rejected")).toBe(2);
+      expect(
+        (await rejections()).map((r) => [r.file_name, r.reason_code]).sort(),
+      ).toEqual([
+        ["c.json", "FINGERPRINT_MISMATCH"],
+        ["d.json", "FINGERPRINT_MISMATCH"],
+      ]);
+      expect(await policies()).toEqual({ uk: "fail" });
+    });
+  });
+
   describe("로그와 기록에 내용이 없다 (RQ-027)", () => {
     it("거부한 파일의 본문 canary가 로그·거부 기록·이벤트 어디에도 없다", async () => {
       const limit = 4096;
