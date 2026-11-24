@@ -89,7 +89,7 @@ SELECT slot_name, active, xmin, catalog_xmin FROM pg_replication_slots;  -- 복�
 ```
 
 - `backend_xmin`이 있는 세션은 스냅샷을 쥐고 있다. `xmin_age`가 크고 `xact_age`가 긴 세션이 원인 후보다.
-- `backend_xid`가 있는 세션은 쓰기 트랜잭션이다. 이 세션은 이벤트 피드도 함께 붙잡는다(`troubleshooting.md` "이벤트 피드").
+- `backend_xid`가 있는 세션은 쓰기 트랜잭션이다. 이 세션은 이벤트 피드도 함께 붙잡는다(`troubleshooting.md` "피드 지연 해석").
 - 읽기 전용 트랜잭션(`pg_dump`, `REPEATABLE READ`)은 `backend_xid`가 없어 피드를 지연시키지 않지만 `backend_xmin`을 쥐어 VACUUM을 막는다(측정: "열린 트랜잭션").
 
 ### 4. 보존 삭제가 따라가는지
@@ -108,7 +108,7 @@ SELECT count(*) AS body_due FROM mail_jobs
 
 - 세 쿼리는 인덱스 전용 스캔이고 0.1ms 미만이었다(로컬, 약 14만 행, 두 개수 쿼리는 대상이 0건일 때). 대상이 많으면 개수 쿼리는 그만큼 읽는다.
 - 보존 삭제가 한 번도 돌지 않으면 `retention_due`는 쌓인 만큼 커진다. 삭제가 정상이면 값이 0 근처에서 움직인다.
-- 로그 이벤트 `bodies_deleted`, `records_deleted`(info, `count`)와 `bodies_deleted_failed`, `records_deleted_failed`(error)로 정리 실행을 본다(확인, `worker/worker.ts`의 `drainBatches`).
+- 로그 이벤트 `bodies_deleted`, `records_deleted`(info, `count`)와 `bodies_deleted_failed`, `records_deleted_failed`(error)로 정리 실행을 본다(확인, `worker/worker.ts`의 `drainBatches`, `troubleshooting.md` "유지 작업 로그").
 
 ## 판단 순서
 

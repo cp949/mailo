@@ -39,7 +39,7 @@ Mailo는 Gmail·Google Workspace SMTP로 이메일을 비동기 발송하는 경
 - [ADR-0011](../adr/0011-operations-control-and-caller-protection.md): 읽기·관리 운영 토큰, 발송 정지(전체·호출처), 작업 취소(`CANCELED`), 감사 기록, 운영 REST와 CLI, 호출처별 수신 도메인 허용 목록, 이벤트 피드 공백 신호, 결과 불명 표시(`outcomeUncertain`), 배포·롤백 순서. 구현 묶음 A(작업 취소, RQ-040·041), 묶음 B(토큰 분리, 발송 정지, 감사, `/ops` REST, 관리 취소, RQ-042~044), 묶음 C(피드 공백, 수신 도메인 허용 목록, CLI, RQ-045~047), 묶음 D(`outcomeUncertain`, RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다.
 - [ADR-0012](../adr/0012-metrics-endpoint.md): `GET /metrics`(읽기 토큰만, 관리 토큰 403), 전역 gauge와 인스턴스 counter 구분, 라벨 규칙과 시리즈 상한, TTL 캐시·단일 비행, 수동 텍스트 직렬화, 감사 행 수 지표. 구현했다(RQ-049~052).
 - [ADR-0013](../adr/0013-multiple-smtp-accounts.md): 다중 SMTP 계정(`MAILO_SMTP_ACCOUNTS_FILE`, `default` 출처 규칙), 호출처의 `accountId`와 작업의 등록 때 계정 고정, 계정 단위 점유·차단기·정지·24시간 할당, 마이그레이션 `0010`~`0016`, 관측과 운영 표면, 발신 주소 허용 집합. 구현 묶음 A(RQ-053~056)와 B(RQ-057~059)를 구현했고 C·D는 구현 전이다.
-- [ADR-0014](../adr/0014-caller-tools-and-docs.md): 호출처 도구와 문서. 프로토콜 적합성 벡터(`docs/api/conformance/vectors.json`, 공개 가짜 키와 production 거부), Java 샘플 연동(선택), 키 분실·유출 대응 절차, DB 유지보수 안내, 레지스트리 변경 반영 절차. 레지스트리 재로드와 파티셔닝은 구현하지 않는다. 구현 묶음 B(RQ-064·065)를 구현했고 C(RQ-066)·A(RQ-067~069)는 구현 전이다.
+- [ADR-0014](../adr/0014-caller-tools-and-docs.md): 호출처 도구와 문서. 프로토콜 적합성 벡터(`docs/api/conformance/vectors.json`, 공개 가짜 키와 production 거부), Java 샘플 연동(선택), 키 분실·유출 대응 절차, DB 유지보수 안내, 레지스트리 변경 반영 절차. 레지스트리 재로드와 파티셔닝은 구현하지 않는다. 구현 묶음 B(RQ-064·065)를 구현했고 A(RQ-067~069) 문서를 작성했다(문서 검토 남음). C(RQ-066)는 구현 전이다.
 
 ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
@@ -67,6 +67,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 - 수치 기본값은 별도 표시가 없으면 설계 시점의 추정이며 설정으로 바꿀 수 있다. 측정·검증 뒤 갱신한다.
 - `검증 완료`는 해당 RQ의 수용 조건이 모두 `[x]`일 때만 쓴다. 일부 조건이 2단계·3단계 구현이나 문서에 걸려 있으면 `진행 중`이다.
 - 판정 근거의 테스트 경로는 `apps/mailo/test/` 기준이다. `*.spec.ts`는 단위 테스트, `*.integration-spec.ts`는 PostgreSQL 통합 테스트다.
+- 검증 수치(2026-11-24 9단계 묶음 A 문서 반영 뒤): 코드 변경이 없어 `pnpm test`·`pnpm test:integration`을 실행하지 않았고 앞 줄의 수치(단위 1018건, 통합 819건)가 그대로 유효하다. 실행한 것은 `pnpm format:check` 1회(docs는 oxfmt 대상이 아니라 문서 변경을 검사하지 못한다), 문서 링크·앵커 존재 검사 스크립트, 로컬 compose PostgreSQL 17.11의 임시 schema 측정(`db-maintenance.md` "로컬 측정", 끝난 뒤 그 schema만 삭제)이다.
 - 검증 수치(2026-11-24 9단계 묶음 B 적합성 벡터 반영 뒤): `pnpm test` 단위 1018건(50개 파일, 새 파일 `envelope/conformance-vectors.spec.ts` 128건), `pnpm test:integration` 통합 819건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 기존 테스트 파일은 바꾸지 않았다. 벡터 테스트의 RED는 구현 전 모듈 export 누락(`PUBLIC_SAMPLE_JWE_KEY_SPKI_SHA256`)으로 스위트가 로드되지 않은 것이다(케이스 단언 실패 RED는 아니다). 변이 확인 2건(`iat` 상한 비교, `KID_UNKNOWN` 매핑)에서 테스트가 케이스 `id`로 실패했고 되돌렸다. 컨테이너·NFS·샘플 스크립트(`scripts/container/`, `verify/run-e2e.sh`, `pnpm test:nfs`)는 실행하지 않았다(해당 영역 변경 없음). 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다.
 - 검증 수치(2026-11-24 7단계 묶음 C 운영 표면 반영 뒤): `pnpm test` 단위 890건(49개 파일), `pnpm test:integration` 통합 816건(57개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 최종 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint` 경고·오류 0건. 전체 통합 첫 실행에서 3건이 실패했다(`queue/cancel.integration-spec.ts` 2건: 취소 결과에 `accountId`가 더해졌고, `cli/cli.integration-spec.ts` 1건: `sendControls`에 `pausedAccountCount`가 더해졌다). 둘 다 새 필드를 기대값에 더한 뒤 그 파일 2개(25건)만 다시 실행해 통과했다. 기존 테스트의 변경은 모두 새 필드·인자를 반영한 것이고 단언을 약화하지 않았다. (1) `test/queue/send-controls.integration-spec.ts`: `listPauses`가 `account` 행을 내므로 기대 목록에 `{ type: "account", id: "default" }`를 더했고(제목에서 "account 행은 REST 목록에 없다"를 뺐다), `getCallerPauseSummary`가 계정 ID를 세 번째 인자로 받아 호출에 `"default"`를 더했으며 `getSendControlsSummary` 기대값에 `pausedAccountCount`를 더했다. (2) `http/ops.integration-spec.ts`·`cli/cli.integration-spec.ts`의 `sendControls` 기대값에 `pausedAccountCount: 0`을 더했다. (3) `worker/metrics.spec.ts`·`queue/metrics-reads.integration-spec.ts`·`queue/cancel.integration-spec.ts`의 입력·기대값에 `accountId`를 더했다(`JobTransition`·취소 결과가 계정을 가진다). (4) `metrics/catalog.spec.ts`의 전역 접두 목록에 `mailo_account_`를 더했다. 컨테이너: `scripts/container/verify-metrics.sh`(읽기 전용 루트, 응답·토큰 행렬·`promtool check metrics` 통과, 비밀 값 노출 0건)와 `verify-sigterm-file.sh`(1000건, 재기동 뒤 중복·유실 없음)를 각 1회 실행했다. 이 스크립트는 단일 계정(`default`) 구성이다. 다중 계정 컨테이너, 롤링 배포·롤백, 실제 Gmail·Workspace, 외부 호출처의 `/health/ready` 처리, 실제 Prometheus의 새 알림 규칙 평가는 실행하지 않았다. 훅(`test-dedupe.py`)이 worktree가 아닌 세션 cwd의 소스 지문을 써서 소스를 바꾼 뒤의 재실행도 거부했으므로 개발 중 부분 실행에는 `FORCE_RETEST=1`을 썼다(최종 전체 실행은 한 번이다).
 - 검증 수치(2026-11-24 7단계 묶음 B 계정 단위 점유 반영 뒤): `pnpm test` 단위 873건(48개 파일), `pnpm test:integration` 통합 774건(53개 파일, 실제 PostgreSQL 17과 로컬 `smtp-server`), 실패 0건. `pnpm format:check`·`pnpm typecheck`·`pnpm build` 통과, `pnpm lint`(oxlint) 경고·오류 없음(종료 코드 0). 기존 테스트의 변경은 다섯 가지다. (1) `getQueueBacklog`·`getQueueDepth`가 구성 계정 목록을 필수 인자로 받아 `http/health-ops.integration-spec.ts`·`queue/metrics-reads.integration-spec.ts`의 호출에 `["default"]`를 더했다(단언은 그대로). (2) `queue/claim-priority.integration-spec.ts`의 우선순위 점유 인덱스 존재 단언이 0015가 지운 `mail_jobs_priority_claim_idx`에서 새 `mail_jobs_account_priority_claim_idx`로 바뀌었다. (3) `queue/account-id.integration-spec.ts`는 `accountIds` 옵션이 `accountId`로 바뀌어 호출을 고쳤고, 비`default` 계정의 claim이 차단기 행을 요구해 세 테스트에 `ensureBreakerRows`를 더했으며, "`accountIds`를 생략하면 계정으로 거르지 않는다"(점유 2건)는 "`accountId`를 생략하면 `default` 계정만 점유한다"(점유 1건)로 바뀌었다. (4) `worker/account-startup.spec.ts`의 `account_limits_not_enforced` 경고를 단언하던 테스트가 "더는 남기지 않는다"로 바뀌었다. (5) `e2e/multi-account.integration-spec.ts`의 "묶음 B 전의 방어" 기동 거부 단언이 "비`default` 계정 구성의 기동" 성공 단언으로 바뀌고 `support/rest-app.ts`의 `allowNonDefaultAccounts` 옵션을 지웠다. 나머지 기존 단언은 바꾸지 않았다. 컨테이너 스크립트 `verify-sigterm-file.sh`·`verify-sigkill-duplicate.sh`를 실행했다(`Dockerfile`·`docker-compose.yml`은 바꾸지 않았고 Worker 조립과 점유 경로를 지나므로 회귀 확인이다. 스크립트 검증이라 `[x]` 근거에 쓰지 않았다): `verify-sigterm-file.sh`는 SIGTERM 종료 코드 0, 재기동 뒤 작업 1000건이 모두 `SENT`이고 SMTP 수신 1000통(유일 `Message-ID` 1000), 남은 파일 0이었다. `verify-sigkill-duplicate.sh`는 관찰 스크립트이며 같은 `Message-ID`로 2통이 SMTP에 도착했다(`attempts=2`, RQ-013의 기존 한계와 같다). 두 스크립트 모두 단일 계정(`default`) 구성이다. 다중 계정 구성의 컨테이너 검증, `verify-metrics.sh`·`scripts/volume/`·`pnpm test:nfs`·샘플 e2e는 실행하지 않았다.
@@ -100,7 +101,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 | 6단계 | 운영 제어와 호출처 보호(ADR-0011). 묶음 A 작업 취소(RQ-040·041), 묶음 B 운영 토큰·발송 정지·감사·`/ops`(RQ-042~044), 묶음 C 이벤트 피드 공백 감지·수신 도메인 허용 목록·운영 CLI(RQ-045~047), 묶음 D 결과 불명 표시(RQ-048)를 구현했다. 호출처 단위 일괄 취소는 ADR상 범위 밖이다 |
 | 8단계 | 관측성(ADR-0012). `GET /metrics`(RQ-049), 이름·라벨 규칙(RQ-050), 전역 gauge(RQ-051), 인스턴스 counter·gauge(RQ-052). 마이그레이션 없음 |
 | 7단계 | 다중 SMTP 계정(ADR-0013). 구현 묶음 A 계정 모델(RQ-053~056, 마이그레이션 `0010`·`0011`), B 계정 단위 점유(RQ-057~059, 마이그레이션 `0012`~`0016`), C 운영 표면(RQ-060~063, 마이그레이션 없음)을 구현했다. D 호출처 동시 상한(선택)은 구현 전이다. RQ-070 이후를 해당 묶음에서 추가한다 |
-| 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했다. C Java 샘플 연동(선택, RQ-066)과 A 문서(RQ-067~069)는 구현 전이다 |
+| 9단계 | 호출처 도구와 문서(ADR-0014). 구현 묶음 B 적합성 벡터(RQ-064·065, 마이그레이션 없음)를 구현했고 A 문서(RQ-067~069: 키 사고 대응, DB 유지보수, 레지스트리 변경 반영)를 작성했다(코드 변경 없음, 문서 검토 남음). C Java 샘플 연동(선택, RQ-066)은 구현 전이다 |
 
 - 이유: Key, 오류 분류, 차단기를 파일시스템 변수 없이 먼저 검증한다. JWE는 선택 기능이다.
 - NAS/NFS 수용 조건과 문서 수용 조건은 해당 RQ의 구현 단계와 무관하게 3단계에 확인한다.
@@ -771,7 +772,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 - `file-channel/poller.integration-spec.ts`: JWE 파일 수집, `caller` 불일치(`CALLER_MISMATCH`), 알 수 없는 `kid`(`DECRYPTION_FAILED`로 기록), 암호화한 제목의 CR/LF 거부, 변조한 JWE의 거부와 canary 부재.
 - 한계 문구(`signature.mode=none`, DB AAD 범위)는 문서 항목이다. 코드 동작은 바꾸지 않았고 이를 단언하는 자동 테스트는 없다. 서명 `required`가 수신자 변경을 거부한다는 서술은 서명이 `payload` 전체를 덮는다는 JWS 성질에 근거한다. 잘못된 서명의 거부는 `file-channel/poller.integration-spec.ts`가 확인하고, 서명된 payload의 수신자를 바꾸면 `SIGNATURE_INVALID`가 되는 것은 `envelope/open-request.spec.ts`("payload를 바꾸면 SIGNATURE_INVALID다")가 확인한다.
 - nimbus-jose-jwt 10.10 상호 운용(2026-11-23, `samples/spring-boot-relay/verify/run-e2e.sh`): 확인한 조합은 JWE `RSA-OAEP-256`+`A256GCM`(RSA 3072, protected `kid`·`caller`)을 REST `content`로 보낸 것(202, SMTP 수신, 복호화된 제목·본문 일치)과 파일 채널로 보낸 것, JWS flattened `HS256`(protected `kid`·`caller`·`iat` 숫자)을 파일 채널로 보낸 것(`signature.mode=required`, SENT, 수집 거부 0건)이다. 다른 비밀키 서명은 `SIGNATURE_INVALID`, 알 수 없는 `kid`는 400 `KID_UNKNOWN`으로 거부됐다. 두 구현 사이의 형식 해석 차이는 관찰되지 않았다.
-- 미확인: 다른 nimbus 버전, `RSA-OAEP-256` 외 알고리즘, 키 교체 중 이전 `kid`의 상호 운용, 2 MiB 근처 큰 본문, JWE 개인키 유출 때의 대응 절차(미결정, `key-management.md`).
+- 미확인: 다른 nimbus 버전, `RSA-OAEP-256` 외 알고리즘, 키 교체 중 이전 `kid`의 상호 운용, 2 MiB 근처 큰 본문. JWE 개인키 유출 대응은 `key-management.md` "키 사고 대응"에 쓰고 보존 기간 전 삭제용 정식 경로는 만들지 않기로 했다(ADR-0014 결정 7, RQ-067, 2026-11-24).
 
 **한계:**
 
@@ -2178,7 +2179,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
 ## 17. 호출처 도구와 문서
 
-결정은 [ADR-0014](../adr/0014-caller-tools-and-docs.md)이고 구현은 묶음 B(적합성 벡터)·C(Java 샘플 연동, 선택)·A(문서) 순서다. RQ-064·065는 묶음 B, RQ-066은 묶음 C, RQ-067~069는 묶음 A의 범위다. 코드를 바꾸는 것은 RQ-064·065뿐이고(공개 샘플 키 규칙 확장, `presentOpenFailure` 공개, 생성 스크립트, 테스트) 마이그레이션과 새 npm 의존성은 없다. RQ-064·065는 구현했고(묶음 B) 나머지는 구현 전이다. 레지스트리 재로드와 파티셔닝은 구현하지 않는다.
+결정은 [ADR-0014](../adr/0014-caller-tools-and-docs.md)이고 구현은 묶음 B(적합성 벡터)·C(Java 샘플 연동, 선택)·A(문서) 순서다. RQ-064·065는 묶음 B, RQ-066은 묶음 C, RQ-067~069는 묶음 A의 범위다. 코드를 바꾸는 것은 RQ-064·065뿐이고(공개 샘플 키 규칙 확장, `presentOpenFailure` 공개, 생성 스크립트, 테스트) 마이그레이션과 새 npm 의존성은 없다. RQ-064·065는 구현했고(묶음 B) RQ-067~069는 문서를 작성했다(묶음 A, 코드 변경 없음, 문서 검토 남음). RQ-066은 구현 전이다. 레지스트리 재로드와 파티셔닝은 구현하지 않는다.
 
 ### RQ-064 프로토콜 적합성 벡터와 서버 고정
 
@@ -2260,7 +2261,7 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
 ### RQ-067 키 분실·유출 대응 절차
 
-- [ ] **진행 상태:** 미착수 (9단계 묶음 A)
+- [ ] **진행 상태:** 진행 중 (9단계 묶음 A, 문서 작성 완료, 문서 검토 남음)
 
 **요구사항:**
 
@@ -2273,16 +2274,19 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
 - [ ] 키 종류별 유출·분실 표가 영향 범위와 절차를 포함하고 기존 교체 절차를 가리킨다(같은 절차를 두 곳에 쓰지 않는다).
 - [ ] 위험 작업마다 위험도와 롤백 가능 여부가 있다.
-- [ ] 지문 키·DB 본문 키 분실 때의 동작(REST 503, 파일 `file_ingest_failed`, `FAILED` 전이)을 코드 또는 통합 테스트로 다시 확인했다.
-- [ ] 문서의 SQL과 명령이 실제로 동작함을 임시 schema에서 확인했다.
+- [ ] 지문 키·DB 본문 키 분실 때의 동작(REST 503, 파일 `file_ingest_failed`, `FAILED` 전이)을 코드 또는 통합 테스트로 다시 확인했다. (코드를 다시 읽어 확인했다: `queue/register.ts`, `crypto/fingerprint.ts`, `http/problem.filter.ts`, `file-channel/poller.ts`, `worker/worker.ts`의 `internalFailure`. 통합 테스트로는 재현하지 않아 체크하지 않았다.)
+- [ ] 문서의 SQL과 명령이 실제로 동작함을 임시 schema에서 확인했다. (SQL은 2026-11-24 PostgreSQL 17.11 임시 schema에서 실행해 확인했다. `node dist/cli.js`·`openssl` 명령은 이번에 실행하지 않아 체크하지 않았다.)
 
 **판정 근거:**
 
-- 구현 전이다.
+- 문서: `docs/operations/key-management.md` "키 사고 대응"(2026-11-24). 코드 변경은 없다. 키 종류와 사건별 표, 로테이션이 되는 범위와 안 되는 범위, 만들지 않는 것, 위험 작업의 위험도·롤백을 쓴다. 각 동작에 코드로 확인한 것과 가정을 표시했다.
+- 코드로 확인한 사실: 키링은 `retiredAt`으로 키를 거르지 않는다(`envelope/key-ring.ts`), `removed`는 기동 검증에만 쓰인다(`envelope/key-file.ts`), 이전 `kid`를 보존 기간 전에 `removed`에 올리면 기동을 거부한다, 큐 본문은 JWE 개인키와 무관하다(`queue/register.ts`), 본문 키 버전이 없으면 `UNKNOWN_KEY_VERSION`으로 3번째 시도에서 `FAILED`가 된다(`worker/worker.ts`), 잃은 지문 키 버전의 Key는 비교가 예외가 된다(`queue/register.ts`).
+- 확인한 SQL: 키 버전별 건수, 잃은 버전의 비종결 작업, 지문 키 버전별 마지막 종결 시각, 호출처별 시간별 등록 건수를 임시 schema(작업 20만 건)에서 실행했다.
+- 남은 미검증: 위 두 항목(체크하지 않은 이유), 키 사고 절차 전체의 운영 환경·다중 인스턴스 실행, 잃은 지문 키 버전의 파일이 3건 이상 쌓일 때 같은 폴링의 다른 파일이 밀리는지(코드 읽기 추정), JWE 조기 삭제 판단의 위협 모델 검토. 표와 절차 문구는 문서 검토로만 확인했다.
 
 ### RQ-068 DB 유지보수 안내
 
-- [ ] **진행 상태:** 미착수 (9단계 묶음 A)
+- [ ] **진행 상태:** 진행 중 (9단계 묶음 A, 문서 작성과 로컬 측정 완료, 문서 검토 남음)
 
 **요구사항:**
 
@@ -2293,17 +2297,19 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
 **수용 조건:**
 
-- [ ] 문서의 점검 쿼리를 임시 schema에서 실행해 동작을 확인했고 측정 환경·범위를 적었다.
-- [ ] `deployment.md` "PostgreSQL 요건"과 `docs/operations/README.md`가 새 문서를 가리킨다.
-- [ ] 운영 크기·다중 인스턴스는 확인하지 않았다고 적었다.
+- [x] 문서의 점검 쿼리를 임시 schema에서 실행해 동작을 확인했고 측정 환경·범위를 적었다. (측정 기록: 2026-11-24, PostgreSQL 17.11 로컬 compose, 임시 schema, 작업 20만 건. 자동 테스트가 아니다.)
+- [x] `deployment.md` "PostgreSQL 요건"과 `docs/operations/README.md`가 새 문서를 가리킨다. (링크 검사: 파일·앵커 존재를 스크립트로 확인했다, 2026-11-24.)
+- [ ] 운영 크기·다중 인스턴스는 확인하지 않았다고 적었다. (문서의 "로컬 측정"과 "검증하지 않은 것"에 있다. 문서 검토로만 확인했고 자동 검증이 없어 체크하지 않았다.)
 
 **판정 근거:**
 
-- 구현 전이다.
+- 문서: `docs/operations/db-maintenance.md`(새 문서), `deployment.md` "PostgreSQL 요건"의 링크, `docs/operations/README.md` 표. 코드 변경은 없다.
+- 로컬 측정(2026-11-24, 로컬 compose PostgreSQL 17.11, 임시 schema에 `0001`~`0016` 적용, 끝난 뒤 그 schema만 삭제): 작업 20만 건을 넣고 앱의 점유·결과 기록·본문 삭제·보존 삭제와 같은 갱신 열의 SQL을 1000건 배치로 돌렸다. 기본 autovacuum에서 보존 삭제가 끝난 약 60초 뒤 세 표의 `n_dead_tup`이 0이 됐다. `mail_jobs` 갱신 640,732건이 모두 HOT가 아니었다. 삭제 뒤 heap 파일은 줄지 않았고(107.4 MB) 10만 건을 더 넣어도 늘지 않았다. 읽기 전용 `REPEATABLE READ` 트랜잭션과 쓰기 트랜잭션이 열려 있으면 `VACUUM`이 죽은 행 20000건을 지우지 못했고 종료 뒤 지웠다. 점검 쿼리를 모두 실행해 동작을 확인했다.
+- 한계: 로컬 단일 실행, 운영 크기(수백만 행)·다중 인스턴스·쓰기 부하 중 삭제·실제 `pg_dump` 미확인. 점유·삭제 SQL은 앱 프로세스가 아니라 같은 열을 바꾸는 SQL이다. 파티셔닝 제약은 PostgreSQL 문서 지식이다.
 
 ### RQ-069 레지스트리 변경 반영 절차
 
-- [ ] **진행 상태:** 미착수 (9단계 묶음 A)
+- [ ] **진행 상태:** 진행 중 (9단계 묶음 A, 문서 작성 완료, 문서 검토 남음)
 
 **요구사항:**
 
@@ -2313,13 +2319,15 @@ ADR-0001~0010은 2026-11-23에, ADR-0011~0014는 2026-11-24에 승인됐다.
 
 **수용 조건:**
 
-- [ ] 변경 종류별 효력 시점 표와 롤링 구간의 동작이 있고 기존 문서의 수치(drain 상한, `stop_grace_period`)를 가리킨다.
-- [ ] 롤링 구간의 401 혼용을 확인했거나 확인하지 않았다고 적었다.
-- [ ] 재검토 조건이 있다.
+- [ ] 변경 종류별 효력 시점 표와 롤링 구간의 동작이 있고 기존 문서의 수치(drain 상한, `stop_grace_period`)를 가리킨다. (문서 검토로만 확인했다. 자동 검증 없음.)
+- [ ] 롤링 구간의 401 혼용을 확인했거나 확인하지 않았다고 적었다. (코드 읽기로 확인하고 실행하지 않았다고 적었다. 문서 검토로만 확인했다.)
+- [ ] 재검토 조건이 있다. (문서 검토로만 확인했다.)
 
 **판정 근거:**
 
-- 구현 전이다.
+- 문서: `docs/operations/caller-onboarding.md` "9. 레지스트리 변경 반영"(2026-11-24). 코드 변경은 없다. 변경 종류별 효력 표(호출처 추가, API 키 추가·폐기, `signature.keys`, `allowedFrom`·`allowedRecipientDomains`, `sendQuota24h`, `accountId`, `fileChannel`, 호출처 삭제), 롤링 중 호출처가 겪는 동작, 재시작 한 번의 비용(`deployment.md` 수치 참조), 재검토 조건 둘을 쓴다.
+- 코드로 확인한 사실: 레지스트리는 `callers.module.ts`의 provider가 기동 때 한 번 읽어 인스턴스 메모리에 둔다. REST 인증(`registry.authenticate`), 파일 폴러의 호출처 목록(`createFilePoller`), 등록 때의 `allowedFrom`·`allowedRecipientDomains`·`accountId`(`intake.service.ts`, `file-channel/ingest.ts`), Worker의 `callerQuotas`(`app.module.ts`)가 그 값을 쓴다. 이전 레지스트리 인스턴스는 새 `kid`를 `SIGNATURE_INVALID`로 거부한다(`envelope/jws.ts`).
+- 남은 미검증: 롤링 재시작 중 실제 동작(다중 인스턴스에서 실행하지 않았다. 이 저장소의 compose는 `mailo` 서비스 하나다), 단일 인스턴스 재시작 중 REST 중단 구간의 길이. 위 체크하지 않은 항목은 문서 검토로만 확인했다.
 
 ## 확정한 항목
 
